@@ -251,3 +251,24 @@ Stage Summary:
 - Official round logo is now the single brand mark across favicon, iOS icon, login (panel + card), app header, footer and About dialog.
 - Brand pipeline reproducible: scripts/process-logo.py regenerates all sizes from the original upload.
 - No layout/theme regressions; existing green palette harmonizes with logo (dark forest + lime green).
+
+---
+
+Task ID: 11 (complaint entry page)
+Agent: Z.ai Code (main orchestrator)
+Task: Replace the "New Complaint" modal with a dedicated full-page Complaint Entry experience (per detailed spec), reusing existing complaint architecture end-to-end.
+
+Work Log:
+- Read existing architecture first: complaints module (588-line modal flow), ui-store, use-draft hook, complaints API (route/_lib/transition), constants, registry, shell. Backend POST /api/v1/complaints already had everything (zod 3..200/3..5000/priority enum, portal customerId pinning, server-side equipment-customer validation, CPT numbering, status forced NEW, audit, notifyRole SUPERVISOR+ADMIN) — ZERO backend changes needed.
+- ui-store: added complaintsView ("list"|"new"), complaintsFocusId (open detail after create), complaintFormDirty (shell guard). Zustand actions consumed via stable selectors (avoided whole-store identity in effect deps → no render loops).
+- use-draft: added saveNow() (flush debounce + persist localStorage + server Draft table + clear dirty) for the explicit Save Draft button.
+- NEW src/components/hms/modules/complaints/new-page.tsx: breadcrumb (Complaints / New Complaint), back link, PageHeader with Save Draft + Create Complaint, two-section form (Complaint Information: title/description with live counters/priority default MEDIUM; Customer & Asset: debounced server-side customer combobox (20/page, no full-table loads), customer-dependent equipment with distinct Loading/First/Empty states, read-only location from equipment.location relation), restore-draft banner (Restore/Discard), field-level validation messages, error banner preserving all user data on failure, sticky mobile action bar, RBAC guard (no complaints_create → no access view), portal mode (customer pinned, info card, name derived from equipment payload — no customers.read needed).
+- complaints/index.tsx: removed the create modal entirely (no competing entry), buttons navigate to view "new", consumes complaintsFocusId to open the detail dialog of the freshly created complaint (continues existing workflow: assign → accept → …).
+- shell.tsx: central switchModule() — while complaintFormDirty, switching modules opens a "Leave with unsaved changes?" confirm (Stay / Leave anyway); beforeunload guard already in useDraft.
+- Browser QA (agent-browser, admin + customer + mobile 390px): dedicated page replaces modal; server-side customer search; equipment filtered per customer; location shown; Save Draft → toast + Draft row in DB; reload → restore banner → full data back (BUG #1 found: customer selection card lost after restore since local state — fixed by re-fetching customer by draft customerId); dirty guard dialog on module switch; Create → CPT-2026-0005 → detail dialog auto-opened; direct DB check: record/audit/2 notifications/no duplicates/status NEW; technician API create probe → 403; customer portal → CPT-2026-0006 (customerId pinned server-side); forged cross-customer equipmentId → 400; mobile: no horizontal overflow, sticky action bar, draft save/restore/create → CPT-2026-0007 (cleaned up after test); 150s idle → no unexpected reload, data intact; dev.log: all core endpoints 200, no runtime errors.
+- Final: bunx tsc --noEmit 0 errors; bun run lint 0 errors/warnings; test artifact CPT-2026-0007 removed from DB.
+
+Stage Summary:
+- Complaint creation now flows: Complaints → New Complaint (full page) → draft-safe form → create → detail dialog → existing workflow. Old modal fully removed; list module untouched otherwise.
+- Honest scope notes (spec §5/§12/§13/§15 conditionals): Category/Source/Location inputs NOT added — Complaint model has no such fields (schema frozen; no invented fields); location shown read-only via equipment relation. Attachments NOT implemented — no upload endpoint/file relation exists in sandbox (documented integration point). Internal notes field does not exist at creation; description remains customer-visible by design.
+- 10-15 min soak test approximated with a 150s idle + mechanism verification (debounced autosave 1.2s to localStorage + server Draft table + restore prompt); reported honestly.

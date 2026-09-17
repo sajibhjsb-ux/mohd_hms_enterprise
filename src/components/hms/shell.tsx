@@ -33,14 +33,26 @@ type NotifItem = {
 
 export function AppShell() {
   const { user, signOut } = useSession();
-  const { activeModule, setActiveModule, deepLink, setDeepLink } = useUi();
+  const { activeModule, setActiveModule, deepLink, setDeepLink, complaintFormDirty } = useUi();
   const [notifsOpen, setNotifsOpen] = useState(false);
   const [notifs, setNotifs] = useState<NotifItem[]>([]);
   const [unread, setUnread] = useState(0);
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [pwOpen, setPwOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [pendingModule, setPendingModule] = useState<string | null>(null);
   const { toast } = useToast();
+
+  // Module switching with unsaved-data protection: while the complaint entry form
+  // is dirty, confirm before navigating to a different module (draft auto-saves,
+  // so leaving is recoverable — but the user must decide explicitly).
+  const switchModule = useCallback((key: string) => {
+    if (useUi.getState().complaintFormDirty && key !== "complaints") {
+      setPendingModule(key);
+      return;
+    }
+    setActiveModule(key);
+  }, [setActiveModule]);
 
   // Deep link handling (QR scans land on /?resource=equipment:{qrToken})
   useEffect(() => {
@@ -127,7 +139,7 @@ export function AppShell() {
             {visible.map((m) => (
               <button
                 key={m.key}
-                onClick={() => setActiveModule(m.key)}
+                onClick={() => switchModule(m.key)}
                 aria-current={activeModule === m.key ? "page" : undefined}
                 className={cn(
                   "flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium whitespace-nowrap transition-colors",
@@ -247,7 +259,7 @@ export function AppShell() {
           {mobileNav.slice(0, 5).map((m) => (
             <button
               key={m.key}
-              onClick={() => setActiveModule(m.key)}
+              onClick={() => switchModule(m.key)}
               aria-current={activeModule === m.key ? "page" : undefined}
               className={cn(
                 "flex flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium min-h-[44px]",
@@ -273,7 +285,7 @@ export function AppShell() {
                   {visible.map((m) => (
                     <button
                       key={m.key}
-                      onClick={() => { setActiveModule(m.key); setMobileMoreOpen(false); }}
+                      onClick={() => { switchModule(m.key); setMobileMoreOpen(false); }}
                       className={cn(
                         "flex flex-col items-center gap-1.5 rounded-xl border p-3 text-xs font-medium",
                         activeModule === m.key ? "border-primary bg-primary/5 text-primary" : "text-muted-foreground"
@@ -291,6 +303,20 @@ export function AppShell() {
       </nav>
 
       <ChangePasswordDialog open={pwOpen} onOpenChange={setPwOpen} />
+      <Dialog open={!!pendingModule} onOpenChange={(o) => { if (!o) setPendingModule(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Leave with unsaved changes?</DialogTitle>
+            <DialogDescription>
+              Your complaint draft auto-saves as you type and will be offered for restore when you return.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex-col-reverse sm:flex-row gap-2">
+            <Button variant="outline" onClick={() => setPendingModule(null)}>Stay on this page</Button>
+            <Button onClick={() => { if (pendingModule) setActiveModule(pendingModule); setPendingModule(null); }}>Leave anyway</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Dialog open={aboutOpen} onOpenChange={setAboutOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>

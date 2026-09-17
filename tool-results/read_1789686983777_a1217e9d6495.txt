@@ -1,0 +1,589 @@
+     1→"use client";
+     2→
+     3→// MOHD.HMS ENTERPRISE — Complaints module.
+     4→// Customer portal + staff workflow: NEW → ASSIGNED → IN_PROGRESS → COMPLETED →
+     5→// CONFIRMED → CLOSED (+ CANCELLED). Role-gated actions, live status timeline,
+     6→// draft-protected creation form.
+     7→
+     8→import { useCallback, useEffect, useMemo, useState } from "react";
+     9→import { api, qs } from "@/lib/hms/api-client";
+    10→import { hasPerm, useSession } from "@/components/hms/session";
+    11→import { useToast } from "@/hooks/use-toast";
+    12→import { useDraft } from "@/hooks/use-draft";
+    13→import { DataTable, type Column } from "@/components/hms/shared/data-table";
+    14→import {
+    15→  PageHeader, StatCard, StatusBadge, PriorityBadge, LoadingState, EmptyState, ErrorState,
+    16→} from "@/components/hms/shared/ui-bits";
+    17→import { PERMISSIONS, PRIORITIES, humanize } from "@/lib/hms/constants";
+    18→import { fmtDate, fmtDateTime } from "@/lib/hms/format";
+    19→import { Button } from "@/components/ui/button";
+    20→import { Input } from "@/components/ui/input";
+    21→import { Label } from "@/components/ui/label";
+    22→import { Textarea } from "@/components/ui/textarea";
+    23→import { Badge } from "@/components/ui/badge";
+    24→import { Separator } from "@/components/ui/separator";
+    25→import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+    26→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+    27→import {
+    28→  AlertTriangle, CheckCircle2, ClipboardCheck, Clock, Hammer, ListChecks, Plus, Send,
+    29→} from "lucide-react";
+    30→import { cn } from "@/lib/utils";
+    31→
+    32→// ── Types ──
+    33→
+    34→type ComplaintRow = {
+    35→  id: string;
+    36→  code: string;
+    37→  title: string;
+    38→  description: string;
+    39→  priority: string;
+    40→  status: string;
+    41→  createdAt: string;
+    42→  customerId: string;
+    43→  customer?: { id: string; companyName: string } | null;
+    44→  equipment?: { id: string; name: string; assetTag: string } | null;
+    45→  assignedTechnician?: { id: string; user?: { id: string; name: string } | null } | null;
+    46→};
+    47→
+    48→type HistoryRow = {
+    49→  id: string;
+    50→  fromStatus: string;
+    51→  toStatus: string;
+    52→  note: string;
+    53→  createdAt: string;
+    54→  changedByName?: string | null;
+    55→};
+    56→
+    57→type ComplaintDetail = ComplaintRow & {
+    58→  resolutionNotes: string;
+    59→  customerFeedback: string;
+    60→  assignedAt: string | null;
+    61→  acceptedAt: string | null;
+    62→  startedAt: string | null;
+    63→  completedAt: string | null;
+    64→  confirmedAt: string | null;
+    65→  closedAt: string | null;
+    66→  statusHistory: HistoryRow[];
+    67→  workOrders: { id: string; code: string; title: string; status: string; technician?: { user?: { name: string } | null } | null }[];
+    68→};
+    69→
+    70→type TechOpt = { id: string; employeeNo?: string; specialty?: string; user?: { name?: string } | null };
+    71→type CustomerOpt = { id: string; companyName?: string; name?: string };
+    72→type EquipmentOpt = { id: string; name?: string; assetTag?: string };
+    73→
+    74→type CreateForm = {
+    75→  title: string;
+    76→  description: string;
+    77→  priority: string;
+    78→  customerId: string;
+    79→  equipmentId: string;
+    80→};
+    81→
+    82→const EMPTY_CREATE: CreateForm = { title: "", description: "", priority: "MEDIUM", customerId: "", equipmentId: "" };
+    83→
+    84→const OPEN_STATUSES = ["NEW", "ASSIGNED"];
+    85→const PROGRESS_STATUSES = ["IN_PROGRESS"];
+    86→const RESOLVED_STATUSES = ["COMPLETED", "CONFIRMED"];
+    87→
+    88→const STATUS_TABS: { key: string; label: string; match: (s: string) => boolean }[] = [
+    89→  { key: "ALL", label: "All", match: () => true },
+    90→  { key: "OPEN", label: "Open", match: (s) => OPEN_STATUSES.includes(s) },
+    91→  { key: "IN_PROGRESS", label: "In Progress", match: (s) => PROGRESS_STATUSES.includes(s) },
+    92→  { key: "RESOLVED", label: "Resolved", match: (s) => RESOLVED_STATUSES.includes(s) },
+    93→  { key: "CLOSED", label: "Closed", match: (s) => s === "CLOSED" },
+    94→  { key: "CANCELLED", label: "Cancelled", match: (s) => s === "CANCELLED" },
+    95→];
+    96→
+    97→// ── Module ──
+    98→
+    99→export function ComplaintsModule() {
+   100→  const { user } = useSession();
+   101→  const { toast } = useToast();
+   102→
+   103→  const canCreate = hasPerm(user, PERMISSIONS.complaints_create);
+   104→  const canAssign = hasPerm(user, PERMISSIONS.complaints_assign);
+   105→  const canUpdate = hasPerm(user, PERMISSIONS.complaints_update);
+   106→  const canClose = hasPerm(user, PERMISSIONS.complaints_close);
+   107→  const isStaffUser = !!user && user.role !== "CUSTOMER";
+   108→
+   109→  // ── List state ──
+   110→  const [rows, setRows] = useState<ComplaintRow[] | null>(null);
+   111→  const [loadError, setLoadError] = useState<string | null>(null);
+   112→  const [loading, setLoading] = useState(true);
+   113→  const [tab, setTab] = useState("ALL");
+   114→  const [reloadKey, setReloadKey] = useState(0);
+   115→
+   116→  const load = useCallback(async () => {
+   117→    setLoading(true);
+   118→    setLoadError(null);
+   119→    try {
+   120→      const res = await api.get<ComplaintRow[]>(`/api/v1/complaints${qs({ pageSize: 200 })}`);
+   121→      setRows(res.data);
+   122→    } catch (e) {
+   123→      setLoadError(e instanceof Error ? e.message : "Failed to load complaints.");
+   124→    } finally {
+   125→      setLoading(false);
+   126→    }
+   127→  }, []);
+   128→
+   129→  useEffect(() => { load(); }, [load, reloadKey]);
+   130→
+   131→  // ── Detail state ──
+   132→  const [detail, setDetail] = useState<ComplaintDetail | null>(null);
+   133→  const [detailOpen, setDetailOpen] = useState(false);
+   134→  const [detailLoading, setDetailLoading] = useState(false);
+   135→  const [note, setNote] = useState("");
+   136→  const [busy, setBusy] = useState(false);
+   137→
+   138→  const [techs, setTechs] = useState<TechOpt[]>([]);
+   139→  const [assignTo, setAssignTo] = useState<string>("");
+   140→
+   141→  const openDetail = useCallback(async (id: string) => {
+   142→    setDetailOpen(true);
+   143→    setDetailLoading(true);
+   144→    setDetail(null);
+   145→    setNote("");
+   146→    setAssignTo("");
+   147→    try {
+   148→      const res = await api.get<ComplaintDetail>(`/api/v1/complaints/${id}`);
+   149→      setDetail(res.data);
+   150→    } catch (e) {
+   151→      toast({ title: "Could not load complaint", description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+   152→      setDetailOpen(false);
+   153→    } finally {
+   154→      setDetailLoading(false);
+   155→    }
+   156→  }, [toast]);
+   157→
+   158→  // Technician options for the assign control
+   159→  useEffect(() => {
+   160→    if (!detailOpen || !canAssign) return;
+   161→    let alive = true;
+   162→    api.get<TechOpt[]>(`/api/v1/technicians${qs({ pageSize: 200 })}`)
+   163→      .then((r) => { if (alive) setTechs(Array.isArray(r.data) ? r.data : []); })
+   164→      .catch(() => { if (alive) setTechs([]); });
+   165→    return () => { alive = false; };
+   166→  }, [detailOpen, canAssign]);
+   167→
+   168→  const runTransition = useCallback(async (action: string, extra?: Record<string, unknown>) => {
+   169→    if (!detail) return;
+   170→    setBusy(true);
+   171→    try {
+   172→      await api.post<ComplaintDetail>(`/api/v1/complaints/${detail.id}/transition`, { action, ...extra });
+   173→      toast({ title: "Success", description: `Complaint ${detail.code} — ${humanize(action)} done.` });
+   174→      setDetailOpen(false);
+   175→      setDetail(null);
+   176→      setReloadKey((k) => k + 1);
+   177→    } catch (e) {
+   178→      toast({ title: "Action failed", description: e instanceof Error ? e.message : "Please try again.", variant: "destructive" });
+   179→    } finally {
+   180→      setBusy(false);
+   181→    }
+   182→  }, [detail, toast]);
+   183→
+   184→  // ── Create dialog ──
+   185→  const [createOpen, setCreateOpen] = useState(false);
+   186→  const [submitting, setSubmitting] = useState(false);
+   187→  const [customers, setCustomers] = useState<CustomerOpt[]>([]);
+   188→  const [equipment, setEquipment] = useState<EquipmentOpt[]>([]);
+   189→  const draft = useDraft<CreateForm>({ formKey: "complaint.create", initial: EMPTY_CREATE });
+   190→
+   191→  useEffect(() => {
+   192→    if (!createOpen || !isStaffUser) return;
+   193→    let alive = true;
+   194→    api.get<CustomerOpt[]>(`/api/v1/customers${qs({ pageSize: 200 })}`)
+   195→      .then((r) => { if (alive) setCustomers(Array.isArray(r.data) ? r.data : []); })
+   196→      .catch(() => { if (alive) setCustomers([]); });
+   197→    return () => { alive = false; };
+   198→  }, [createOpen, isStaffUser]);
+   199→
+   200→  // Equipment options follow the selected customer (or the caller's own scope for portal users)
+   201→  useEffect(() => {
+   202→    if (!createOpen) return;
+   203→    if (isStaffUser && !draft.value.customerId) { setEquipment([]); return; }
+   204→    let alive = true;
+   205→    api.get<EquipmentOpt[]>(`/api/v1/equipment${qs({ customerId: draft.value.customerId || undefined, pageSize: 200 })}`)
+   206→      .then((r) => { if (alive) setEquipment(Array.isArray(r.data) ? r.data : []); })
+   207→      .catch(() => { if (alive) setEquipment([]); });
+   208→    return () => { alive = false; };
+   209→  }, [createOpen, draft.value.customerId, isStaffUser]);
+   210→
+   211→  async function submitCreate() {
+   212→    const v = draft.value;
+   213→    if (v.title.trim().length < 3 || v.description.trim().length < 3) {
+   214→      toast({ title: "Check the form", description: "Title and description need at least 3 characters.", variant: "destructive" });
+   215→      return;
+   216→    }
+   217→    setSubmitting(true);
+   218→    try {
+   219→      const payload: Record<string, unknown> = {
+   220→        title: v.title.trim(),
+   221→        description: v.description.trim(),
+   222→        priority: v.priority,
+   223→        ...(isStaffUser && v.customerId ? { customerId: v.customerId } : {}),
+   224→        ...(v.equipmentId ? { equipmentId: v.equipmentId } : {}),
+   225→      };
+   226→      const res = await api.post<ComplaintRow>("/api/v1/complaints", payload);
+   227→      toast({ title: "Complaint created", description: `${res.data.code} logged successfully.` });
+   228→      draft.reset(EMPTY_CREATE);
+   229→      setCreateOpen(false);
+   230→      setReloadKey((k) => k + 1);
+   231→    } catch (e) {
+   232→      toast({ title: "Could not create complaint", description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+   233→    } finally {
+   234→      setSubmitting(false);
+   235→    }
+   236→  }
+   237→
+   238→  // ── Derived views ──
+   239→  const stats = useMemo(() => {
+   240→    const list = rows ?? [];
+   241→    const count = (match: (r: ComplaintRow) => boolean) => list.filter(match).length;
+   242→    return {
+   243→      total: list.length,
+   244→      open: count((r) => OPEN_STATUSES.includes(r.status)),
+   245→      inProgress: count((r) => PROGRESS_STATUSES.includes(r.status)),
+   246→      resolved: count((r) => RESOLVED_STATUSES.includes(r.status)),
+   247→      closed: count((r) => r.status === "CLOSED"),
+   248→      urgent: count((r) => r.priority === "URGENT" && !["CLOSED", "CANCELLED"].includes(r.status)),
+   249→    };
+   250→  }, [rows]);
+   251→
+   252→  const visibleRows = useMemo(() => {
+   253→    const active = STATUS_TABS.find((t) => t.key === tab) ?? STATUS_TABS[0];
+   254→    return (rows ?? []).filter((r) => active.match(r.status));
+   255→  }, [rows, tab]);
+   256→
+   257→  const tabCount = (key: string) => {
+   258→    const active = STATUS_TABS.find((t) => t.key === key);
+   259→    if (!active) return 0;
+   260→    return (rows ?? []).filter((r) => active.match(r.status)).length;
+   261→  };
+   262→
+   263→  const columns: Column<ComplaintRow>[] = [
+   264→    { key: "code", header: "Code", value: (r) => r.code, className: "font-mono text-xs whitespace-nowrap" },
+   265→    { key: "title", header: "Title", value: (r) => r.title, className: "max-w-[260px] truncate" },
+   266→    { key: "priority", header: "Priority", render: (r) => <PriorityBadge priority={r.priority} />, value: (r) => r.priority },
+   267→    { key: "status", header: "Status", render: (r) => <StatusBadge status={r.status} />, value: (r) => r.status },
+   268→    { key: "customer", header: "Customer", value: (r) => r.customer?.companyName ?? "", hideOnMobile: true },
+   269→    { key: "technician", header: "Technician", value: (r) => r.assignedTechnician?.user?.name ?? "", render: (r) => r.assignedTechnician?.user?.name ?? "—", hideOnMobile: true },
+   270→    { key: "equipment", header: "Equipment", value: (r) => r.equipment?.name ?? "", render: (r) => (r.equipment ? `${r.equipment.name} (${r.equipment.assetTag})` : "—"), hideOnMobile: true },
+   271→    { key: "createdAt", header: "Created", value: (r) => r.createdAt, render: (r) => fmtDate(r.createdAt), hideOnMobile: true },
+   272→  ];
+   273→
+   274→  // ── Detail action visibility ──
+   275→  const isAssignedTech = !!detail && !!user && detail.assignedTechnician?.user?.id === user.id;
+   276→  const isPortalOwner = !!detail && !!user && user.role === "CUSTOMER" && user.customerId === detail.customerId;
+   277→  const status = detail?.status;
+   278→
+   279→  return (
+   280→    <div>
+   281→      <PageHeader
+   282→        title="Complaints"
+   283→        subtitle={isStaffUser ? "Track, assign and resolve customer complaints end-to-end." : "Your complaints and their live progress."}
+   284→        actions={canCreate ? (
+   285→          <Button onClick={() => { setCreateOpen(true); }}>
+   286→            <Plus className="h-4 w-4 mr-1.5" /> New Complaint
+   287→          </Button>
+   288→        ) : null}
+   289→      />
+   290→
+   291→      {/* Stats */}
+   292→      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 mb-5">
+   293→        <StatCard title="Total" value={stats.total} icon={<ListChecks className="h-5 w-5" />} loading={!rows && loading} />
+   294→        <StatCard title="Open" value={stats.open} icon={<Clock className="h-5 w-5" />} tone="warning" loading={!rows && loading} />
+   295→        <StatCard title="In Progress" value={stats.inProgress} icon={<Hammer className="h-5 w-5" />} tone="warning" loading={!rows && loading} />
+   296→        <StatCard title="Resolved" value={stats.resolved} icon={<CheckCircle2 className="h-5 w-5" />} tone="success" loading={!rows && loading} />
+   297→        <StatCard title="Closed" value={stats.closed} icon={<ClipboardCheck className="h-5 w-5" />} loading={!rows && loading} />
+   298→        <StatCard title="Urgent Active" value={stats.urgent} icon={<AlertTriangle className="h-5 w-5" />} tone="danger" loading={!rows && loading} />
+   299→      </div>
+   300→
+   301→      {/* Status tabs */}
+   302→      <div className="flex flex-wrap gap-1.5 mb-4">
+   303→        {STATUS_TABS.map((t) => (
+   304→          <button
+   305→            key={t.key}
+   306→            onClick={() => setTab(t.key)}
+   307→            className={cn(
+   308→              "px-3 py-1.5 rounded-full text-xs font-medium border transition-colors",
+   309→              tab === t.key ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-muted text-muted-foreground"
+   310→            )}
+   311→          >
+   312→            {t.label} <span className="opacity-70 tabular-nums">({tabCount(t.key)})</span>
+   313→          </button>
+   314→        ))}
+   315→      </div>
+   316→
+   317→      {loading && !rows ? (
+   318→        <LoadingState label="Loading complaints…" rows={5} />
+   319→      ) : loadError ? (
+   320→        <ErrorState message={loadError} onRetry={load} />
+   321→      ) : visibleRows.length === 0 ? (
+   322→        <EmptyState
+   323→          title="No complaints in this view"
+   324→          hint={canCreate ? "Log a new complaint to get started — drafts are saved automatically while you type." : "Complaints will appear here as they are filed."}
+   325→          action={canCreate ? <Button variant="outline" onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4 mr-1.5" /> New Complaint</Button> : undefined}
+   326→        />
+   327→      ) : (
+   328→        <DataTable
+   329→          columns={columns}
+   330→          rows={visibleRows}
+   331→          rowKey={(r) => r.id}
+   332→          onRowClick={(r) => openDetail(r.id)}
+   333→          searchPlaceholder="Search code, title, description…"
+   334→          filters={[{
+   335→            key: "priority",
+   336→            label: "Priorities",
+   337→            options: PRIORITIES.map((p) => ({ value: p, label: humanize(p) })),
+   338→            match: (row, value) => row.priority === value,
+   339→          }]}
+   340→          emptyTitle="No complaints match"
+   341→          exportName="complaints"
+   342→        />
+   343→      )}
+   344→
+   345→      {/* ── Detail dialog ── */}
+   346→      <Dialog open={detailOpen} onOpenChange={(open) => { if (!open) { setDetailOpen(false); setDetail(null); } }}>
+   347→        <DialogContent className="max-w-3xl max-h-[88vh] overflow-y-auto hms-scroll">
+   348→          <DialogTitle className="sr-only">Details</DialogTitle>
+   349→          {detailLoading || !detail ? (
+   350→            <LoadingState label="Loading complaint…" />
+   351→          ) : (
+   352→            <>
+   353→              <DialogHeader>
+   354→                <DialogTitle className="flex flex-wrap items-center gap-2">
+   355→                  <span className="font-mono text-sm text-muted-foreground">{detail.code}</span>
+   356→                  <span className="text-base">{detail.title}</span>
+   357→                  <StatusBadge status={detail.status} />
+   358→                  <PriorityBadge priority={detail.priority} />
+   359→                </DialogTitle>
+   360→                <DialogDescription>
+   361→                  {detail.customer?.companyName ?? "—"}
+   362→                  {detail.equipment ? ` · ${detail.equipment.name} (${detail.equipment.assetTag})` : ""}
+   363→                  {` · Logged ${fmtDateTime(detail.createdAt)}`}
+   364→                </DialogDescription>
+   365→              </DialogHeader>
+   366→
+   367→              <div className="grid gap-4 sm:grid-cols-2 text-sm">
+   368→                <div className="space-y-1">
+   369→                  <p className="text-muted-foreground text-xs uppercase tracking-wide">Technician</p>
+   370→                  <p>{detail.assignedTechnician?.user?.name ?? "Unassigned"}</p>
+   371→                </div>
+   372→                <div className="space-y-1">
+   373→                  <p className="text-muted-foreground text-xs uppercase tracking-wide">Reported</p>
+   374→                  <p>{fmtDateTime(detail.createdAt)}</p>
+   375→                </div>
+   376→              </div>
+   377→
+   378→              <div className="text-sm space-y-1">
+   379→                <p className="text-muted-foreground text-xs uppercase tracking-wide">Description</p>
+   380→                <p className="whitespace-pre-wrap rounded-lg bg-muted/40 p-3">{detail.description}</p>
+   381→              </div>
+   382→
+   383→              {detail.resolutionNotes ? (
+   384→                <div className="text-sm space-y-1">
+   385→                  <p className="text-muted-foreground text-xs uppercase tracking-wide">Resolution notes</p>
+   386→                  <p className="whitespace-pre-wrap rounded-lg bg-muted/40 p-3">{detail.resolutionNotes}</p>
+   387→                </div>
+   388→              ) : null}
+   389→              {detail.customerFeedback ? (
+   390→                <div className="text-sm space-y-1">
+   391→                  <p className="text-muted-foreground text-xs uppercase tracking-wide">Customer feedback</p>
+   392→                  <p className="whitespace-pre-wrap rounded-lg bg-muted/40 p-3">{detail.customerFeedback}</p>
+   393→                </div>
+   394→              ) : null}
+   395→
+   396→              {/* Timeline */}
+   397→              <div className="text-sm">
+   398→                <p className="text-muted-foreground text-xs uppercase tracking-wide mb-2">Status timeline</p>
+   399→                {detail.statusHistory.length === 0 ? (
+   400→                  <p className="text-muted-foreground">No history recorded.</p>
+   401→                ) : (
+   402→                  <ol className="relative border-l ml-2 space-y-3">
+   403→                    {detail.statusHistory.map((h) => (
+   404→                      <li key={h.id} className="ml-4">
+   405→                        <span className="absolute -left-[5px] mt-1.5 h-2.5 w-2.5 rounded-full bg-primary" aria-hidden />
+   406→                        <div className="flex flex-wrap items-center gap-2">
+   407→                          <StatusBadge status={h.toStatus} />
+   408→                          <span className="text-xs text-muted-foreground">{fmtDateTime(h.createdAt)}</span>
+   409→                          {h.changedByName ? <Badge variant="outline" className="text-[10px]">{h.changedByName}</Badge> : null}
+   410→                        </div>
+   411→                        {h.note ? <p className="text-xs text-muted-foreground mt-0.5">{h.note}</p> : null}
+   412→                      </li>
+   413→                    ))}
+   414→                  </ol>
+   415→                )}
+   416→              </div>
+   417→
+   418→              {detail.workOrders.length > 0 ? (
+   419→                <div className="text-sm">
+   420→                  <p className="text-muted-foreground text-xs uppercase tracking-wide mb-2">Linked work orders</p>
+   421→                  <div className="flex flex-wrap gap-2">
+   422→                    {detail.workOrders.map((w) => (
+   423→                      <span key={w.id} className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs">
+   424→                        <span className="font-mono">{w.code}</span>
+   425→                        <StatusBadge status={w.status} />
+   426→                        {w.technician?.user?.name ? <span className="text-muted-foreground">{w.technician.user.name}</span> : null}
+   427→                      </span>
+   428→                    ))}
+   429→                  </div>
+   430→                </div>
+   431→              ) : null}
+   432→
+   433→              <Separator />
+   434→
+   435→              {/* Actions — contextual to role and status */}
+   436→              <div className="space-y-3">
+   437→                {status === "NEW" && canAssign ? (
+   438→                  <div className="rounded-lg border p-3 space-y-2">
+   439→                    <Label className="text-xs uppercase tracking-wide text-muted-foreground">Assign technician</Label>
+   440→                    <div className="flex flex-col sm:flex-row gap-2">
+   441→                      <Select value={assignTo} onValueChange={setAssignTo}>
+   442→                        <SelectTrigger className="flex-1" aria-label="Technician">
+   443→                          <SelectValue placeholder={techs.length ? "Select technician…" : "No technicians available"} />
+   444→                        </SelectTrigger>
+   445→                        <SelectContent>
+   446→                          {techs.map((t) => (
+   447→                            <SelectItem key={t.id} value={t.id}>
+   448→                              {t.user?.name ?? t.employeeNo ?? t.id}{t.specialty ? ` — ${humanize(t.specialty)}` : ""}
+   449→                            </SelectItem>
+   450→                          ))}
+   451→                        </SelectContent>
+   452→                      </Select>
+   453→                      <Button disabled={!assignTo || busy} onClick={() => runTransition("assign", { technicianId: assignTo })}>
+   454→                        <Send className="h-4 w-4 mr-1.5" /> Assign
+   455→                      </Button>
+   456→                    </div>
+   457→                  </div>
+   458→                ) : null}
+   459→
+   460→                {status === "ASSIGNED" && isAssignedTech ? (
+   461→                  <div className="rounded-lg border p-3">
+   462→                    <p className="text-sm mb-2">This complaint is assigned to you. Accept to start work?</p>
+   463→                    <Button disabled={busy} onClick={() => runTransition("accept")}>
+   464→                      <Hammer className="h-4 w-4 mr-1.5" /> Accept &amp; Start Work
+   465→                    </Button>
+   466→                  </div>
+   467→                ) : null}
+   468→
+   469→                {status === "IN_PROGRESS" && (isAssignedTech || canUpdate) ? (
+   470→                  <div className="rounded-lg border p-3 space-y-2">
+   471→                    <Label htmlFor="complete-note" className="text-xs uppercase tracking-wide text-muted-foreground">Resolution notes</Label>
+   472→                    <Textarea id="complete-note" value={note} onChange={(e) => setNote(e.target.value)} placeholder="What was done to resolve this complaint…" rows={3} />
+   473→                    <Button disabled={busy} onClick={() => runTransition("complete", { note: note || undefined })}>
+   474→                      <CheckCircle2 className="h-4 w-4 mr-1.5" /> Mark Completed
+   475→                    </Button>
+   476→                  </div>
+   477→                ) : null}
+   478→
+   479→                {status === "COMPLETED" && (isPortalOwner || canUpdate) ? (
+   480→                  <div className="rounded-lg border p-3 space-y-2">
+   481→                    <Label htmlFor="confirm-note" className="text-xs uppercase tracking-wide text-muted-foreground">Confirm resolution{isPortalOwner ? "" : " (on behalf of customer)"}</Label>
+   482→                    <Textarea id="confirm-note" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Optional feedback…" rows={2} />
+   483→                    <Button disabled={busy} onClick={() => runTransition("confirm", { note: note || undefined })}>
+   484→                      <CheckCircle2 className="h-4 w-4 mr-1.5" /> Confirm Resolved
+   485→                    </Button>
+   486→                  </div>
+   487→                ) : null}
+   488→
+   489→                {status === "CONFIRMED" && canClose ? (
+   490→                  <div className="rounded-lg border p-3">
+   491→                    <p className="text-sm mb-2">Customer confirmed. Close this complaint to archive it?</p>
+   492→                    <Button variant="outline" disabled={busy} onClick={() => runTransition("close")}>
+   493→                      <ClipboardCheck className="h-4 w-4 mr-1.5" /> Close Complaint
+   494→                    </Button>
+   495→                  </div>
+   496→                ) : null}
+   497→
+   498→                {status && ["NEW", "ASSIGNED", "IN_PROGRESS"].includes(status) && isStaffUser ? (
+   499→                  <div className="rounded-lg border border-destructive/30 p-3">
+   500→                    <p className="text-sm mb-2 text-muted-foreground">Cancelling stops the workflow permanently.</p>
+   501→                    <Button variant="destructive" disabled={busy} onClick={() => { if (window.confirm(`Cancel complaint ${detail.code}? This cannot be undone.`)) runTransition("cancel"); }}>
+   502→                      Cancel Complaint
+   503→                    </Button>
+   504→                  </div>
+   505→                ) : null}
+   506→              </div>
+   507→            </>
+   508→          )}
+   509→        </DialogContent>
+   510→      </Dialog>
+   511→
+   512→      {/* ── Create dialog ── */}
+   513→      <Dialog open={createOpen} onOpenChange={(open) => { if (!open) setCreateOpen(false); }}>
+   514→        <DialogContent className="max-w-xl max-h-[88vh] overflow-y-auto hms-scroll">
+   515→          <DialogHeader>
+   516→            <DialogTitle>New Complaint</DialogTitle>
+   517→            <DialogDescription>
+   518→              {isStaffUser ? "Log a complaint on behalf of a customer." : "Report an issue — our team will assign a technician."}
+   519→              {draft.draftExists ? " A draft was found — use Restore to recover it." : ""}
+   520→            </DialogDescription>
+   521→          </DialogHeader>
+   522→
+   523→          {draft.draftExists ? (
+   524→            <div className="flex items-center justify-between rounded-lg border border-dashed p-2.5 text-sm">
+   525→              <span className="text-muted-foreground">Unsubmitted draft saved {draft.lastSavedAt ? fmtDateTime(draft.lastSavedAt) : "earlier"}.</span>
+   526→              <Button size="sm" variant="outline" onClick={draft.restore}>Restore</Button>
+   527→            </div>
+   528→          ) : null}
+   529→
+   530→          <div className="space-y-4">
+   531→            <div className="space-y-1.5">
+   532→              <Label htmlFor="c-title">Title *</Label>
+   533→              <Input id="c-title" value={draft.value.title} onChange={(e) => draft.setValue({ title: e.target.value })} placeholder="Short summary of the issue" maxLength={200} />
+   534→            </div>
+   535→            <div className="space-y-1.5">
+   536→              <Label htmlFor="c-desc">Description *</Label>
+   537→              <Textarea id="c-desc" value={draft.value.description} onChange={(e) => draft.setValue({ description: e.target.value })} placeholder="Describe the problem, location and impact…" rows={4} maxLength={5000} />
+   538→            </div>
+   539→            <div className="grid gap-4 sm:grid-cols-2">
+   540→              <div className="space-y-1.5">
+   541→                <Label>Priority</Label>
+   542→                <Select value={draft.value.priority} onValueChange={(v) => draft.setValue({ priority: v })}>
+   543→                  <SelectTrigger aria-label="Priority"><SelectValue /></SelectTrigger>
+   544→                  <SelectContent>
+   545→                    {PRIORITIES.map((p) => <SelectItem key={p} value={p}>{humanize(p)}</SelectItem>)}
+   546→                  </SelectContent>
+   547→                </Select>
+   548→              </div>
+   549→              {isStaffUser ? (
+   550→                <div className="space-y-1.5">
+   551→                  <Label>Customer *</Label>
+   552→                  <Select value={draft.value.customerId} onValueChange={(v) => draft.setValue({ customerId: v, equipmentId: "" })}>
+   553→                    <SelectTrigger aria-label="Customer"><SelectValue placeholder="Select customer…" /></SelectTrigger>
+   554→                    <SelectContent>
+   555→                      {customers.map((c) => <SelectItem key={c.id} value={c.id}>{c.companyName ?? c.name ?? c.id}</SelectItem>)}
+   556→                    </SelectContent>
+   557→                  </Select>
+   558→                </div>
+   559→              ) : null}
+   560→            </div>
+   561→            <div className="space-y-1.5">
+   562→              <Label>Equipment</Label>
+   563→              <Select value={draft.value.equipmentId} onValueChange={(v) => draft.setValue({ equipmentId: v })}>
+   564→                <SelectTrigger aria-label="Equipment">
+   565→                  <SelectValue placeholder={isStaffUser && !draft.value.customerId ? "Select a customer first…" : equipment.length ? "Optional — pick the equipment…" : "No equipment available"} />
+   566→                </SelectTrigger>
+   567→                <SelectContent>
+   568→                  {equipment.map((e) => <SelectItem key={e.id} value={e.id}>{e.name ?? e.id}{e.assetTag ? ` (${e.assetTag})` : ""}</SelectItem>)}
+   569→                </SelectContent>
+   570→              </Select>
+   571→            </div>
+   572→            {draft.dirty ? <p className="text-xs text-muted-foreground">Draft auto-saves as you type — safe to leave and restore later.</p> : null}
+   573→          </div>
+   574→
+   575→          <DialogFooter>
+   576→            <Button variant="outline" onClick={() => setCreateOpen(false)} disabled={submitting}>Cancel</Button>
+   577→            <Button
+   578→              onClick={submitCreate}
+   579→              disabled={submitting || draft.value.title.trim().length < 3 || draft.value.description.trim().length < 3 || (isStaffUser && !draft.value.customerId)}
+   580→            >
+   581→              {submitting ? "Saving…" : "Create Complaint"}
+   582→            </Button>
+   583→          </DialogFooter>
+   584→        </DialogContent>
+   585→      </Dialog>
+   586→    </div>
+   587→  );
+   588→}
+   589→

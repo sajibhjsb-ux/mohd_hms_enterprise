@@ -24,6 +24,8 @@ export type DraftState<T> = {
   discard: () => void;
   reset: (next: T) => void;
   lastSavedAt: Date | null;
+  /** Explicitly flush the current form state to localStorage + server draft backup right now. */
+  saveNow: () => void;
 };
 
 /**
@@ -39,9 +41,13 @@ export function useDraft<T extends object>(opts: DraftOptions<T>): DraftState<T>
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const optsRef = useRef(opts);
+  const valueRef = useRef<T>(initial);
   useEffect(() => {
     optsRef.current = opts;
   });
+  useEffect(() => {
+    valueRef.current = value;
+  }, [value]);
 
   // Load an existing draft once (client-only; never auto-overwrites user typing)
   const [savedDraft, setSavedDraft] = useState<T | null>(() => {
@@ -107,6 +113,13 @@ export function useDraft<T extends object>(opts: DraftOptions<T>): DraftState<T>
     setFull(next);
   }
 
+  /** Explicit flush: cancel the pending debounce and persist the current state now. */
+  function saveNow() {
+    if (timer.current) { clearTimeout(timer.current); timer.current = null; }
+    persist(valueRef.current);
+    setDirty(false);
+  }
+
   // Warn on accidental navigation while dirty (browser-level protection)
   useEffect(() => {
     if (!dirty) return;
@@ -118,7 +131,7 @@ export function useDraft<T extends object>(opts: DraftOptions<T>): DraftState<T>
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [dirty]);
 
-  return { value, setValue, dirty, draftExists, restore, discard, reset, lastSavedAt };
+  return { value, setValue, dirty, draftExists, restore, discard, reset, lastSavedAt, saveNow };
 }
 
 /** Route-leave guard for in-app navigation while a form is dirty. */

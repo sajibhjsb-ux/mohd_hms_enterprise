@@ -2,14 +2,14 @@
 
 // MOHD.HMS ENTERPRISE — Complaints module.
 // Customer portal + staff workflow: NEW → ASSIGNED → IN_PROGRESS → COMPLETED →
-// CONFIRMED → CLOSED (+ CANCELLED). Role-gated actions, live status timeline,
-// draft-protected creation form.
+// CONFIRMED → CLOSED (+ CANCELLED). Role-gated actions, live status timeline.
+// Complaint creation uses the dedicated full-page entry (complaintsView = "new").
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, qs } from "@/lib/hms/api-client";
 import { hasPerm, useSession } from "@/components/hms/session";
+import { useUi } from "@/lib/hms/ui-store";
 import { useToast } from "@/hooks/use-toast";
-import { useDraft } from "@/hooks/use-draft";
 import { DataTable, type Column } from "@/components/hms/shared/data-table";
 import {
   PageHeader, StatCard, StatusBadge, PriorityBadge, LoadingState, EmptyState, ErrorState,
@@ -17,7 +17,6 @@ import {
 import { PERMISSIONS, PRIORITIES, humanize } from "@/lib/hms/constants";
 import { fmtDate, fmtDateTime } from "@/lib/hms/format";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
@@ -28,6 +27,7 @@ import {
   AlertTriangle, CheckCircle2, ClipboardCheck, Clock, Hammer, ListChecks, Plus, Send,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ComplaintNewPage } from "./new-page";
 
 // ── Types ──
 
@@ -68,18 +68,6 @@ type ComplaintDetail = ComplaintRow & {
 };
 
 type TechOpt = { id: string; employeeNo?: string; specialty?: string; user?: { name?: string } | null };
-type CustomerOpt = { id: string; companyName?: string; name?: string };
-type EquipmentOpt = { id: string; name?: string; assetTag?: string };
-
-type CreateForm = {
-  title: string;
-  description: string;
-  priority: string;
-  customerId: string;
-  equipmentId: string;
-};
-
-const EMPTY_CREATE: CreateForm = { title: "", description: "", priority: "MEDIUM", customerId: "", equipmentId: "" };
 
 const OPEN_STATUSES = ["NEW", "ASSIGNED"];
 const PROGRESS_STATUSES = ["IN_PROGRESS"];
@@ -99,6 +87,7 @@ const STATUS_TABS: { key: string; label: string; match: (s: string) => boolean }
 export function ComplaintsModule() {
   const { user } = useSession();
   const { toast } = useToast();
+  const { complaintsView, setComplaintsView, complaintsFocusId, setComplaintsFocusId } = useUi();
 
   const canCreate = hasPerm(user, PERMISSIONS.complaints_create);
   const canAssign = hasPerm(user, PERMISSIONS.complaints_assign);
@@ -165,6 +154,14 @@ export function ComplaintsModule() {
     return () => { alive = false; };
   }, [detailOpen, canAssign]);
 
+  // After the dedicated entry page creates a complaint, open its details here.
+  useEffect(() => {
+    if (!complaintsFocusId) return;
+    const id = complaintsFocusId;
+    setComplaintsFocusId(null);
+    openDetail(id);
+  }, [complaintsFocusId, setComplaintsFocusId, openDetail]);
+
   const runTransition = useCallback(async (action: string, extra?: Record<string, unknown>) => {
     if (!detail) return;
     setBusy(true);
@@ -180,60 +177,6 @@ export function ComplaintsModule() {
       setBusy(false);
     }
   }, [detail, toast]);
-
-  // ── Create dialog ──
-  const [createOpen, setCreateOpen] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [customers, setCustomers] = useState<CustomerOpt[]>([]);
-  const [equipment, setEquipment] = useState<EquipmentOpt[]>([]);
-  const draft = useDraft<CreateForm>({ formKey: "complaint.create", initial: EMPTY_CREATE });
-
-  useEffect(() => {
-    if (!createOpen || !isStaffUser) return;
-    let alive = true;
-    api.get<CustomerOpt[]>(`/api/v1/customers${qs({ pageSize: 200 })}`)
-      .then((r) => { if (alive) setCustomers(Array.isArray(r.data) ? r.data : []); })
-      .catch(() => { if (alive) setCustomers([]); });
-    return () => { alive = false; };
-  }, [createOpen, isStaffUser]);
-
-  // Equipment options follow the selected customer (or the caller's own scope for portal users)
-  useEffect(() => {
-    if (!createOpen) return;
-    if (isStaffUser && !draft.value.customerId) { setEquipment([]); return; }
-    let alive = true;
-    api.get<EquipmentOpt[]>(`/api/v1/equipment${qs({ customerId: draft.value.customerId || undefined, pageSize: 200 })}`)
-      .then((r) => { if (alive) setEquipment(Array.isArray(r.data) ? r.data : []); })
-      .catch(() => { if (alive) setEquipment([]); });
-    return () => { alive = false; };
-  }, [createOpen, draft.value.customerId, isStaffUser]);
-
-  async function submitCreate() {
-    const v = draft.value;
-    if (v.title.trim().length < 3 || v.description.trim().length < 3) {
-      toast({ title: "Check the form", description: "Title and description need at least 3 characters.", variant: "destructive" });
-      return;
-    }
-    setSubmitting(true);
-    try {
-      const payload: Record<string, unknown> = {
-        title: v.title.trim(),
-        description: v.description.trim(),
-        priority: v.priority,
-        ...(isStaffUser && v.customerId ? { customerId: v.customerId } : {}),
-        ...(v.equipmentId ? { equipmentId: v.equipmentId } : {}),
-      };
-      const res = await api.post<ComplaintRow>("/api/v1/complaints", payload);
-      toast({ title: "Complaint created", description: `${res.data.code} logged successfully.` });
-      draft.reset(EMPTY_CREATE);
-      setCreateOpen(false);
-      setReloadKey((k) => k + 1);
-    } catch (e) {
-      toast({ title: "Could not create complaint", description: e instanceof Error ? e.message : undefined, variant: "destructive" });
-    } finally {
-      setSubmitting(false);
-    }
-  }
 
   // ── Derived views ──
   const stats = useMemo(() => {
@@ -276,13 +219,18 @@ export function ComplaintsModule() {
   const isPortalOwner = !!detail && !!user && user.role === "CUSTOMER" && user.customerId === detail.customerId;
   const status = detail?.status;
 
+  // Dedicated complaint entry page (replaces the old create modal).
+  if (complaintsView === "new") {
+    return <ComplaintNewPage />;
+  }
+
   return (
     <div>
       <PageHeader
         title="Complaints"
         subtitle={isStaffUser ? "Track, assign and resolve customer complaints end-to-end." : "Your complaints and their live progress."}
         actions={canCreate ? (
-          <Button onClick={() => { setCreateOpen(true); }}>
+          <Button onClick={() => setComplaintsView("new")}>
             <Plus className="h-4 w-4 mr-1.5" /> New Complaint
           </Button>
         ) : null}
@@ -322,7 +270,7 @@ export function ComplaintsModule() {
         <EmptyState
           title="No complaints in this view"
           hint={canCreate ? "Log a new complaint to get started — drafts are saved automatically while you type." : "Complaints will appear here as they are filed."}
-          action={canCreate ? <Button variant="outline" onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4 mr-1.5" /> New Complaint</Button> : undefined}
+          action={canCreate ? <Button variant="outline" onClick={() => setComplaintsView("new")}><Plus className="h-4 w-4 mr-1.5" /> New Complaint</Button> : undefined}
         />
       ) : (
         <DataTable
@@ -506,81 +454,6 @@ export function ComplaintsModule() {
               </div>
             </>
           )}
-        </DialogContent>
-      </Dialog>
-
-      {/* ── Create dialog ── */}
-      <Dialog open={createOpen} onOpenChange={(open) => { if (!open) setCreateOpen(false); }}>
-        <DialogContent className="max-w-xl max-h-[88vh] overflow-y-auto hms-scroll">
-          <DialogHeader>
-            <DialogTitle>New Complaint</DialogTitle>
-            <DialogDescription>
-              {isStaffUser ? "Log a complaint on behalf of a customer." : "Report an issue — our team will assign a technician."}
-              {draft.draftExists ? " A draft was found — use Restore to recover it." : ""}
-            </DialogDescription>
-          </DialogHeader>
-
-          {draft.draftExists ? (
-            <div className="flex items-center justify-between rounded-lg border border-dashed p-2.5 text-sm">
-              <span className="text-muted-foreground">Unsubmitted draft saved {draft.lastSavedAt ? fmtDateTime(draft.lastSavedAt) : "earlier"}.</span>
-              <Button size="sm" variant="outline" onClick={draft.restore}>Restore</Button>
-            </div>
-          ) : null}
-
-          <div className="space-y-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="c-title">Title *</Label>
-              <Input id="c-title" value={draft.value.title} onChange={(e) => draft.setValue({ title: e.target.value })} placeholder="Short summary of the issue" maxLength={200} />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="c-desc">Description *</Label>
-              <Textarea id="c-desc" value={draft.value.description} onChange={(e) => draft.setValue({ description: e.target.value })} placeholder="Describe the problem, location and impact…" rows={4} maxLength={5000} />
-            </div>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label>Priority</Label>
-                <Select value={draft.value.priority} onValueChange={(v) => draft.setValue({ priority: v })}>
-                  <SelectTrigger aria-label="Priority"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {PRIORITIES.map((p) => <SelectItem key={p} value={p}>{humanize(p)}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-              {isStaffUser ? (
-                <div className="space-y-1.5">
-                  <Label>Customer *</Label>
-                  <Select value={draft.value.customerId} onValueChange={(v) => draft.setValue({ customerId: v, equipmentId: "" })}>
-                    <SelectTrigger aria-label="Customer"><SelectValue placeholder="Select customer…" /></SelectTrigger>
-                    <SelectContent>
-                      {customers.map((c) => <SelectItem key={c.id} value={c.id}>{c.companyName ?? c.name ?? c.id}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-              ) : null}
-            </div>
-            <div className="space-y-1.5">
-              <Label>Equipment</Label>
-              <Select value={draft.value.equipmentId} onValueChange={(v) => draft.setValue({ equipmentId: v })}>
-                <SelectTrigger aria-label="Equipment">
-                  <SelectValue placeholder={isStaffUser && !draft.value.customerId ? "Select a customer first…" : equipment.length ? "Optional — pick the equipment…" : "No equipment available"} />
-                </SelectTrigger>
-                <SelectContent>
-                  {equipment.map((e) => <SelectItem key={e.id} value={e.id}>{e.name ?? e.id}{e.assetTag ? ` (${e.assetTag})` : ""}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            {draft.dirty ? <p className="text-xs text-muted-foreground">Draft auto-saves as you type — safe to leave and restore later.</p> : null}
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateOpen(false)} disabled={submitting}>Cancel</Button>
-            <Button
-              onClick={submitCreate}
-              disabled={submitting || draft.value.title.trim().length < 3 || draft.value.description.trim().length < 3 || (isStaffUser && !draft.value.customerId)}
-            >
-              {submitting ? "Saving…" : "Create Complaint"}
-            </Button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
