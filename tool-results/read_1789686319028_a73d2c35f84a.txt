@@ -1,0 +1,2002 @@
+     1→# MOHD.HMS ENTERPRISE
+     2→# COMPLETE NEW ENTERPRISE APPLICATION — ZERO TO PRODUCTION
+     3→
+     4→You are acting as a:
+     5→
+     6→- Principal Software Architect
+     7→- Senior Full-Stack Engineer
+     8→- Backend Engineer
+     9→- Frontend Engineer
+    10→- PostgreSQL Database Architect
+    11→- DevOps Engineer
+    12→- Security Engineer
+    13→- QA Engineer
+    14→- Production Deployment Engineer
+    15→
+    16→Your task is to BUILD A COMPLETELY NEW MOHD.HMS ENTERPRISE APPLICATION FROM ZERO TO PRODUCTION.
+    17→
+    18→THIS IS A NEW APPLICATION.
+    19→
+    20→Do not attempt to repair the old application's architecture.
+    21→
+    22→Do not copy broken authentication/session/database logic from the old application.
+    23→
+    24→Build a clean, modular, enterprise-grade production architecture.
+    25→
+    26→============================================================
+    27→1. CORE RULE
+    28→============================================================
+    29→
+    30→FOLLOW THE STRUCTURE.
+    31→
+    32→DO NOT CHANGE THE STRUCTURE UNLESS THERE IS A REQUIREMENT TO CHANGE IT.
+    33→
+    34→Build the application systematically:
+    35→
+    36→1. Architecture
+    37→2. Project structure
+    38→3. Database
+    39→4. Backend
+    40→5. Authentication
+    41→6. RBAC
+    42→7. API
+    43→8. Frontend
+    44→9. Modules
+    45→10. Business workflows
+    46→11. Notifications
+    47→12. Redis
+    48→13. File storage
+    49→14. PDF/reporting
+    50→15. Security
+    51→16. Testing
+    52→17. Browser QA
+    53→18. Deployment
+    54→19. Monitoring
+    55→20. Backup/recovery
+    56→21. Production verification
+    57→
+    58→Do not jump directly to UI development.
+    59→
+    60→The application must be production-ready, not a prototype.
+    61→
+    62→
+    63→============================================================
+    64→2. APPLICATION NAME
+    65→============================================================
+    66→
+    67→Application:
+    68→
+    69→MOHD.HMS ENTERPRISE
+    70→
+    71→Product type:
+    72→
+    73→Enterprise Smart Facility Maintenance Management System
+    74→
+    75→The application should manage:
+    76→
+    77→- Facility maintenance
+    78→- Building maintenance
+    79→- Equipment
+    80→- Preventive maintenance
+    81→- Corrective maintenance
+    82→- Complaints
+    83→- Work orders
+    84→- Technicians
+    85→- Customers
+    86→- Employees
+    87→- Inventory
+    88→- Procurement
+    89→- Quotations
+    90→- Invoices
+    91→- Finance
+    92→- HR
+    93→- Inspections
+    94→- IRMS
+    95→- Reports
+    96→- Notifications
+    97→- Documents
+    98→- Assets
+    99→- Vehicles
+   100→
+   101→
+   102→============================================================
+   103→3. PRODUCTION ENVIRONMENT
+   104→============================================================
+   105→
+   106→Production application will run on a LOCAL HOME SERVER.
+   107→
+   108→Server:
+   109→
+   110→192.168.100.110
+   111→
+   112→Application public website:
+   113→
+   114→https://www.mohdhms.com
+   115→
+   116→Application local port:
+   117→
+   118→3100
+   119→
+   120→Internal application URL:
+   121→
+   122→http://192.168.100.110:3100
+   123→
+   124→Public architecture:
+   125→
+   126→USER
+   127→ ↓
+   128→https://www.mohdhms.com
+   129→ ↓
+   130→CLOUDFLARE
+   131→ ↓
+   132→CLOUDFLARE TUNNEL
+   133→ ↓
+   134→192.168.100.110:3100
+   135→ ↓
+   136→APPLICATION
+   137→
+   138→
+   139→============================================================
+   140→4. DATABASE ARCHITECTURE
+   141→============================================================
+   142→
+   143→PRIMARY DATABASE:
+   144→
+   145→POSTGRESQL
+   146→
+   147→PostgreSQL MUST be the authoritative production database.
+   148→
+   149→Redis MUST NOT be the primary database.
+   150→
+   151→Redis is for:
+   152→
+   153→- cache
+   154→- rate limiting
+   155→- temporary data
+   156→- background jobs where appropriate
+   157→- short-lived session data only if explicitly designed
+   158→
+   159→Permanent business data MUST be stored in PostgreSQL.
+   160→
+   161→Architecture:
+   162→
+   163→APPLICATION
+   164→ ├── PostgreSQL = SOURCE OF TRUTH
+   165→ └── Redis = CACHE / TEMPORARY DATA
+   166→
+   167→
+   168→============================================================
+   169→5. TECHNOLOGY STACK
+   170→============================================================
+   171→
+   172→Use a modern production-grade stack.
+   173→
+   174→FRONTEND:
+   175→
+   176→Next.js
+   177→TypeScript
+   178→React
+   179→Tailwind CSS
+   180→
+   181→BACKEND:
+   182→
+   183→Python
+   184→FastAPI
+   185→Pydantic
+   186→SQLAlchemy
+   187→Alembic
+   188→
+   189→DATABASE:
+   190→
+   191→PostgreSQL
+   192→
+   193→CACHE:
+   194→
+   195→Redis
+   196→
+   197→API:
+   198→
+   199→REST API
+   200→OpenAPI
+   201→Swagger
+   202→
+   203→AUTHENTICATION:
+   204→
+   205→Secure session/JWT architecture appropriate for the application.
+   206→
+   207→PASSWORD HASHING:
+   208→
+   209→Argon2id or another modern secure password hashing algorithm.
+   210→
+   211→INFRASTRUCTURE:
+   212→
+   213→Ubuntu Server
+   214→Docker
+   215→Docker Compose
+   216→Nginx only if required
+   217→Cloudflare Tunnel
+   218→UFW Firewall
+   219→
+   220→PROCESS:
+   221→
+   222→Use a reliable production process/container architecture.
+   223→
+   224→Do not run development servers in production.
+   225→
+   226→
+   227→============================================================
+   228→6. PROJECT STRUCTURE
+   229→============================================================
+   230→
+   231→Create a clean monorepo structure.
+   232→
+   233→Recommended:
+   234→
+   235→mohd-hms/
+   236→│
+   237→├── README.md
+   238→├── .gitignore
+   239→├── .env.example
+   240→├── docker-compose.yml
+   241→├── Makefile
+   242→│
+   243→├── frontend/
+   244→│   ├── package.json
+   245→│   ├── next.config.ts
+   246→│   ├── tsconfig.json
+   247→│   ├── src/
+   248→│   │   ├── app/
+   249→│   │   ├── components/
+   250→│   │   ├── features/
+   251→│   │   ├── hooks/
+   252→│   │   ├── lib/
+   253→│   │   ├── services/
+   254→│   │   ├── stores/
+   255→│   │   ├── types/
+   256→│   │   └── utils/
+   257→│   └── public/
+   258→│
+   259→├── backend/
+   260→│   ├── requirements.txt
+   261→│   ├── pyproject.toml
+   262→│   ├── Dockerfile
+   263→│   ├── alembic.ini
+   264→│   │
+   265→│   ├── app/
+   266→│   │   ├── main.py
+   267→│   │   ├── core/
+   268→│   │   ├── api/
+   269→│   │   ├── models/
+   270→│   │   ├── schemas/
+   271→│   │   ├── repositories/
+   272→│   │   ├── services/
+   273→│   │   ├── integrations/
+   274→│   │   ├── middleware/
+   275→│   │   └── features/
+   276→│   │
+   277→│   └── tests/
+   278→│
+   279→├── database/
+   280→│   ├── migrations/
+   281→│   ├── seeds/
+   282→│   ├── backups/
+   283→│   └── README.md
+   284→│
+   285→├── infrastructure/
+   286→│   ├── docker/
+   287→│   ├── nginx/
+   288→│   ├── cloudflare/
+   289→│   ├── systemd/
+   290→│   └── scripts/
+   291→│
+   292→├── docs/
+   293→│   ├── architecture/
+   294→│   ├── api/
+   295→│   ├── database/
+   296→│   ├── deployment/
+   297→│   ├── security/
+   298→│   └── operations/
+   299→│
+   300→└── tests/
+   301→    ├── integration/
+   302→    ├── e2e/
+   303→    └── security/
+   304→
+   305→
+   306→Use feature-based modular architecture.
+   307→
+   308→Do not create a giant monolithic file.
+   309→
+   310→Do not put all business logic inside route controllers.
+   311→
+   312→
+   313→============================================================
+   314→7. BACKEND ARCHITECTURE
+   315→============================================================
+   316→
+   317→Use:
+   318→
+   319→API
+   320→ ↓
+   321→Authentication
+   322→ ↓
+   323→RBAC
+   324→ ↓
+   325→Service Layer
+   326→ ↓
+   327→Repository Layer
+   328→ ↓
+   329→SQLAlchemy
+   330→ ↓
+   331→PostgreSQL
+   332→
+   333→Example:
+   334→
+   335→Browser
+   336→ ↓
+   337→FastAPI endpoint
+   338→ ↓
+   339→Auth dependency
+   340→ ↓
+   341→RBAC dependency
+   342→ ↓
+   343→Service
+   344→ ↓
+   345→Repository
+   346→ ↓
+   347→PostgreSQL
+   348→ ↓
+   349→Response
+   350→
+   351→
+   352→Business logic belongs in services.
+   353→
+   354→Database access belongs in repositories.
+   355→
+   356→HTTP handling belongs in API routes.
+   357→
+   358→
+   359→============================================================
+   360→8. DATABASE ARCHITECTURE
+   361→============================================================
+   362→
+   363→Design PostgreSQL properly before implementing application modules.
+   364→
+   365→Use:
+   366→
+   367→- UUID primary keys where appropriate
+   368→- timestamps
+   369→- created_at
+   370→- updated_at
+   371→- created_by
+   372→- updated_by
+   373→- soft delete where appropriate
+   374→- foreign keys
+   375→- indexes
+   376→- unique constraints
+   377→- check constraints
+   378→- transactions
+   379→
+   380→Avoid unnecessary duplication.
+   381→
+   382→Use normalized relational design.
+   383→
+   384→Do not store important relational data as uncontrolled JSON when a proper relational structure is appropriate.
+   385→
+   386→
+   387→============================================================
+   388→9. INITIAL DATABASE DOMAINS
+   389→============================================================
+   390→
+   391→Design database domains for:
+   392→
+   393→AUTH
+   394→USERS
+   395→ROLES
+   396→PERMISSIONS
+   397→SESSIONS
+   398→CUSTOMERS
+   399→EMPLOYEES
+   400→TECHNICIANS
+   401→EQUIPMENT
+   402→ASSETS
+   403→LOCATIONS
+   404→COMPLAINTS
+   405→WORK ORDERS
+   406→PREVENTIVE MAINTENANCE
+   407→INSPECTIONS
+   408→IRMS
+   409→INVENTORY
+   410→SUPPLIERS
+   411→PURCHASES
+   412→QUOTATIONS
+   413→INVOICES
+   414→PAYMENTS
+   415→FINANCE
+   416→HR
+   417→VEHICLES
+   418→NOTIFICATIONS
+   419→DOCUMENTS
+   420→SETTINGS
+   421→AUDIT LOGS
+   422→
+   423→
+   424→============================================================
+   425→10. AUTHENTICATION
+   426→============================================================
+   427→
+   428→Build authentication from scratch correctly.
+   429→
+   430→Support:
+   431→
+   432→- Email/password login
+   433→- Secure logout
+   434→- Session persistence
+   435→- Password reset
+   436→- Email verification where required
+   437→- Google Login
+   438→- Secure session refresh
+   439→
+   440→Authentication flow:
+   441→
+   442→Browser
+   443→ ↓
+   444→Login
+   445→ ↓
+   446→FastAPI
+   447→ ↓
+   448→PostgreSQL
+   449→ ↓
+   450→Password verification
+   451→ ↓
+   452→User
+   453→ ↓
+   454→Role
+   455→ ↓
+   456→Session
+   457→ ↓
+   458→Secure cookie
+   459→ ↓
+   460→Authenticated application
+   461→
+   462→
+   463→Do not store passwords in plaintext.
+   464→
+   465→Use secure password hashing.
+   466→
+   467→Do not expose tokens to unnecessary frontend code.
+   468→
+   469→Never log passwords or authentication secrets.
+   470→
+   471→
+   472→============================================================
+   473→11. SESSION MANAGEMENT
+   474→============================================================
+   475→
+   476→CRITICAL REQUIREMENT:
+   477→
+   478→The application MUST NOT unexpectedly refresh/reload while the user is working.
+   479→
+   480→Session renewal must happen silently.
+   481→
+   482→Correct:
+   483→
+   484→Session nearing expiration
+   485→ ↓
+   486→background refresh
+   487→ ↓
+   488→existing page remains
+   489→ ↓
+   490→form remains
+   491→ ↓
+   492→user continues working
+   493→
+   494→
+   495→Incorrect:
+   496→
+   497→Session refresh
+   498→ ↓
+   499→window.location.reload()
+   500→ ↓
+   501→form data lost
+   502→
+   503→
+   504→Implement robust session management.
+   505→
+   506→Use secure cookies where appropriate.
+   507→
+   508→Configure:
+   509→
+   510→- HttpOnly
+   511→- Secure
+   512→- SameSite
+   513→- expiration
+   514→- domain
+   515→- path
+   516→
+   517→
+   518→============================================================
+   519→12. UNSAVED FORM PROTECTION
+   520→============================================================
+   521→
+   522→This is a mandatory enterprise feature.
+   523→
+   524→Users must not lose entered data because of:
+   525→
+   526→- session refresh
+   527→- API refresh
+   528→- component remount
+   529→- route refresh
+   530→- PWA update
+   531→- accidental navigation
+   532→- temporary network issue
+   533→- browser reload where recovery is possible
+   534→
+   535→Important forms must support draft protection.
+   536→
+   537→Applicable modules include:
+   538→
+   539→- Complaints
+   540→- Work Orders
+   541→- Equipment
+   542→- Quotations
+   543→- Invoices
+   544→- Inspections
+   545→- IRMS
+   546→- Customers
+   547→- Employees
+   548→- Inventory
+   549→- Purchases
+   550→
+   551→
+   552→Draft architecture:
+   553→
+   554→FORM
+   555→ ↓
+   556→DIRTY STATE
+   557→ ↓
+   558→DEBOUNCED DRAFT SAVE
+   559→ ↓
+   560→LOCAL/SAFE SERVER DRAFT
+   561→ ↓
+   562→UNEXPECTED INTERRUPTION
+   563→ ↓
+   564→RESTORE DRAFT
+   565→
+   566→
+   567→Never store passwords or authentication secrets in drafts.
+   568→
+   569→
+   570→============================================================
+   571→13. RBAC
+   572→============================================================
+   573→
+   574→Implement centralized RBAC.
+   575→
+   576→Roles:
+   577→
+   578→SUPER ADMIN
+   579→ADMIN
+   580→SUPERVISOR
+   581→TECHNICIAN
+   582→CUSTOMER
+   583→FINANCE
+   584→HR
+   585→
+   586→Roles must be configurable through the permission system.
+   587→
+   588→Permission examples:
+   589→
+   590→users.read
+   591→users.create
+   592→users.update
+   593→users.delete
+   594→
+   595→complaints.read
+   596→complaints.create
+   597→complaints.assign
+   598→complaints.update
+   599→
+   600→work_orders.read
+   601→work_orders.create
+   602→work_orders.assign
+   603→work_orders.complete
+   604→
+   605→invoices.read
+   606→invoices.create
+   607→invoices.update
+   608→invoices.send
+   609→
+   610→reports.read
+   611→reports.create
+   612→reports.export
+   613→
+   614→
+   615→Backend MUST enforce authorization.
+   616→
+   617→Frontend menu hiding is NOT security.
+   618→
+   619→
+   620→============================================================
+   621→14. USER / TECHNICIAN ARCHITECTURE
+   622→============================================================
+   623→
+   624→Use one canonical user source.
+   625→
+   626→A technician is a user with the appropriate technician role/profile.
+   627→
+   628→Do NOT maintain separate unrelated technician databases.
+   629→
+   630→Architecture:
+   631→
+   632→USERS
+   633→ ↓
+   634→ROLE
+   635→ ↓
+   636→TECHNICIAN PROFILE
+   637→ ↓
+   638→TECHNICIAN OPERATIONS
+   639→
+   640→
+   641→Changing:
+   642→
+   643→CUSTOMER
+   644→→ TECHNICIAN
+   645→
+   646→must immediately update the appropriate application behavior.
+   647→
+   648→Technician must then be available in:
+   649→
+   650→- Technician Management
+   651→- Complaint Assignment
+   652→- Work Orders
+   653→- Preventive Maintenance
+   654→- Mobile application
+   655→
+   656→
+   657→============================================================
+   658→15. CUSTOMER PORTAL
+   659→============================================================
+   660→
+   661→Customers must have a dedicated role-based portal.
+   662→
+   663→Customer can access only authorized information.
+   664→
+   665→Customer features:
+   666→
+   667→- Dashboard
+   668→- Equipment
+   669→- QR Scan
+   670→- Complaints
+   671→- Work Orders
+   672→- Invoices
+   673→- History
+   674→- Notifications
+   675→- Profile
+   676→
+   677→Customer must not access:
+   678→
+   679→- user administration
+   680→- employee administration
+   681→- finance administration
+   682→- HR
+   683→- system settings
+   684→- IRMS administration
+   685→
+   686→unless a specific permission explicitly allows it.
+   687→
+   688→
+   689→============================================================
+   690→16. ADMIN APPLICATION
+   691→============================================================
+   692→
+   693→Admin interface should contain the existing enterprise modules.
+   694→
+   695→Navigation:
+   696→
+   697→Home
+   698→Dashboard
+   699→Customers
+   700→Users
+   701→Employees
+   702→Technicians
+   703→Complaints
+   704→Work Orders
+   705→Equipment
+   706→Preventive Maintenance
+   707→Inventory
+   708→Purchases
+   709→Vehicles
+   710→Quotations
+   711→Invoices
+   712→Finance
+   713→HR
+   714→Reports
+   715→Notifications
+   716→Settings
+   717→
+   718→IRMS should remain an integrated feature.
+   719→
+   720→Do not create a separate IRMS application.
+   721→
+   722→
+   723→============================================================
+   724→17. DASHBOARD
+   725→============================================================
+   726→
+   727→Create role-based dashboards.
+   728→
+   729→Dashboard must use real PostgreSQL data.
+   730→
+   731→Do not use mock KPI values.
+   732→
+   733→Dashboard should support:
+   734→
+   735→- KPIs
+   736→- charts
+   737→- recent activities
+   738→- pending complaints
+   739→- work orders
+   740→- technician workload
+   741→- equipment status
+   742→- PM status
+   743→- quotation status
+   744→- invoice status
+   745→- financial summaries
+   746→- notifications
+   747→
+   748→Live data must be loaded through APIs.
+   749→
+   750→Loading, empty and error states must be separate.
+   751→
+   752→
+   753→============================================================
+   754→18. COMPLAINT MANAGEMENT
+   755→============================================================
+   756→
+   757→Implement enterprise complaint management.
+   758→
+   759→Workflow:
+   760→
+   761→CUSTOMER CREATES COMPLAINT
+   762→ ↓
+   763→COMPLAINT CREATED
+   764→ ↓
+   765→ADMIN/SUPERVISOR ASSIGNS TECHNICIAN
+   766→ ↓
+   767→ASSIGNED
+   768→ ↓
+   769→TECHNICIAN ACCEPTS
+   770→ ↓
+   771→IN PROGRESS
+   772→ ↓
+   773→WORK ORDER
+   774→ ↓
+   775→TECHNICIAN STARTS JOB
+   776→ ↓
+   777→CHECKLIST
+   778→ ↓
+   779→WORK COMPLETED
+   780→ ↓
+   781→CUSTOMER CONFIRMATION
+   782→ ↓
+   783→DRAFT INVOICE
+   784→ ↓
+   785→INVOICE REVIEW
+   786→ ↓
+   787→INVOICE SENT
+   788→ ↓
+   789→PAYMENT
+   790→ ↓
+   791→CLOSED
+   792→
+   793→
+   794→Backend must enforce valid state transitions.
+   795→
+   796→Do not allow frontend users to arbitrarily change protected statuses.
+   797→
+   798→
+   799→============================================================
+   800→19. WORK ORDER
+   801→============================================================
+   802→
+   803→Work Order must support:
+   804→
+   805→- complaint reference
+   806→- customer
+   807→- equipment
+   808→- technician
+   809→- priority
+   810→- scheduled date
+   811→- start time
+   812→- completion time
+   813→- checklist
+   814→- materials
+   815→- labour
+   816→- notes
+   817→- photos
+   818→- documents
+   819→- customer confirmation
+   820→- status
+   821→
+   822→
+   823→============================================================
+   824→20. EQUIPMENT MANAGEMENT
+   825→============================================================
+   826→
+   827→Equipment must support:
+   828→
+   829→- asset ID
+   830→- equipment number
+   831→- serial number
+   832→- manufacturer
+   833→- model
+   834→- category
+   835→- location
+   836→- customer
+   837→- installation date
+   838→- warranty
+   839→- maintenance schedule
+   840→- status
+   841→- QR code
+   842→- documents
+   843→- images
+   844→- maintenance history
+   845→- complaint history
+   846→- work order history
+   847→
+   848→
+   849→============================================================
+   850→21. QR CODE SYSTEM
+   851→============================================================
+   852→
+   853→Implement secure QR codes for:
+   854→
+   855→- Equipment
+   856→- Complaints
+   857→- Work Orders
+   858→- Quotations
+   859→- Invoices
+   860→- Inspection Reports
+   861→- Project Reports
+   862→
+   863→QR code should identify the resource securely.
+   864→
+   865→Do not place sensitive information directly inside QR codes.
+   866→
+   867→Scan:
+   868→
+   869→QR
+   870→ ↓
+   871→secure resource URL
+   872→ ↓
+   873→authentication
+   874→ ↓
+   875→authorization
+   876→ ↓
+   877→resource
+   878→
+   879→
+   880→============================================================
+   881→22. PREVENTIVE MAINTENANCE
+   882→============================================================
+   883→
+   884→Implement:
+   885→
+   886→- PM plans
+   887→- schedules
+   888→- frequencies
+   889→- equipment assignment
+   890→- checklists
+   891→- technician assignment
+   892→- due dates
+   893→- overdue status
+   894→- completion
+   895→- maintenance history
+   896→- notifications
+   897→
+   898→Support recurring maintenance scheduling.
+   899→
+   900→
+   901→============================================================
+   902→23. INVENTORY
+   903→============================================================
+   904→
+   905→Implement:
+   906→
+   907→- item master
+   908→- categories
+   909→- units
+   910→- suppliers
+   911→- stock
+   912→- minimum stock
+   913→- stock movement
+   914→- adjustment
+   915→- issue
+   916→- receive
+   917→- return
+   918→- low-stock alerts
+   919→
+   920→Every stock movement must be recorded.
+   921→
+   922→
+   923→============================================================
+   924→24. PURCHASE MANAGEMENT
+   925→============================================================
+   926→
+   927→Implement:
+   928→
+   929→- suppliers
+   930→- purchase requests
+   931→- purchase orders
+   932→- approval
+   933→- receiving
+   934→- purchase items
+   935→- quantities
+   936→- rates
+   937→- totals
+   938→- attachments
+   939→- status
+   940→
+   941→Approved/received purchases can update inventory according to business rules.
+   942→
+   943→
+   944→============================================================
+   945→25. QUOTATIONS
+   946→============================================================
+   947→
+   948→Professional quotation module.
+   949→
+   950→Support:
+   951→
+   952→- quotation number
+   953→- customer
+   954→- date
+   955→- validity
+   956→- items
+   957→- inventory
+   958→- labour
+   959→- service
+   960→- custom items
+   961→- quantity
+   962→- unit
+   963→- rate
+   964→- discount
+   965→- tax
+   966→- shipping
+   967→- subtotal
+   968→- labour cost
+   969→- material cost
+   970→- grand total
+   971→- notes
+   972→- terms & conditions
+   973→
+   974→Support:
+   975→
+   976→- Draft
+   977→- Preview
+   978→- Print
+   979→- PDF
+   980→- Email
+   981→- WhatsApp where integrated
+   982→
+   983→
+   984→============================================================
+   985→26. INVOICES
+   986→============================================================
+   987→
+   988→Professional invoice module.
+   989→
+   990→Support:
+   991→
+   992→- invoice number
+   993→- customer
+   994→- quotation reference
+   995→- work order reference
+   996→- items
+   997→- labour
+   998→- materials
+   999→- discount
+  1000→- tax
+  1001→- shipping
+  1002→- subtotal
+  1003→- grand total
+  1004→- payment
+  1005→- balance
+  1006→- status
+  1007→
+  1008→Support:
+  1009→
+  1010→- Draft
+  1011→- Preview
+  1012→- Print
+  1013→- PDF
+  1014→- Email
+  1015→- WhatsApp where integrated
+  1016→
+  1017→
+  1018→============================================================
+  1019→27. FINANCE
+  1020→============================================================
+  1021→
+  1022→Implement finance architecture.
+  1023→
+  1024→Support:
+  1025→
+  1026→- income
+  1027→- expenses
+  1028→- payments
+  1029→- receivables
+  1030→- payables
+  1031→- accounts
+  1032→- transactions
+  1033→- financial reports
+  1034→- statements
+  1035→- balance sheet where appropriate
+  1036→
+  1037→Financial calculations MUST be backend authoritative.
+  1038→
+  1039→Never trust frontend totals.
+  1040→
+  1041→
+  1042→============================================================
+  1043→28. HR
+  1044→============================================================
+  1045→
+  1046→Implement HR module.
+  1047→
+  1048→Support where applicable:
+  1049→
+  1050→- employees
+  1051→- departments
+  1052→- positions
+  1053→- attendance
+  1054→- leave
+  1055→- payroll
+  1056→- documents
+  1057→- employee records
+  1058→- HR reports
+  1059→
+  1060→
+  1061→============================================================
+  1062→29. IRMS
+  1063→============================================================
+  1064→
+  1065→IRMS = Inspection Report Management System.
+  1066→
+  1067→It must be integrated into the application.
+  1068→
+  1069→Support:
+  1070→
+  1071→- Projects
+  1072→- Inspection Reports
+  1073→- Checklists
+  1074→- Findings
+  1075→- Recommendations
+  1076→- Photos
+  1077→- Documents
+  1078→- Reports
+  1079→- Analytics
+  1080→- Calendar
+  1081→- Status
+  1082→- Search
+  1083→- Filters
+  1084→- PDF
+  1085→- Print
+  1086→
+  1087→Use role-based access.
+  1088→
+  1089→Customer must not access IRMS administration.
+  1090→
+  1091→
+  1092→============================================================
+  1093→30. REPORTING
+  1094→============================================================
+  1095→
+  1096→Build professional reports.
+  1097→
+  1098→Support:
+  1099→
+  1100→- PDF
+  1101→- print
+  1102→- CSV/Excel export where appropriate
+  1103→- filters
+  1104→- date ranges
+  1105→- customer
+  1106→- technician
+  1107→- project
+  1108→- status
+  1109→
+  1110→Reports must use actual PostgreSQL data.
+  1111→
+  1112→
+  1113→============================================================
+  1114→31. NOTIFICATIONS
+  1115→============================================================
+  1116→
+  1117→Implement centralized notification service.
+  1118→
+  1119→Channels:
+  1120→
+  1121→- in-app
+  1122→- email
+  1123→- Firebase push where required
+  1124→- WhatsApp where integrated
+  1125→
+  1126→Notification architecture:
+  1127→
+  1128→EVENT
+  1129→ ↓
+  1130→NOTIFICATION SERVICE
+  1131→ ↓
+  1132→CHANNEL
+  1133→ ↓
+  1134→DELIVERY
+  1135→ ↓
+  1136→LOG
+  1137→
+  1138→
+  1139→Support:
+  1140→
+  1141→- notification badge
+  1142→- unread count
+  1143→- read
+  1144→- open
+  1145→- dismiss
+  1146→- role-based notifications
+  1147→
+  1148→
+  1149→============================================================
+  1150→32. REDIS
+  1151→============================================================
+  1152→
+  1153→Redis must be integrated carefully.
+  1154→
+  1155→Use Redis for:
+  1156→
+  1157→- caching
+  1158→- rate limiting
+  1159→- background jobs
+  1160→- temporary state where appropriate
+  1161→
+  1162→Do not use Redis as the primary database.
+  1163→
+  1164→Example:
+  1165→
+  1166→PostgreSQL
+  1167→ ↓
+  1168→authoritative data
+  1169→
+  1170→Redis
+  1171→ ↓
+  1172→cached representation
+  1173→
+  1174→When PostgreSQL data changes:
+  1175→
+  1176→invalidate/update relevant Redis cache.
+  1177→
+  1178→
+  1179→============================================================
+  1180→33. FILE STORAGE
+  1181→============================================================
+  1182→
+  1183→Create centralized document/file storage.
+  1184→
+  1185→Support:
+  1186→
+  1187→- complaint photos
+  1188→- work order photos
+  1189→- equipment images
+  1190→- inspection images
+  1191→- PDF documents
+  1192→- quotations
+  1193→- invoices
+  1194→- employee documents
+  1195→
+  1196→Do not store large binary files directly in PostgreSQL unless there is a specific reason.
+  1197→
+  1198→Use object/file storage appropriate for the infrastructure.
+  1199→
+  1200→Implement:
+  1201→
+  1202→- access control
+  1203→- file validation
+  1204→- file size limits
+  1205→- safe filenames
+  1206→- MIME validation
+  1207→- authorization
+  1208→
+  1209→
+  1210→============================================================
+  1211→34. API ARCHITECTURE
+  1212→============================================================
+  1213→
+  1214→Use versioned API:
+  1215→
+  1216→/api/v1/
+  1217→
+  1218→Examples:
+  1219→
+  1220→/api/v1/auth
+  1221→/api/v1/users
+  1222→/api/v1/customers
+  1223→/api/v1/technicians
+  1224→/api/v1/complaints
+  1225→/api/v1/work-orders
+  1226→/api/v1/equipment
+  1227→/api/v1/pm
+  1228→/api/v1/inspections
+  1229→/api/v1/irms
+  1230→/api/v1/quotations
+  1231→/api/v1/invoices
+  1232→/api/v1/finance
+  1233→/api/v1/inventory
+  1234→/api/v1/purchases
+  1235→/api/v1/hr
+  1236→/api/v1/reports
+  1237→/api/v1/notifications
+  1238→
+  1239→
+  1240→Include:
+  1241→
+  1242→- pagination
+  1243→- filtering
+  1244→- sorting
+  1245→- validation
+  1246→- structured errors
+  1247→- request IDs
+  1248→
+  1249→
+  1250→============================================================
+  1251→35. ERROR HANDLING
+  1252→============================================================
+  1253→
+  1254→Implement centralized error handling.
+  1255→
+  1256→Normal users:
+  1257→
+  1258→friendly error.
+  1259→
+  1260→Example:
+  1261→
+  1262→"Something went wrong. Please try again."
+  1263→
+  1264→SUPER ADMIN:
+  1265→
+  1266→may receive safe diagnostic information where appropriate.
+  1267→
+  1268→Never expose:
+  1269→
+  1270→- passwords
+  1271→- database credentials
+  1272→- API secrets
+  1273→- stack traces
+  1274→- JWT secrets
+  1275→- OAuth secrets
+  1276→- internal filesystem paths
+  1277→
+  1278→
+  1279→============================================================
+  1280→36. AUDIT LOG
+  1281→============================================================
+  1282→
+  1283→Create audit logging.
+  1284→
+  1285→Track important actions:
+  1286→
+  1287→- login
+  1288→- logout
+  1289→- role change
+  1290→- user creation
+  1291→- user update
+  1292→- technician assignment
+  1293→- complaint status
+  1294→- work order status
+  1295→- quotation
+  1296→- invoice
+  1297→- payment
+  1298→- configuration changes
+  1299→
+  1300→Audit log should contain:
+  1301→
+  1302→- actor
+  1303→- action
+  1304→- resource
+  1305→- resource ID
+  1306→- timestamp
+  1307→- IP where appropriate
+  1308→- metadata
+  1309→
+  1310→
+  1311→============================================================
+  1312→37. SECURITY
+  1313→============================================================
+  1314→
+  1315→Implement:
+  1316→
+  1317→- secure authentication
+  1318→- password hashing
+  1319→- RBAC
+  1320→- input validation
+  1321→- SQL injection protection
+  1322→- XSS protection
+  1323→- CSRF protection where applicable
+  1324→- rate limiting
+  1325→- secure cookies
+  1326→- security headers
+  1327→- CORS
+  1328→- secret management
+  1329→- file validation
+  1330→- audit logs
+  1331→
+  1332→Never trust frontend permissions.
+  1333→
+  1334→Backend is authoritative.
+  1335→
+  1336→
+  1337→============================================================
+  1338→38. POSTGRESQL SECURITY
+  1339→============================================================
+  1340→
+  1341→PostgreSQL must use a dedicated application user.
+  1342→
+  1343→Do not use PostgreSQL superuser credentials from the application.
+  1344→
+  1345→PostgreSQL should remain private.
+  1346→
+  1347→Do not expose port 5432 publicly.
+  1348→
+  1349→Use:
+  1350→
+  1351→Application
+  1352→ ↓
+  1353→Private/local network
+  1354→ ↓
+  1355→PostgreSQL
+  1356→
+  1357→
+  1358→============================================================
+  1359→39. REDIS SECURITY
+  1360→============================================================
+  1361→
+  1362→Redis should remain private.
+  1363→
+  1364→Do not expose Redis directly to the Internet.
+  1365→
+  1366→Use secure authentication/configuration appropriate to the deployment.
+  1367→
+  1368→
+  1369→============================================================
+  1370→40. ENVIRONMENT CONFIGURATION
+  1371→============================================================
+  1372→
+  1373→Create:
+  1374→
+  1375→.env.example
+  1376→
+  1377→Never commit real secrets.
+  1378→
+  1379→Separate:
+  1380→
+  1381→development
+  1382→test
+  1383→production
+  1384→
+  1385→configuration.
+  1386→
+  1387→Production environment must contain:
+  1388→
+  1389→DATABASE
+  1390→REDIS
+  1391→AUTH
+  1392→SESSION
+  1393→CORS
+  1394→APP_URL
+  1395→API_URL
+  1396→EMAIL
+  1397→GOOGLE_OAUTH
+  1398→STORAGE
+  1399→FIREBASE
+  1400→WHATSAPP
+  1401→
+  1402→Use actual variable names based on implementation.
+  1403→
+  1404→
+  1405→============================================================
+  1406→41. DOCKER
+  1407→============================================================
+  1408→
+  1409→Create production Docker configuration.
+  1410→
+  1411→Services may include:
+  1412→
+  1413→frontend
+  1414→backend
+  1415→postgresql
+  1416→redis
+  1417→
+  1418→Do not unnecessarily containerize services if there is a strong operational reason not to.
+  1419→
+  1420→Use persistent PostgreSQL volumes.
+  1421→
+  1422→Use persistent storage for required application data.
+  1423→
+  1424→
+  1425→============================================================
+  1426→42. DATABASE PERSISTENCE
+  1427→============================================================
+  1428→
+  1429→PostgreSQL data MUST survive:
+  1430→
+  1431→- application restart
+  1432→- container restart
+  1433→- server restart
+  1434→
+  1435→Do not store PostgreSQL production data inside an ephemeral container filesystem.
+  1436→
+  1437→
+  1438→============================================================
+  1439→43. BACKUPS
+  1440→============================================================
+  1441→
+  1442→Implement PostgreSQL backup strategy.
+  1443→
+  1444→At minimum:
+  1445→
+  1446→- daily backup
+  1447→- retention
+  1448→- secure storage
+  1449→- backup verification
+  1450→
+  1451→Document restore procedure.
+  1452→
+  1453→A backup that has never been tested for restoration must not be assumed reliable.
+  1454→
+  1455→
+  1456→============================================================
+  1457→44. HEALTH CHECKS
+  1458→============================================================
+  1459→
+  1460→Implement:
+  1461→
+  1462→GET /health
+  1463→
+  1464→and:
+  1465→
+  1466→GET /health/ready
+  1467→
+  1468→Readiness should verify required dependencies.
+  1469→
+  1470→Example:
+  1471→
+  1472→Application
+  1473→ ↓
+  1474→PostgreSQL
+  1475→ ↓
+  1476→Redis if required
+  1477→
+  1478→Do not expose secrets.
+  1479→
+  1480→
+  1481→============================================================
+  1482→45. LOGGING
+  1483→============================================================
+  1484→
+  1485→Implement structured application logging.
+  1486→
+  1487→Include:
+  1488→
+  1489→- timestamp
+  1490→- request ID
+  1491→- route
+  1492→- status
+  1493→- duration
+  1494→- error category
+  1495→
+  1496→Never log secrets.
+  1497→
+  1498→
+  1499→============================================================
+  1500→46. MONITORING
+  1501→============================================================
+  1502→
+  1503→Monitor:
+  1504→
+  1505→- application health
+  1506→- PostgreSQL
+  1507→- Redis
+  1508→- disk
+  1509→- RAM
+  1510→- CPU
+  1511→- container health
+  1512→- Cloudflare Tunnel
+  1513→- failed authentication
+  1514→- API errors
+  1515→
+  1516→Create operational documentation.
+  1517→
+  1518→
+  1519→============================================================
+  1520→47. FRONTEND DESIGN
+  1521→============================================================
+  1522→
+  1523→Use premium enterprise UI.
+  1524→
+  1525→Technology:
+  1526→
+  1527→Next.js
+  1528→TypeScript
+  1529→Tailwind CSS
+  1530→
+  1531→Design:
+  1532→
+  1533→- modern
+  1534→- clean
+  1535→- responsive
+  1536→- enterprise
+  1537→- mobile-first
+  1538→- accessible
+  1539→- fast
+  1540→
+  1541→Branding:
+  1542→
+  1543→Primary theme:
+  1544→GREEN
+  1545→
+  1546→Background:
+  1547→WHITE / LIGHT NEUTRAL
+  1548→
+  1549→Text:
+  1550→BLACK / DARK NEUTRAL
+  1551→
+  1552→Avoid blue accents unless specifically required.
+  1553→
+  1554→Font:
+  1555→
+  1556→Poppins
+  1557→
+  1558→Use consistent design tokens.
+  1559→
+  1560→
+  1561→============================================================
+  1562→48. NAVIGATION
+  1563→============================================================
+  1564→
+  1565→Use the established floating navigation concept.
+  1566→
+  1567→Do not use a permanent traditional sidebar unless required.
+  1568→
+  1569→Desktop:
+  1570→
+  1571→Floating glassmorphism navigation.
+  1572→
+  1573→Mobile:
+  1574→
+  1575→Bottom navigation.
+  1576→
+  1577→Mobile bottom navigation:
+  1578→
+  1579→Home
+  1580→Equipment
+  1581→Scan
+  1582→Complaint
+  1583→Invoices
+  1584→History
+  1585→
+  1586→
+  1587→Use role-based navigation.
+  1588→
+  1589→Do not show unauthorized modules.
+  1590→
+  1591→
+  1592→============================================================
+  1593→49. RESPONSIVE DESIGN
+  1594→============================================================
+  1595→
+  1596→Every feature must work on:
+  1597→
+  1598→- desktop
+  1599→- laptop
+  1600→- tablet
+  1601→- mobile
+  1602→
+  1603→Test:
+  1604→
+  1605→320px
+  1606→375px
+  1607→390px
+  1608→414px
+  1609→768px
+  1610→1024px
+  1611→1280px
+  1612→1440px
+  1613→1920px
+  1614→
+  1615→
+  1616→============================================================
+  1617→50. FORM DESIGN
+  1618→============================================================
+  1619→
+  1620→Forms must support:
+  1621→
+  1622→- validation
+  1623→- loading
+  1624→- errors
+  1625→- success
+  1626→- dirty state
+  1627→- draft saving where appropriate
+  1628→- autosave where appropriate
+  1629→- unsaved changes warning
+  1630→- keyboard navigation
+  1631→- mobile input
+  1632→
+  1633→Never lose user-entered information unexpectedly.
+  1634→
+  1635→
+  1636→============================================================
+  1637→51. SEARCH / FILTER / PAGINATION
+  1638→============================================================
+  1639→
+  1640→Enterprise tables must support:
+  1641→
+  1642→- search
+  1643→- filters
+  1644→- sorting
+  1645→- pagination
+  1646→- page size
+  1647→- date range
+  1648→- export where appropriate
+  1649→
+  1650→Do not load massive datasets unnecessarily.
+  1651→
+  1652→
+  1653→============================================================
+  1654→52. PERFORMANCE
+  1655→============================================================
+  1656→
+  1657→Optimize:
+  1658→
+  1659→- database queries
+  1660→- API response
+  1661→- frontend rendering
+  1662→- images
+  1663→- caching
+  1664→- pagination
+  1665→- lazy loading
+  1666→- code splitting
+  1667→
+  1668→Do not optimize by introducing stale or incorrect data.
+  1669→
+  1670→
+  1671→============================================================
+  1672→53. ACCESSIBILITY
+  1673→============================================================
+  1674→
+  1675→Implement:
+  1676→
+  1677→- keyboard navigation
+  1678→- labels
+  1679→- focus states
+  1680→- ARIA where required
+  1681→- accessible dialogs
+  1682→- readable contrast
+  1683→- semantic HTML
+  1684→
+  1685→
+  1686→============================================================
+  1687→54. TESTING STRATEGY
+  1688→============================================================
+  1689→
+  1690→Create:
+  1691→
+  1692→UNIT TESTS
+  1693→INTEGRATION TESTS
+  1694→API TESTS
+  1695→DATABASE TESTS
+  1696→AUTH TESTS
+  1697→RBAC TESTS
+  1698→E2E TESTS
+  1699→BROWSER TESTS
+  1700→SECURITY TESTS
+  1701→
+  1702→
+  1703→============================================================
+  1704→55. AUTH TESTING
+  1705→============================================================
+  1706→
+  1707→Test:
+  1708→
+  1709→- valid login
+  1710→- invalid password
+  1711→- unknown email
+  1712→- disabled account
+  1713→- logout
+  1714→- session refresh
+  1715→- expired session
+  1716→- password reset
+  1717→- Google Login
+  1718→- role loading
+  1719→
+  1720→
+  1721→============================================================
+  1722→56. RBAC TESTING
+  1723→============================================================
+  1724→
+  1725→Test every role:
+  1726→
+  1727→SUPER ADMIN
+  1728→ADMIN
+  1729→SUPERVISOR
+  1730→TECHNICIAN
+  1731→CUSTOMER
+  1732→FINANCE
+  1733→HR
+  1734→
+  1735→Attempt unauthorized routes and APIs.
+  1736→
+  1737→Backend must reject unauthorized operations.
+  1738→
+  1739→
+  1740→============================================================
+  1741→57. BUSINESS WORKFLOW TESTING
+  1742→============================================================
+  1743→
+  1744→Test:
+  1745→
+  1746→Complaint
+  1747→→ Assignment
+  1748→→ Technician
+  1749→→ Acceptance
+  1750→→ Work Order
+  1751→→ Start
+  1752→→ Checklist
+  1753→→ Completion
+  1754→→ Customer Confirmation
+  1755→→ Draft Invoice
+  1756→→ Invoice
+  1757→→ Payment
+  1758→→ Closed
+  1759→
+  1760→
+  1761→Verify database after each major transition.
+  1762→
+  1763→
+  1764→============================================================
+  1765→58. BROWSER QA
+  1766→============================================================
+  1767→
+  1768→Use a real browser.
+  1769→
+  1770→Test:
+  1771→
+  1772→- login
+  1773→- logout
+  1774→- every menu
+  1775→- every submenu
+  1776→- every button
+  1777→- every form
+  1778→- every modal
+  1779→- every dropdown
+  1780→- every search
+  1781→- every filter
+  1782→- every table
+  1783→- every CRUD operation
+  1784→- PDF
+  1785→- print
+  1786→- QR
+  1787→- uploads
+  1788→- notifications
+  1789→
+  1790→Inspect:
+  1791→
+  1792→Console
+  1793→Network
+  1794→Application
+  1795→Cookies
+  1796→Storage
+  1797→
+  1798→
+  1799→============================================================
+  1800→59. NO DEAD BUTTONS
+  1801→============================================================
+  1802→
+  1803→Every visible button must either:
+  1804→
+  1805→- navigate
+  1806→- open modal
+  1807→- submit
+  1808→- perform API action
+  1809→- download
+  1810→- print
+  1811→
+  1812→No decorative button should appear functional if it does nothing.
+  1813→
+  1814→
+  1815→============================================================
+  1816→60. NO FAKE DATA
+  1817→============================================================
+  1818→
+  1819→Production UI must never use:
+  1820→
+  1821→- hardcoded KPI numbers
+  1822→- fake technicians
+  1823→- fake customers
+  1824→- fake invoices
+  1825→- fake complaints
+  1826→- fake work orders
+  1827→
+  1828→All production business data comes from PostgreSQL through the backend API.
+  1829→
+  1830→
+  1831→============================================================
+  1832→61. PRODUCTION DEPLOYMENT
+  1833→============================================================
+  1834→
+  1835→Deploy to:
+  1836→
+  1837→192.168.100.110
+  1838→
+  1839→Application:
+  1840→
+  1841→port 3100
+  1842→
+  1843→Public:
+  1844→
+  1845→https://www.mohdhms.com
+  1846→
+  1847→Cloudflare Tunnel:
+  1848→
+  1849→Cloudflare
+  1850→ ↓
+  1851→Tunnel
+  1852→ ↓
+  1853→192.168.100.110:3100
+  1854→
+  1855→
+  1856→Do not expose PostgreSQL or Redis publicly.
+  1857→
+  1858→
+  1859→============================================================
+  1860→62. PRODUCTION SERVER SETUP
+  1861→============================================================
+  1862→
+  1863→Verify:
+  1864→
+  1865→Ubuntu
+  1866→Docker
+  1867→Docker Compose
+  1868→PostgreSQL
+  1869→Redis
+  1870→Application
+  1871→Cloudflare Tunnel
+  1872→Firewall
+  1873→
+  1874→Enable automatic startup after reboot.
+  1875→
+  1876→
+  1877→============================================================
+  1878→63. PRODUCTION STARTUP ORDER
+  1879→============================================================
+  1880→
+  1881→Expected dependency:
+  1882→
+  1883→PostgreSQL
+  1884→ ↓
+  1885→Redis
+  1886→ ↓
+  1887→Backend
+  1888→ ↓
+  1889→Frontend
+  1890→ ↓
+  1891→Cloudflare Tunnel
+  1892→
+  1893→
+  1894→Application must correctly handle dependency readiness.
+  1895→
+  1896→
+  1897→============================================================
+  1898→64. DOMAIN / HTTPS
+  1899→============================================================
+  1900→
+  1901→Production:
+  1902→
+  1903→https://www.mohdhms.com
+  1904→
+  1905→Ensure:
+  1906→
+  1907→- HTTPS
+  1908→- secure cookies
+  1909→- correct proxy headers
+  1910→- correct public URL
+  1911→- correct OAuth callback
+  1912→- correct API URL
+  1913→
+  1914→Never expose internal IP URLs to users.
+  1915→
+  1916→
+  1917→============================================================
+  1918→65. GOOGLE OAUTH
+  1919→============================================================
+  1920→
+  1921→Implement Google Login correctly.
+  1922→
+  1923→Production callback must use the actual production domain.
+  1924→
+  1925→Do not use:
+  1926→
+  1927→localhost
+  1928→127.0.0.1
+  1929→192.168.100.110
+  1930→
+  1931→as the public OAuth callback.
+  1932→
+  1933→Validate:
+  1934→
+  1935→- state
+  1936→- code
+  1937→- issuer
+  1938→- token
+  1939→- user identity
+  1940→
+  1941→Never disable state validation.
+  1942→
+  1943→
+  1944→============================================================
+  1945→66. EMAIL SYSTEM
+  1946→============================================================
+  1947→
+  1948→Integrate the existing corporate email architecture if required.
+  1949→
+  1950→Possible addresses:
+  1951→
+  1952→info@
+  1953→sales@
+  1954→service@
+  1955→finance@
+  1956→admin@
+  1957→hr@
+  1958→procurement@
+  1959→projects@
+  1960→operations@
+  1961→inspection@
+  1962→
+  1963→Use centralized EmailService.
+  1964→
+  1965→Modules should route emails appropriately.
+  1966→
+  1967→Example:
+  1968→
+  1969→Quotation
+  1970→→ sales
+  1971→
+  1972→Invoice
+  1973→→ finance
+  1974→
+  1975→Complaint
+  1976→→ service
+  1977→
+  1978→Purchase
+  1979→→ procurement
+  1980→
+  1981→HR
+  1982→→ hr
+  1983→
+  1984→IRMS
+  1985→→ inspection
+  1986→
+  1987→
+  1988→============================================================
+  1989→67. WHATSAPP
+  1990→============================================================
+  1991→
+  1992→Where required, integrate WhatsApp through an appropriate official/API-based integration.
+  1993→
+  1994→Use centralized WhatsAppService.
+  1995→
+  1996→Do not place WhatsApp logic inside individual pages.
+  1997→
+  1998→
+  1999→============================================================
+  2000→68. FIREBASE NOTIFICATIONS
+
+[showing lines 1-2000 of 2605; use offset=2001 with limit to continue reading]

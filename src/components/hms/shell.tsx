@@ -5,6 +5,7 @@
 // Role-based nav (frontend hint only — the backend enforces real permissions).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -21,7 +22,7 @@ import { cn } from "@/lib/utils";
 import { initials } from "@/lib/hms/format";
 import {
   Bell, CheckCheck, ChevronDown, Home, LayoutGrid, Loader2, LogOut,
-  Menu, ScanLine, ShieldCheck, KeyRound, Info, AlertTriangle, CheckCircle2,
+  Menu, ScanLine, KeyRound, Info, AlertTriangle, CheckCircle2,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -114,7 +115,7 @@ export function AppShell() {
       <header className="sticky top-0 z-40 border-b bg-background/80 backdrop-blur-md no-print">
         <div className="mx-auto max-w-7xl px-3 sm:px-6 h-14 flex items-center gap-3">
           <div className="flex items-center gap-2.5 mr-1">
-            <div className="h-8 w-8 rounded-lg bg-primary text-primary-foreground flex items-center justify-center font-bold">H</div>
+            <Image src="/brand/logo-128.png" alt="MOHD HMS Enterprise logo" width={36} height={36} priority className="h-9 w-9 rounded-full" />
             <div className="leading-none">
               <div className="font-semibold text-sm tracking-tight">MOHD.HMS</div>
               <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Enterprise</div>
@@ -228,7 +229,7 @@ export function AppShell() {
       <footer className="mt-auto border-t bg-background/80 backdrop-blur no-print">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 py-3.5 flex flex-col sm:flex-row items-center justify-between gap-1.5 text-xs text-muted-foreground">
           <div className="flex items-center gap-2">
-            <ShieldCheck className="h-3.5 w-3.5 text-primary" aria-hidden />
+            <Image src="/brand/logo-64.png" alt="" width={20} height={20} aria-hidden className="h-5 w-5 rounded-full" />
             <span>© {new Date().getFullYear()} MOHD.HMS Enterprise — Smart Facility Maintenance Management</span>
           </div>
           <div className="flex items-center gap-3">
@@ -293,8 +294,11 @@ export function AppShell() {
       <Dialog open={aboutOpen} onOpenChange={setAboutOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>MOHD.HMS Enterprise</DialogTitle>
-            <DialogDescription>Enterprise Smart Facility Maintenance Management System</DialogDescription>
+            <div className="flex justify-center" aria-hidden>
+              <Image src="/brand/logo-128.png" alt="" width={72} height={72} className="h-[4.5rem] w-[4.5rem] rounded-full" />
+            </div>
+            <DialogTitle className="text-center">MOHD.HMS Enterprise</DialogTitle>
+            <DialogDescription className="text-center">Enterprise Smart Facility Maintenance Management System</DialogDescription>
           </DialogHeader>
           <div className="text-sm text-muted-foreground space-y-2">
             <p>Manages facility maintenance, equipment, complaints, work orders, preventive maintenance, IRMS inspections, inventory, procurement, quotations, invoices, finance, HR, vehicles and reporting.</p>

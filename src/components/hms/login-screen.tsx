@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -8,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ClientApiError, api } from "@/lib/hms/api-client";
 import { useSession } from "./session";
-import { Building2, Loader2, LogIn, ShieldCheck, Wrench, ClipboardList, FileText } from "lucide-react";
+import { Loader2, LogIn, ShieldCheck, Wrench, ClipboardList, FileText } from "lucide-react";
 
 const DEMO_ACCOUNTS = [
   { email: "admin@mohdhms.com", role: "Super Admin" },
@@ -69,8 +70,15 @@ export function LoginScreen() {
           </svg>
         </div>
         <div className="relative max-w-md mx-auto lg:mx-0 lg:ml-16 xl:ml-28">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="h-12 w-12 rounded-xl bg-white/15 backdrop-blur flex items-center justify-center font-bold text-xl">H</div>
+          <div className="flex items-center gap-3.5 mb-6">
+            <Image
+              src="/brand/logo-256.png"
+              alt="MOHD HMS Enterprise logo"
+              width={96}
+              height={96}
+              priority
+              className="h-16 w-16 lg:h-[5.5rem] lg:w-[5.5rem] rounded-full ring-2 ring-white/25 shadow-lg"
+            />
             <div>
               <div className="font-bold text-lg leading-tight">MOHD.HMS</div>
               <div className="text-xs uppercase tracking-[0.2em] text-primary-foreground/70">Enterprise</div>
@@ -99,9 +107,13 @@ export function LoginScreen() {
       <div className="flex-1 flex flex-col items-center justify-center px-6 py-12">
         <Card className="w-full max-w-md shadow-lg border-0 ring-1 ring-border">
           <CardHeader className="text-center">
-            <div className="mx-auto mb-2 h-11 w-11 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
-              <Building2 className="h-5 w-5" aria-hidden />
-            </div>
+            <Image
+              src="/brand/logo-128.png"
+              alt="MOHD HMS Enterprise logo"
+              width={56}
+              height={56}
+              className="mx-auto mb-2 h-14 w-14"
+            />
             <CardTitle className="text-xl">Sign in to your workspace</CardTitle>
             <CardDescription>Enter your credentials to continue</CardDescription>
           </CardHeader>

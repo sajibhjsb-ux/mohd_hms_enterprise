@@ -14,7 +14,11 @@ export const metadata: Metadata = {
   description:
     "Enterprise Smart Facility Maintenance Management System: complaints, work orders, equipment, preventive maintenance, IRMS, inventory, quotations, invoices, finance and HR.",
   icons: {
-    icon: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2316a34a'/%3E%3Ctext x='16' y='22' font-size='16' font-weight='bold' font-family='sans-serif' fill='white' text-anchor='middle'%3EH%3C/text%3E%3C/svg%3E",
+    icon: [
+      { url: "/brand/icon-32.png", sizes: "32x32", type: "image/png" },
+      { url: "/brand/icon-192.png", sizes: "192x192", type: "image/png" },
+    ],
+    apple: "/brand/apple-touch-icon.png",
   },
 };
 

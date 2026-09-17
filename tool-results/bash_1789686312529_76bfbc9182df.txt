@@ -1,3 +1,12 @@
+total 4808
+drwxrwxrwx 1 root root    4096 Jan  1  1970 .
+drwxr-xr-x 1 z    z       4096 Sep 17 17:53 ..
+-rwxrwxrwx 1 root root 4865090 Sep 17 23:04 MOHD HMS ENTERPRISE Round Logo.png
+-rwxrwxrwx 1 root root   44748 Sep 17 17:10 Pasted Content_1789664979348.txt
+---
+logo.svg
+robots.txt
+---
 # MOHD.HMS ENTERPRISE — Build Worklog
 
 Shared work journal. Every agent MUST read this file before starting and append
@@ -231,23 +240,3 @@ Stage Summary:
 - MOHD.HMS ENTERPRISE complete: 20 modules, 60+ API route files, layered architecture (route → auth → RBAC → service → db), all workflows enforced server-side.
 - Verified end-to-end in real browser for admin + customer roles, desktop + mobile.
 - Remaining honest gaps (sandbox constraints, documented): Google OAuth/email/WhatsApp/Firebase are service-layer integration points (no external providers in sandbox); PostgreSQL/Redis/Docker deployment artifacts are for the production home server (this sandbox runs Prisma/SQLite); 30-60 min soak test not run (no long-lived browser session here).
-
----
-
-Task ID: 10 (brand integration)
-Agent: Z.ai Code (main orchestrator)
-Task: Integrate the uploaded official company logo (MOHD HMS ENTERPRISE Round Logo.png) across all brand touchpoints.
-
-Work Log:
-- Analyzed upload: 2000x2000 RGB, white background, circular badge. Chose circular alpha-mask strategy (crop to badge bbox 65,39→1937,1909; mask outside circle with 1.5% inset, supersampled 2x) so white inner text stays opaque while corners become transparent.
-- Generated assets via scripts/process-logo.py (PIL): public/brand/{logo-512,logo-256,logo-128,logo-64,icon-32,icon-192,apple-touch-icon}.png (apple icon composited on white for iOS). Visual proof sheet on dark green verified transparency + legibility.
-- layout.tsx: replaced inline SVG data-URI favicon with /brand/icon-32.png + icon-192.png and apple-touch-icon.
-- shell.tsx: header brand block "H" square → round logo (36px, priority); footer ShieldCheck → 20px round logo; About dialog now shows centered 72px logo with centered title/description. Removed unused ShieldCheck import; added next/image.
-- login-screen.tsx: brand panel "H" box → 64/88px round logo with white/25 ring; login card Building2 icon → 56px round logo. Removed unused Building2 import.
-- QA: bunx tsc --noEmit → 0 errors; bun run lint → 0 errors; icon assets serve HTTP 200.
-- Agent Browser: desktop login (logo crisp on green panel + card), admin login → header logo, About dialog logo, footer logo, mobile 375px header/login/brand panel, sign-out flow intact, zero console errors.
-
-Stage Summary:
-- Official round logo is now the single brand mark across favicon, iOS icon, login (panel + card), app header, footer and About dialog.
-- Brand pipeline reproducible: scripts/process-logo.py regenerates all sizes from the original upload.
-- No layout/theme regressions; existing green palette harmonizes with logo (dark forest + lime green).
