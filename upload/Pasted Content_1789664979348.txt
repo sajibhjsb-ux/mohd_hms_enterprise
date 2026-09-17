@@ -1,0 +1,2605 @@
+# MOHD.HMS ENTERPRISE
+# COMPLETE NEW ENTERPRISE APPLICATION — ZERO TO PRODUCTION
+
+You are acting as a:
+
+- Principal Software Architect
+- Senior Full-Stack Engineer
+- Backend Engineer
+- Frontend Engineer
+- PostgreSQL Database Architect
+- DevOps Engineer
+- Security Engineer
+- QA Engineer
+- Production Deployment Engineer
+
+Your task is to BUILD A COMPLETELY NEW MOHD.HMS ENTERPRISE APPLICATION FROM ZERO TO PRODUCTION.
+
+THIS IS A NEW APPLICATION.
+
+Do not attempt to repair the old application's architecture.
+
+Do not copy broken authentication/session/database logic from the old application.
+
+Build a clean, modular, enterprise-grade production architecture.
+
+============================================================
+1. CORE RULE
+============================================================
+
+FOLLOW THE STRUCTURE.
+
+DO NOT CHANGE THE STRUCTURE UNLESS THERE IS A REQUIREMENT TO CHANGE IT.
+
+Build the application systematically:
+
+1. Architecture
+2. Project structure
+3. Database
+4. Backend
+5. Authentication
+6. RBAC
+7. API
+8. Frontend
+9. Modules
+10. Business workflows
+11. Notifications
+12. Redis
+13. File storage
+14. PDF/reporting
+15. Security
+16. Testing
+17. Browser QA
+18. Deployment
+19. Monitoring
+20. Backup/recovery
+21. Production verification
+
+Do not jump directly to UI development.
+
+The application must be production-ready, not a prototype.
+
+
+============================================================
+2. APPLICATION NAME
+============================================================
+
+Application:
+
+MOHD.HMS ENTERPRISE
+
+Product type:
+
+Enterprise Smart Facility Maintenance Management System
+
+The application should manage:
+
+- Facility maintenance
+- Building maintenance
+- Equipment
+- Preventive maintenance
+- Corrective maintenance
+- Complaints
+- Work orders
+- Technicians
+- Customers
+- Employees
+- Inventory
+- Procurement
+- Quotations
+- Invoices
+- Finance
+- HR
+- Inspections
+- IRMS
+- Reports
+- Notifications
+- Documents
+- Assets
+- Vehicles
+
+
+============================================================
+3. PRODUCTION ENVIRONMENT
+============================================================
+
+Production application will run on a LOCAL HOME SERVER.
+
+Server:
+
+192.168.100.110
+
+Application public website:
+
+https://www.mohdhms.com
+
+Application local port:
+
+3100
+
+Internal application URL:
+
+http://192.168.100.110:3100
+
+Public architecture:
+
+USER
+ ↓
+https://www.mohdhms.com
+ ↓
+CLOUDFLARE
+ ↓
+CLOUDFLARE TUNNEL
+ ↓
+192.168.100.110:3100
+ ↓
+APPLICATION
+
+
+============================================================
+4. DATABASE ARCHITECTURE
+============================================================
+
+PRIMARY DATABASE:
+
+POSTGRESQL
+
+PostgreSQL MUST be the authoritative production database.
+
+Redis MUST NOT be the primary database.
+
+Redis is for:
+
+- cache
+- rate limiting
+- temporary data
+- background jobs where appropriate
+- short-lived session data only if explicitly designed
+
+Permanent business data MUST be stored in PostgreSQL.
+
+Architecture:
+
+APPLICATION
+ ├── PostgreSQL = SOURCE OF TRUTH
+ └── Redis = CACHE / TEMPORARY DATA
+
+
+============================================================
+5. TECHNOLOGY STACK
+============================================================
+
+Use a modern production-grade stack.
+
+FRONTEND:
+
+Next.js
+TypeScript
+React
+Tailwind CSS
+
+BACKEND:
+
+Python
+FastAPI
+Pydantic
+SQLAlchemy
+Alembic
+
+DATABASE:
+
+PostgreSQL
+
+CACHE:
+
+Redis
+
+API:
+
+REST API
+OpenAPI
+Swagger
+
+AUTHENTICATION:
+
+Secure session/JWT architecture appropriate for the application.
+
+PASSWORD HASHING:
+
+Argon2id or another modern secure password hashing algorithm.
+
+INFRASTRUCTURE:
+
+Ubuntu Server
+Docker
+Docker Compose
+Nginx only if required
+Cloudflare Tunnel
+UFW Firewall
+
+PROCESS:
+
+Use a reliable production process/container architecture.
+
+Do not run development servers in production.
+
+
+============================================================
+6. PROJECT STRUCTURE
+============================================================
+
+Create a clean monorepo structure.
+
+Recommended:
+
+mohd-hms/
+│
+├── README.md
+├── .gitignore
+├── .env.example
+├── docker-compose.yml
+├── Makefile
+│
+├── frontend/
+│   ├── package.json
+│   ├── next.config.ts
+│   ├── tsconfig.json
+│   ├── src/
+│   │   ├── app/
+│   │   ├── components/
+│   │   ├── features/
+│   │   ├── hooks/
+│   │   ├── lib/
+│   │   ├── services/
+│   │   ├── stores/
+│   │   ├── types/
+│   │   └── utils/
+│   └── public/
+│
+├── backend/
+│   ├── requirements.txt
+│   ├── pyproject.toml
+│   ├── Dockerfile
+│   ├── alembic.ini
+│   │
+│   ├── app/
+│   │   ├── main.py
+│   │   ├── core/
+│   │   ├── api/
+│   │   ├── models/
+│   │   ├── schemas/
+│   │   ├── repositories/
+│   │   ├── services/
+│   │   ├── integrations/
+│   │   ├── middleware/
+│   │   └── features/
+│   │
+│   └── tests/
+│
+├── database/
+│   ├── migrations/
+│   ├── seeds/
+│   ├── backups/
+│   └── README.md
+│
+├── infrastructure/
+│   ├── docker/
+│   ├── nginx/
+│   ├── cloudflare/
+│   ├── systemd/
+│   └── scripts/
+│
+├── docs/
+│   ├── architecture/
+│   ├── api/
+│   ├── database/
+│   ├── deployment/
+│   ├── security/
+│   └── operations/
+│
+└── tests/
+    ├── integration/
+    ├── e2e/
+    └── security/
+
+
+Use feature-based modular architecture.
+
+Do not create a giant monolithic file.
+
+Do not put all business logic inside route controllers.
+
+
+============================================================
+7. BACKEND ARCHITECTURE
+============================================================
+
+Use:
+
+API
+ ↓
+Authentication
+ ↓
+RBAC
+ ↓
+Service Layer
+ ↓
+Repository Layer
+ ↓
+SQLAlchemy
+ ↓
+PostgreSQL
+
+Example:
+
+Browser
+ ↓
+FastAPI endpoint
+ ↓
+Auth dependency
+ ↓
+RBAC dependency
+ ↓
+Service
+ ↓
+Repository
+ ↓
+PostgreSQL
+ ↓
+Response
+
+
+Business logic belongs in services.
+
+Database access belongs in repositories.
+
+HTTP handling belongs in API routes.
+
+
+============================================================
+8. DATABASE ARCHITECTURE
+============================================================
+
+Design PostgreSQL properly before implementing application modules.
+
+Use:
+
+- UUID primary keys where appropriate
+- timestamps
+- created_at
+- updated_at
+- created_by
+- updated_by
+- soft delete where appropriate
+- foreign keys
+- indexes
+- unique constraints
+- check constraints
+- transactions
+
+Avoid unnecessary duplication.
+
+Use normalized relational design.
+
+Do not store important relational data as uncontrolled JSON when a proper relational structure is appropriate.
+
+
+============================================================
+9. INITIAL DATABASE DOMAINS
+============================================================
+
+Design database domains for:
+
+AUTH
+USERS
+ROLES
+PERMISSIONS
+SESSIONS
+CUSTOMERS
+EMPLOYEES
+TECHNICIANS
+EQUIPMENT
+ASSETS
+LOCATIONS
+COMPLAINTS
+WORK ORDERS
+PREVENTIVE MAINTENANCE
+INSPECTIONS
+IRMS
+INVENTORY
+SUPPLIERS
+PURCHASES
+QUOTATIONS
+INVOICES
+PAYMENTS
+FINANCE
+HR
+VEHICLES
+NOTIFICATIONS
+DOCUMENTS
+SETTINGS
+AUDIT LOGS
+
+
+============================================================
+10. AUTHENTICATION
+============================================================
+
+Build authentication from scratch correctly.
+
+Support:
+
+- Email/password login
+- Secure logout
+- Session persistence
+- Password reset
+- Email verification where required
+- Google Login
+- Secure session refresh
+
+Authentication flow:
+
+Browser
+ ↓
+Login
+ ↓
+FastAPI
+ ↓
+PostgreSQL
+ ↓
+Password verification
+ ↓
+User
+ ↓
+Role
+ ↓
+Session
+ ↓
+Secure cookie
+ ↓
+Authenticated application
+
+
+Do not store passwords in plaintext.
+
+Use secure password hashing.
+
+Do not expose tokens to unnecessary frontend code.
+
+Never log passwords or authentication secrets.
+
+
+============================================================
+11. SESSION MANAGEMENT
+============================================================
+
+CRITICAL REQUIREMENT:
+
+The application MUST NOT unexpectedly refresh/reload while the user is working.
+
+Session renewal must happen silently.
+
+Correct:
+
+Session nearing expiration
+ ↓
+background refresh
+ ↓
+existing page remains
+ ↓
+form remains
+ ↓
+user continues working
+
+
+Incorrect:
+
+Session refresh
+ ↓
+window.location.reload()
+ ↓
+form data lost
+
+
+Implement robust session management.
+
+Use secure cookies where appropriate.
+
+Configure:
+
+- HttpOnly
+- Secure
+- SameSite
+- expiration
+- domain
+- path
+
+
+============================================================
+12. UNSAVED FORM PROTECTION
+============================================================
+
+This is a mandatory enterprise feature.
+
+Users must not lose entered data because of:
+
+- session refresh
+- API refresh
+- component remount
+- route refresh
+- PWA update
+- accidental navigation
+- temporary network issue
+- browser reload where recovery is possible
+
+Important forms must support draft protection.
+
+Applicable modules include:
+
+- Complaints
+- Work Orders
+- Equipment
+- Quotations
+- Invoices
+- Inspections
+- IRMS
+- Customers
+- Employees
+- Inventory
+- Purchases
+
+
+Draft architecture:
+
+FORM
+ ↓
+DIRTY STATE
+ ↓
+DEBOUNCED DRAFT SAVE
+ ↓
+LOCAL/SAFE SERVER DRAFT
+ ↓
+UNEXPECTED INTERRUPTION
+ ↓
+RESTORE DRAFT
+
+
+Never store passwords or authentication secrets in drafts.
+
+
+============================================================
+13. RBAC
+============================================================
+
+Implement centralized RBAC.
+
+Roles:
+
+SUPER ADMIN
+ADMIN
+SUPERVISOR
+TECHNICIAN
+CUSTOMER
+FINANCE
+HR
+
+Roles must be configurable through the permission system.
+
+Permission examples:
+
+users.read
+users.create
+users.update
+users.delete
+
+complaints.read
+complaints.create
+complaints.assign
+complaints.update
+
+work_orders.read
+work_orders.create
+work_orders.assign
+work_orders.complete
+
+invoices.read
+invoices.create
+invoices.update
+invoices.send
+
+reports.read
+reports.create
+reports.export
+
+
+Backend MUST enforce authorization.
+
+Frontend menu hiding is NOT security.
+
+
+============================================================
+14. USER / TECHNICIAN ARCHITECTURE
+============================================================
+
+Use one canonical user source.
+
+A technician is a user with the appropriate technician role/profile.
+
+Do NOT maintain separate unrelated technician databases.
+
+Architecture:
+
+USERS
+ ↓
+ROLE
+ ↓
+TECHNICIAN PROFILE
+ ↓
+TECHNICIAN OPERATIONS
+
+
+Changing:
+
+CUSTOMER
+→ TECHNICIAN
+
+must immediately update the appropriate application behavior.
+
+Technician must then be available in:
+
+- Technician Management
+- Complaint Assignment
+- Work Orders
+- Preventive Maintenance
+- Mobile application
+
+
+============================================================
+15. CUSTOMER PORTAL
+============================================================
+
+Customers must have a dedicated role-based portal.
+
+Customer can access only authorized information.
+
+Customer features:
+
+- Dashboard
+- Equipment
+- QR Scan
+- Complaints
+- Work Orders
+- Invoices
+- History
+- Notifications
+- Profile
+
+Customer must not access:
+
+- user administration
+- employee administration
+- finance administration
+- HR
+- system settings
+- IRMS administration
+
+unless a specific permission explicitly allows it.
+
+
+============================================================
+16. ADMIN APPLICATION
+============================================================
+
+Admin interface should contain the existing enterprise modules.
+
+Navigation:
+
+Home
+Dashboard
+Customers
+Users
+Employees
+Technicians
+Complaints
+Work Orders
+Equipment
+Preventive Maintenance
+Inventory
+Purchases
+Vehicles
+Quotations
+Invoices
+Finance
+HR
+Reports
+Notifications
+Settings
+
+IRMS should remain an integrated feature.
+
+Do not create a separate IRMS application.
+
+
+============================================================
+17. DASHBOARD
+============================================================
+
+Create role-based dashboards.
+
+Dashboard must use real PostgreSQL data.
+
+Do not use mock KPI values.
+
+Dashboard should support:
+
+- KPIs
+- charts
+- recent activities
+- pending complaints
+- work orders
+- technician workload
+- equipment status
+- PM status
+- quotation status
+- invoice status
+- financial summaries
+- notifications
+
+Live data must be loaded through APIs.
+
+Loading, empty and error states must be separate.
+
+
+============================================================
+18. COMPLAINT MANAGEMENT
+============================================================
+
+Implement enterprise complaint management.
+
+Workflow:
+
+CUSTOMER CREATES COMPLAINT
+ ↓
+COMPLAINT CREATED
+ ↓
+ADMIN/SUPERVISOR ASSIGNS TECHNICIAN
+ ↓
+ASSIGNED
+ ↓
+TECHNICIAN ACCEPTS
+ ↓
+IN PROGRESS
+ ↓
+WORK ORDER
+ ↓
+TECHNICIAN STARTS JOB
+ ↓
+CHECKLIST
+ ↓
+WORK COMPLETED
+ ↓
+CUSTOMER CONFIRMATION
+ ↓
+DRAFT INVOICE
+ ↓
+INVOICE REVIEW
+ ↓
+INVOICE SENT
+ ↓
+PAYMENT
+ ↓
+CLOSED
+
+
+Backend must enforce valid state transitions.
+
+Do not allow frontend users to arbitrarily change protected statuses.
+
+
+============================================================
+19. WORK ORDER
+============================================================
+
+Work Order must support:
+
+- complaint reference
+- customer
+- equipment
+- technician
+- priority
+- scheduled date
+- start time
+- completion time
+- checklist
+- materials
+- labour
+- notes
+- photos
+- documents
+- customer confirmation
+- status
+
+
+============================================================
+20. EQUIPMENT MANAGEMENT
+============================================================
+
+Equipment must support:
+
+- asset ID
+- equipment number
+- serial number
+- manufacturer
+- model
+- category
+- location
+- customer
+- installation date
+- warranty
+- maintenance schedule
+- status
+- QR code
+- documents
+- images
+- maintenance history
+- complaint history
+- work order history
+
+
+============================================================
+21. QR CODE SYSTEM
+============================================================
+
+Implement secure QR codes for:
+
+- Equipment
+- Complaints
+- Work Orders
+- Quotations
+- Invoices
+- Inspection Reports
+- Project Reports
+
+QR code should identify the resource securely.
+
+Do not place sensitive information directly inside QR codes.
+
+Scan:
+
+QR
+ ↓
+secure resource URL
+ ↓
+authentication
+ ↓
+authorization
+ ↓
+resource
+
+
+============================================================
+22. PREVENTIVE MAINTENANCE
+============================================================
+
+Implement:
+
+- PM plans
+- schedules
+- frequencies
+- equipment assignment
+- checklists
+- technician assignment
+- due dates
+- overdue status
+- completion
+- maintenance history
+- notifications
+
+Support recurring maintenance scheduling.
+
+
+============================================================
+23. INVENTORY
+============================================================
+
+Implement:
+
+- item master
+- categories
+- units
+- suppliers
+- stock
+- minimum stock
+- stock movement
+- adjustment
+- issue
+- receive
+- return
+- low-stock alerts
+
+Every stock movement must be recorded.
+
+
+============================================================
+24. PURCHASE MANAGEMENT
+============================================================
+
+Implement:
+
+- suppliers
+- purchase requests
+- purchase orders
+- approval
+- receiving
+- purchase items
+- quantities
+- rates
+- totals
+- attachments
+- status
+
+Approved/received purchases can update inventory according to business rules.
+
+
+============================================================
+25. QUOTATIONS
+============================================================
+
+Professional quotation module.
+
+Support:
+
+- quotation number
+- customer
+- date
+- validity
+- items
+- inventory
+- labour
+- service
+- custom items
+- quantity
+- unit
+- rate
+- discount
+- tax
+- shipping
+- subtotal
+- labour cost
+- material cost
+- grand total
+- notes
+- terms & conditions
+
+Support:
+
+- Draft
+- Preview
+- Print
+- PDF
+- Email
+- WhatsApp where integrated
+
+
+============================================================
+26. INVOICES
+============================================================
+
+Professional invoice module.
+
+Support:
+
+- invoice number
+- customer
+- quotation reference
+- work order reference
+- items
+- labour
+- materials
+- discount
+- tax
+- shipping
+- subtotal
+- grand total
+- payment
+- balance
+- status
+
+Support:
+
+- Draft
+- Preview
+- Print
+- PDF
+- Email
+- WhatsApp where integrated
+
+
+============================================================
+27. FINANCE
+============================================================
+
+Implement finance architecture.
+
+Support:
+
+- income
+- expenses
+- payments
+- receivables
+- payables
+- accounts
+- transactions
+- financial reports
+- statements
+- balance sheet where appropriate
+
+Financial calculations MUST be backend authoritative.
+
+Never trust frontend totals.
+
+
+============================================================
+28. HR
+============================================================
+
+Implement HR module.
+
+Support where applicable:
+
+- employees
+- departments
+- positions
+- attendance
+- leave
+- payroll
+- documents
+- employee records
+- HR reports
+
+
+============================================================
+29. IRMS
+============================================================
+
+IRMS = Inspection Report Management System.
+
+It must be integrated into the application.
+
+Support:
+
+- Projects
+- Inspection Reports
+- Checklists
+- Findings
+- Recommendations
+- Photos
+- Documents
+- Reports
+- Analytics
+- Calendar
+- Status
+- Search
+- Filters
+- PDF
+- Print
+
+Use role-based access.
+
+Customer must not access IRMS administration.
+
+
+============================================================
+30. REPORTING
+============================================================
+
+Build professional reports.
+
+Support:
+
+- PDF
+- print
+- CSV/Excel export where appropriate
+- filters
+- date ranges
+- customer
+- technician
+- project
+- status
+
+Reports must use actual PostgreSQL data.
+
+
+============================================================
+31. NOTIFICATIONS
+============================================================
+
+Implement centralized notification service.
+
+Channels:
+
+- in-app
+- email
+- Firebase push where required
+- WhatsApp where integrated
+
+Notification architecture:
+
+EVENT
+ ↓
+NOTIFICATION SERVICE
+ ↓
+CHANNEL
+ ↓
+DELIVERY
+ ↓
+LOG
+
+
+Support:
+
+- notification badge
+- unread count
+- read
+- open
+- dismiss
+- role-based notifications
+
+
+============================================================
+32. REDIS
+============================================================
+
+Redis must be integrated carefully.
+
+Use Redis for:
+
+- caching
+- rate limiting
+- background jobs
+- temporary state where appropriate
+
+Do not use Redis as the primary database.
+
+Example:
+
+PostgreSQL
+ ↓
+authoritative data
+
+Redis
+ ↓
+cached representation
+
+When PostgreSQL data changes:
+
+invalidate/update relevant Redis cache.
+
+
+============================================================
+33. FILE STORAGE
+============================================================
+
+Create centralized document/file storage.
+
+Support:
+
+- complaint photos
+- work order photos
+- equipment images
+- inspection images
+- PDF documents
+- quotations
+- invoices
+- employee documents
+
+Do not store large binary files directly in PostgreSQL unless there is a specific reason.
+
+Use object/file storage appropriate for the infrastructure.
+
+Implement:
+
+- access control
+- file validation
+- file size limits
+- safe filenames
+- MIME validation
+- authorization
+
+
+============================================================
+34. API ARCHITECTURE
+============================================================
+
+Use versioned API:
+
+/api/v1/
+
+Examples:
+
+/api/v1/auth
+/api/v1/users
+/api/v1/customers
+/api/v1/technicians
+/api/v1/complaints
+/api/v1/work-orders
+/api/v1/equipment
+/api/v1/pm
+/api/v1/inspections
+/api/v1/irms
+/api/v1/quotations
+/api/v1/invoices
+/api/v1/finance
+/api/v1/inventory
+/api/v1/purchases
+/api/v1/hr
+/api/v1/reports
+/api/v1/notifications
+
+
+Include:
+
+- pagination
+- filtering
+- sorting
+- validation
+- structured errors
+- request IDs
+
+
+============================================================
+35. ERROR HANDLING
+============================================================
+
+Implement centralized error handling.
+
+Normal users:
+
+friendly error.
+
+Example:
+
+"Something went wrong. Please try again."
+
+SUPER ADMIN:
+
+may receive safe diagnostic information where appropriate.
+
+Never expose:
+
+- passwords
+- database credentials
+- API secrets
+- stack traces
+- JWT secrets
+- OAuth secrets
+- internal filesystem paths
+
+
+============================================================
+36. AUDIT LOG
+============================================================
+
+Create audit logging.
+
+Track important actions:
+
+- login
+- logout
+- role change
+- user creation
+- user update
+- technician assignment
+- complaint status
+- work order status
+- quotation
+- invoice
+- payment
+- configuration changes
+
+Audit log should contain:
+
+- actor
+- action
+- resource
+- resource ID
+- timestamp
+- IP where appropriate
+- metadata
+
+
+============================================================
+37. SECURITY
+============================================================
+
+Implement:
+
+- secure authentication
+- password hashing
+- RBAC
+- input validation
+- SQL injection protection
+- XSS protection
+- CSRF protection where applicable
+- rate limiting
+- secure cookies
+- security headers
+- CORS
+- secret management
+- file validation
+- audit logs
+
+Never trust frontend permissions.
+
+Backend is authoritative.
+
+
+============================================================
+38. POSTGRESQL SECURITY
+============================================================
+
+PostgreSQL must use a dedicated application user.
+
+Do not use PostgreSQL superuser credentials from the application.
+
+PostgreSQL should remain private.
+
+Do not expose port 5432 publicly.
+
+Use:
+
+Application
+ ↓
+Private/local network
+ ↓
+PostgreSQL
+
+
+============================================================
+39. REDIS SECURITY
+============================================================
+
+Redis should remain private.
+
+Do not expose Redis directly to the Internet.
+
+Use secure authentication/configuration appropriate to the deployment.
+
+
+============================================================
+40. ENVIRONMENT CONFIGURATION
+============================================================
+
+Create:
+
+.env.example
+
+Never commit real secrets.
+
+Separate:
+
+development
+test
+production
+
+configuration.
+
+Production environment must contain:
+
+DATABASE
+REDIS
+AUTH
+SESSION
+CORS
+APP_URL
+API_URL
+EMAIL
+GOOGLE_OAUTH
+STORAGE
+FIREBASE
+WHATSAPP
+
+Use actual variable names based on implementation.
+
+
+============================================================
+41. DOCKER
+============================================================
+
+Create production Docker configuration.
+
+Services may include:
+
+frontend
+backend
+postgresql
+redis
+
+Do not unnecessarily containerize services if there is a strong operational reason not to.
+
+Use persistent PostgreSQL volumes.
+
+Use persistent storage for required application data.
+
+
+============================================================
+42. DATABASE PERSISTENCE
+============================================================
+
+PostgreSQL data MUST survive:
+
+- application restart
+- container restart
+- server restart
+
+Do not store PostgreSQL production data inside an ephemeral container filesystem.
+
+
+============================================================
+43. BACKUPS
+============================================================
+
+Implement PostgreSQL backup strategy.
+
+At minimum:
+
+- daily backup
+- retention
+- secure storage
+- backup verification
+
+Document restore procedure.
+
+A backup that has never been tested for restoration must not be assumed reliable.
+
+
+============================================================
+44. HEALTH CHECKS
+============================================================
+
+Implement:
+
+GET /health
+
+and:
+
+GET /health/ready
+
+Readiness should verify required dependencies.
+
+Example:
+
+Application
+ ↓
+PostgreSQL
+ ↓
+Redis if required
+
+Do not expose secrets.
+
+
+============================================================
+45. LOGGING
+============================================================
+
+Implement structured application logging.
+
+Include:
+
+- timestamp
+- request ID
+- route
+- status
+- duration
+- error category
+
+Never log secrets.
+
+
+============================================================
+46. MONITORING
+============================================================
+
+Monitor:
+
+- application health
+- PostgreSQL
+- Redis
+- disk
+- RAM
+- CPU
+- container health
+- Cloudflare Tunnel
+- failed authentication
+- API errors
+
+Create operational documentation.
+
+
+============================================================
+47. FRONTEND DESIGN
+============================================================
+
+Use premium enterprise UI.
+
+Technology:
+
+Next.js
+TypeScript
+Tailwind CSS
+
+Design:
+
+- modern
+- clean
+- responsive
+- enterprise
+- mobile-first
+- accessible
+- fast
+
+Branding:
+
+Primary theme:
+GREEN
+
+Background:
+WHITE / LIGHT NEUTRAL
+
+Text:
+BLACK / DARK NEUTRAL
+
+Avoid blue accents unless specifically required.
+
+Font:
+
+Poppins
+
+Use consistent design tokens.
+
+
+============================================================
+48. NAVIGATION
+============================================================
+
+Use the established floating navigation concept.
+
+Do not use a permanent traditional sidebar unless required.
+
+Desktop:
+
+Floating glassmorphism navigation.
+
+Mobile:
+
+Bottom navigation.
+
+Mobile bottom navigation:
+
+Home
+Equipment
+Scan
+Complaint
+Invoices
+History
+
+
+Use role-based navigation.
+
+Do not show unauthorized modules.
+
+
+============================================================
+49. RESPONSIVE DESIGN
+============================================================
+
+Every feature must work on:
+
+- desktop
+- laptop
+- tablet
+- mobile
+
+Test:
+
+320px
+375px
+390px
+414px
+768px
+1024px
+1280px
+1440px
+1920px
+
+
+============================================================
+50. FORM DESIGN
+============================================================
+
+Forms must support:
+
+- validation
+- loading
+- errors
+- success
+- dirty state
+- draft saving where appropriate
+- autosave where appropriate
+- unsaved changes warning
+- keyboard navigation
+- mobile input
+
+Never lose user-entered information unexpectedly.
+
+
+============================================================
+51. SEARCH / FILTER / PAGINATION
+============================================================
+
+Enterprise tables must support:
+
+- search
+- filters
+- sorting
+- pagination
+- page size
+- date range
+- export where appropriate
+
+Do not load massive datasets unnecessarily.
+
+
+============================================================
+52. PERFORMANCE
+============================================================
+
+Optimize:
+
+- database queries
+- API response
+- frontend rendering
+- images
+- caching
+- pagination
+- lazy loading
+- code splitting
+
+Do not optimize by introducing stale or incorrect data.
+
+
+============================================================
+53. ACCESSIBILITY
+============================================================
+
+Implement:
+
+- keyboard navigation
+- labels
+- focus states
+- ARIA where required
+- accessible dialogs
+- readable contrast
+- semantic HTML
+
+
+============================================================
+54. TESTING STRATEGY
+============================================================
+
+Create:
+
+UNIT TESTS
+INTEGRATION TESTS
+API TESTS
+DATABASE TESTS
+AUTH TESTS
+RBAC TESTS
+E2E TESTS
+BROWSER TESTS
+SECURITY TESTS
+
+
+============================================================
+55. AUTH TESTING
+============================================================
+
+Test:
+
+- valid login
+- invalid password
+- unknown email
+- disabled account
+- logout
+- session refresh
+- expired session
+- password reset
+- Google Login
+- role loading
+
+
+============================================================
+56. RBAC TESTING
+============================================================
+
+Test every role:
+
+SUPER ADMIN
+ADMIN
+SUPERVISOR
+TECHNICIAN
+CUSTOMER
+FINANCE
+HR
+
+Attempt unauthorized routes and APIs.
+
+Backend must reject unauthorized operations.
+
+
+============================================================
+57. BUSINESS WORKFLOW TESTING
+============================================================
+
+Test:
+
+Complaint
+→ Assignment
+→ Technician
+→ Acceptance
+→ Work Order
+→ Start
+→ Checklist
+→ Completion
+→ Customer Confirmation
+→ Draft Invoice
+→ Invoice
+→ Payment
+→ Closed
+
+
+Verify database after each major transition.
+
+
+============================================================
+58. BROWSER QA
+============================================================
+
+Use a real browser.
+
+Test:
+
+- login
+- logout
+- every menu
+- every submenu
+- every button
+- every form
+- every modal
+- every dropdown
+- every search
+- every filter
+- every table
+- every CRUD operation
+- PDF
+- print
+- QR
+- uploads
+- notifications
+
+Inspect:
+
+Console
+Network
+Application
+Cookies
+Storage
+
+
+============================================================
+59. NO DEAD BUTTONS
+============================================================
+
+Every visible button must either:
+
+- navigate
+- open modal
+- submit
+- perform API action
+- download
+- print
+
+No decorative button should appear functional if it does nothing.
+
+
+============================================================
+60. NO FAKE DATA
+============================================================
+
+Production UI must never use:
+
+- hardcoded KPI numbers
+- fake technicians
+- fake customers
+- fake invoices
+- fake complaints
+- fake work orders
+
+All production business data comes from PostgreSQL through the backend API.
+
+
+============================================================
+61. PRODUCTION DEPLOYMENT
+============================================================
+
+Deploy to:
+
+192.168.100.110
+
+Application:
+
+port 3100
+
+Public:
+
+https://www.mohdhms.com
+
+Cloudflare Tunnel:
+
+Cloudflare
+ ↓
+Tunnel
+ ↓
+192.168.100.110:3100
+
+
+Do not expose PostgreSQL or Redis publicly.
+
+
+============================================================
+62. PRODUCTION SERVER SETUP
+============================================================
+
+Verify:
+
+Ubuntu
+Docker
+Docker Compose
+PostgreSQL
+Redis
+Application
+Cloudflare Tunnel
+Firewall
+
+Enable automatic startup after reboot.
+
+
+============================================================
+63. PRODUCTION STARTUP ORDER
+============================================================
+
+Expected dependency:
+
+PostgreSQL
+ ↓
+Redis
+ ↓
+Backend
+ ↓
+Frontend
+ ↓
+Cloudflare Tunnel
+
+
+Application must correctly handle dependency readiness.
+
+
+============================================================
+64. DOMAIN / HTTPS
+============================================================
+
+Production:
+
+https://www.mohdhms.com
+
+Ensure:
+
+- HTTPS
+- secure cookies
+- correct proxy headers
+- correct public URL
+- correct OAuth callback
+- correct API URL
+
+Never expose internal IP URLs to users.
+
+
+============================================================
+65. GOOGLE OAUTH
+============================================================
+
+Implement Google Login correctly.
+
+Production callback must use the actual production domain.
+
+Do not use:
+
+localhost
+127.0.0.1
+192.168.100.110
+
+as the public OAuth callback.
+
+Validate:
+
+- state
+- code
+- issuer
+- token
+- user identity
+
+Never disable state validation.
+
+
+============================================================
+66. EMAIL SYSTEM
+============================================================
+
+Integrate the existing corporate email architecture if required.
+
+Possible addresses:
+
+info@
+sales@
+service@
+finance@
+admin@
+hr@
+procurement@
+projects@
+operations@
+inspection@
+
+Use centralized EmailService.
+
+Modules should route emails appropriately.
+
+Example:
+
+Quotation
+→ sales
+
+Invoice
+→ finance
+
+Complaint
+→ service
+
+Purchase
+→ procurement
+
+HR
+→ hr
+
+IRMS
+→ inspection
+
+
+============================================================
+67. WHATSAPP
+============================================================
+
+Where required, integrate WhatsApp through an appropriate official/API-based integration.
+
+Use centralized WhatsAppService.
+
+Do not place WhatsApp logic inside individual pages.
+
+
+============================================================
+68. FIREBASE NOTIFICATIONS
+============================================================
+
+Where push notifications are required:
+
+Use centralized notification service.
+
+Do not expose Firebase server credentials to frontend.
+
+
+============================================================
+69. API DOCUMENTATION
+============================================================
+
+Generate OpenAPI documentation.
+
+Document:
+
+- authentication
+- users
+- customers
+- technicians
+- complaints
+- work orders
+- equipment
+- PM
+- inspections
+- IRMS
+- quotations
+- invoices
+- inventory
+- purchases
+- finance
+- HR
+- reports
+- notifications
+
+
+============================================================
+70. DOCUMENTATION
+============================================================
+
+Create:
+
+README.md
+
+Include:
+
+- project overview
+- architecture
+- local development
+- environment variables
+- database setup
+- migrations
+- Redis
+- authentication
+- testing
+- Docker
+- production deployment
+- backup
+- restore
+- troubleshooting
+
+
+Also create:
+
+ARCHITECTURE.md
+DATABASE.md
+API.md
+SECURITY.md
+DEPLOYMENT.md
+OPERATIONS.md
+
+
+============================================================
+71. DEVELOPMENT WORKFLOW
+============================================================
+
+Do NOT build everything blindly in one pass.
+
+Use phases.
+
+PHASE 1
+Architecture
+
+PHASE 2
+Repository/project setup
+
+PHASE 3
+PostgreSQL
+
+PHASE 4
+Redis
+
+PHASE 5
+Backend foundation
+
+PHASE 6
+Authentication
+
+PHASE 7
+RBAC
+
+PHASE 8
+Frontend foundation
+
+PHASE 9
+Users/customers/employees/technicians
+
+PHASE 10
+Complaints/work orders
+
+PHASE 11
+Equipment/PM
+
+PHASE 12
+IRMS
+
+PHASE 13
+Inventory/purchases
+
+PHASE 14
+Quotations/invoices
+
+PHASE 15
+Finance/HR
+
+PHASE 16
+Notifications
+
+PHASE 17
+Reports/PDF/QR
+
+PHASE 18
+Security
+
+PHASE 19
+Testing
+
+PHASE 20
+Production deployment
+
+PHASE 21
+Browser QA
+
+PHASE 22
+Final production hardening
+
+
+============================================================
+72. PHASE COMPLETION RULE
+============================================================
+
+Do not mark a phase complete merely because code exists.
+
+Each phase must have:
+
+- implementation
+- tests
+- database verification
+- API verification
+- frontend verification
+- error handling
+- documentation
+
+Then continue.
+
+
+============================================================
+73. DATABASE MIGRATION RULE
+============================================================
+
+Every schema change must use migrations.
+
+Do not manually modify production tables without migration documentation.
+
+Never use:
+
+DROP DATABASE
+DROP SCHEMA CASCADE
+TRUNCATE
+
+during normal deployment.
+
+Never reset production data.
+
+
+============================================================
+74. DEPLOYMENT SAFETY
+============================================================
+
+Before production migration:
+
+1. Backup
+2. Verify backup
+3. Review migration
+4. Dry-run where possible
+5. Apply migration
+6. Verify schema
+7. Verify application
+8. Verify critical workflows
+
+
+============================================================
+75. DRY-RUN APPROVAL GATE
+============================================================
+
+Before any destructive or high-risk operation:
+
+STOP.
+
+Report:
+
+- operation
+- affected files
+- affected tables
+- affected records
+- backup required
+- migration required
+- downtime
+- risks
+- rollback plan
+
+Wait for approval before destructive operations.
+
+Safe inspection can continue.
+
+
+============================================================
+76. ROLLBACK
+============================================================
+
+Every production deployment must have a rollback strategy.
+
+Document:
+
+- application rollback
+- database migration rollback where possible
+- configuration rollback
+- Docker image rollback
+- frontend rollback
+
+
+============================================================
+77. SECURITY CHECK BEFORE PRODUCTION
+============================================================
+
+Verify:
+
+[ ] No secrets in Git
+[ ] No passwords in source
+[ ] No service credentials in frontend
+[ ] PostgreSQL private
+[ ] Redis private
+[ ] HTTPS
+[ ] Secure cookies
+[ ] RBAC
+[ ] Password hashing
+[ ] Rate limiting
+[ ] Input validation
+[ ] SQL injection protection
+[ ] XSS protection
+[ ] CSRF protection where applicable
+[ ] Security headers
+[ ] Audit logs
+[ ] Safe errors
+[ ] File upload security
+
+
+============================================================
+78. PRODUCTION BROWSER QA
+============================================================
+
+After deployment:
+
+Open:
+
+https://www.mohdhms.com
+
+Test:
+
+LOGIN
+LOGOUT
+SESSION
+DASHBOARD
+EVERY MENU
+EVERY FORM
+EVERY CRUD
+EVERY ROLE
+EVERY IMPORTANT WORKFLOW
+
+
+Use:
+
+Chrome desktop
+Chrome mobile viewport
+
+Inspect:
+
+Console
+Network
+Cookies
+Storage
+
+
+============================================================
+79. LONG-DURATION TEST
+============================================================
+
+This is mandatory.
+
+Open a form.
+
+Enter unsaved information.
+
+Keep the browser open for:
+
+30 minutes minimum.
+
+Preferably:
+
+60 minutes.
+
+During this period:
+
+- session refresh must not reload page
+- form must not reset
+- authentication must remain valid
+- backend must remain stable
+- PostgreSQL must remain stable
+- Redis must remain stable
+- Cloudflare Tunnel must remain stable
+
+The test passes only if the user's work remains intact.
+
+
+============================================================
+80. SERVER REBOOT TEST
+============================================================
+
+Verify after server restart:
+
+PostgreSQL
+ ↓
+Redis
+ ↓
+Backend
+ ↓
+Frontend
+ ↓
+Cloudflare Tunnel
+ ↓
+Website
+
+All services must recover automatically.
+
+Verify database data remains intact.
+
+
+============================================================
+81. FINAL ACCEPTANCE CRITERIA
+============================================================
+
+The application is production-ready only when:
+
+[ ] Architecture complete
+[ ] PostgreSQL primary database
+[ ] Redis cache configured
+[ ] Authentication working
+[ ] Google Login working
+[ ] Session persistence working
+[ ] Silent session refresh working
+[ ] No unexpected refresh
+[ ] Draft protection working
+[ ] RBAC working
+[ ] Customer Portal working
+[ ] Admin Portal working
+[ ] Technician operations working
+[ ] Complaints working
+[ ] Work Orders working
+[ ] Equipment working
+[ ] PM working
+[ ] IRMS working
+[ ] Inventory working
+[ ] Purchases working
+[ ] Quotations working
+[ ] Invoices working
+[ ] Finance working
+[ ] HR working
+[ ] Notifications working
+[ ] Reports working
+[ ] PDF working
+[ ] Print working
+[ ] QR working
+[ ] File uploads working
+[ ] Search working
+[ ] Filters working
+[ ] Pagination working
+[ ] Mobile working
+[ ] Desktop working
+[ ] PWA working if enabled
+[ ] PostgreSQL backups working
+[ ] Restore procedure documented
+[ ] Security audit passed
+[ ] Browser QA passed
+[ ] Long-duration test passed
+[ ] Server restart test passed
+[ ] Production URL verified
+
+
+============================================================
+82. FINAL PRODUCTION REPORT
+============================================================
+
+Generate:
+
+# MOHD.HMS ENTERPRISE
+# PRODUCTION READINESS REPORT
+
+## 1. ARCHITECTURE
+
+Frontend:
+Backend:
+Database:
+Cache:
+Storage:
+Infrastructure:
+
+## 2. DATABASE
+
+PostgreSQL:
+Version:
+Database:
+Schema:
+Migration:
+Backup:
+Restore:
+
+## 3. REDIS
+
+Version:
+Usage:
+Cache:
+TTL:
+Invalidation:
+
+## 4. AUTHENTICATION
+
+Email/password:
+Google:
+Session:
+Logout:
+Password reset:
+
+## 5. RBAC
+
+Super Admin:
+Admin:
+Supervisor:
+Technician:
+Customer:
+Finance:
+HR:
+
+## 6. MODULES
+
+List every module and:
+
+Implemented:
+Tested:
+Database verified:
+Browser verified:
+Status:
+
+## 7. BUSINESS WORKFLOWS
+
+Complaint:
+Work Order:
+PM:
+Quotation:
+Invoice:
+Payment:
+IRMS:
+
+## 8. SECURITY
+
+Authentication:
+RBAC:
+Database:
+Secrets:
+Cookies:
+CORS:
+Rate limiting:
+Audit logs:
+
+## 9. PRODUCTION
+
+Server:
+Application port:
+Public URL:
+Cloudflare:
+HTTPS:
+Startup:
+
+## 10. QA
+
+Unit:
+Integration:
+API:
+E2E:
+Browser:
+Mobile:
+Desktop:
+30-minute test:
+60-minute test:
+
+## 11. BUGS
+
+| ID | Severity | Module | Root Cause | Fix | Retest |
+|----|----------|--------|------------|-----|--------|
+
+## 12. REMAINING ISSUES
+
+Clearly identify anything:
+
+FAIL
+BLOCKED
+NOT VERIFIED
+
+## 13. FINAL STATUS
+
+PRODUCTION READY
+
+or
+
+NOT PRODUCTION READY
+
+Do not claim production-ready unless the required tests have actually passed.
+
+
+============================================================
+FINAL RULES
+============================================================
+
+FOLLOW THE STRUCTURE.
+
+DO NOT CHANGE THE STRUCTURE UNLESS THERE IS A REQUIREMENT TO CHANGE IT.
+
+BUILD A COMPLETELY NEW APPLICATION.
+
+DO NOT COPY BROKEN ARCHITECTURE FROM THE OLD APPLICATION.
+
+POSTGRESQL MUST BE THE PRIMARY DATABASE.
+
+REDIS MUST BE CACHE/TEMPORARY DATA ONLY.
+
+DO NOT CREATE DUPLICATE DATABASES.
+
+DO NOT USE MOCK DATA IN PRODUCTION.
+
+DO NOT USE DEVELOPMENT MODE IN PRODUCTION.
+
+DO NOT BYPASS AUTHENTICATION.
+
+DO NOT BYPASS RBAC.
+
+DO NOT DISABLE SECURITY.
+
+DO NOT EXPOSE POSTGRESQL OR REDIS TO THE PUBLIC INTERNET.
+
+DO NOT HARDCODE SECRETS.
+
+DO NOT LOSE UNSAVED FORM DATA.
+
+DO NOT FORCE PAGE RELOAD DURING NORMAL SESSION REFRESH.
+
+DO NOT MARK FEATURES COMPLETE WITHOUT TESTING THEM.
+
+DO NOT FABRICATE TEST RESULTS.
+
+DO NOT MARK THE APPLICATION PRODUCTION READY UNTIL:
+
+- PostgreSQL is verified
+- Redis is verified
+- Authentication is verified
+- RBAC is verified
+- APIs are verified
+- Frontend is verified
+- All major modules are verified
+- Business workflows are verified
+- Browser QA is verified
+- Mobile QA is verified
+- Security is verified
+- Backup is verified
+- Recovery is documented
+- Long-duration form test passes
+- Production deployment is verified
+
+BUILD FIRST.
+TEST SECOND.
+FIX THIRD.
+RETEST FOURTH.
+DEPLOY FIFTH.
+HARDEN LAST.
+
+The final system must be a REAL enterprise production application, not a UI prototype.

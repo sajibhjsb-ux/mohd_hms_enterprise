@@ -1,0 +1,769 @@
+// MOHD.HMS ENTERPRISE — Database Schema
+// Domains: Auth, Users, Roles, Sessions, Customers, Employees, Technicians,
+// Equipment, Assets, Locations, Complaints, Work Orders, PM, Inspections/IRMS,
+// Inventory, Suppliers, Purchases, Quotations, Invoices, Payments, Finance,
+// HR, Vehicles, Notifications, Documents, Settings, Audit Logs, Drafts.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────── AUTH / USERS / RBAC ───────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  passwordHash  String
+  name          String
+  phone         String?
+  // SUPER_ADMIN | ADMIN | SUPERVISOR | TECHNICIAN | CUSTOMER | FINANCE | HR
+  role          String    @default("CUSTOMER")
+  status        String    @default("ACTIVE") // ACTIVE | DISABLED
+  emailVerified DateTime?
+  lastLoginAt   DateTime?
+  customerId    String?   @unique
+  customer      Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  createdBy     String?
+
+  sessions           Session[]
+  passwordResets     PasswordResetToken[]
+  technicianProfile  TechnicianProfile?
+  employee           Employee?
+  notifications      Notification[]
+  auditLogs          AuditLog[]
+  attendance         Attendance[]
+
+  @@index([role])
+  @@index([status])
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  ip        String?
+  userAgent String?
+  createdAt DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  token     String    @unique
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+model TechnicianProfile {
+  id             String  @id @default(cuid())
+  userId         String  @unique
+  user           User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  employeeNo     String  @unique
+  skills         String  @default("") // comma separated
+  specialty      String  @default("GENERAL")
+  hourlyRateCents Int    @default(0)
+  status         String  @default("AVAILABLE") // AVAILABLE | ON_JOB | OFF_DUTY
+  vehicleId      String? @unique
+
+  complaints      Complaint[] @relation("assignedComplaints")
+  workOrders      WorkOrder[] @relation("assignedWorkOrders")
+  pmPlans         PmPlan[]    @relation("assignedPmPlans")
+  pmTasks         PmTask[]    @relation("assignedPmTasks")
+  inspections     InspectionReport[] @relation("inspectorReports")
+  vehicles        Vehicle[]   @relation("vehicleAssignee")
+}
+
+// ─────────────────────────── CUSTOMERS ───────────────────────────
+
+model Customer {
+  id            String   @id @default(cuid())
+  code          String   @unique
+  companyName   String
+  contactPerson String
+  email         String
+  phone         String
+  address       String   @default("")
+  city          String   @default("")
+  status        String   @default("ACTIVE") // ACTIVE | INACTIVE
+  notes         String   @default("")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  portalUser  User?
+  equipment   Equipment[]
+  complaints  Complaint[]
+  workOrders  WorkOrder[]
+  quotations  Quotation[]
+  invoices    Invoice[]
+  payments    Payment[]
+  irmsProjects IrmsProject[]
+}
+
+// ─────────────────────────── HR / EMPLOYEES ───────────────────────────
+
+model Department {
+  id          String @id @default(cuid())
+  name        String @unique
+  description String @default("")
+
+  employees Employee[]
+}
+
+model Employee {
+  id         String    @id @default(cuid())
+  employeeNo String    @unique
+  userId     String?   @unique
+  user       User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  firstName  String
+  lastName   String
+  departmentId String?
+  department Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  position   String    @default("")
+  email      String    @default("")
+  phone      String    @default("")
+  address    String    @default("")
+  joinDate   DateTime?
+  salaryCents Int      @default(0)
+  status     String    @default("ACTIVE") // ACTIVE | ON_LEAVE | TERMINATED
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  leaveRequests LeaveRequest[]
+  attendance    Attendance[]
+}
+
+model Attendance {
+  id         String   @id @default(cuid())
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  date       DateTime
+  status     String   @default("PRESENT") // PRESENT | ABSENT | LEAVE | HALF_DAY
+  checkIn    DateTime?
+  checkOut   DateTime?
+  notes      String   @default("")
+
+  @@unique([employeeId, date])
+  @@index([date])
+}
+
+model LeaveRequest {
+  id         String   @id @default(cuid())
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  type       String   @default("ANNUAL") // ANNUAL | SICK | UNPAID | OTHER
+  startDate  DateTime
+  endDate    DateTime
+  days       Int      @default(1)
+  reason     String   @default("")
+  status     String   @default("PENDING") // PENDING | APPROVED | REJECTED
+  approvedById String?
+  approvedAt DateTime?
+  createdAt  DateTime @default(now())
+
+  @@index([status])
+}
+
+// ─────────────────────────── LOCATIONS / EQUIPMENT ───────────────────────────
+
+model Location {
+  id          String @id @default(cuid())
+  name        String
+  code        String @unique
+  description String @default("")
+
+  equipment Equipment[]
+}
+
+model Equipment {
+  id               String    @id @default(cuid())
+  assetTag         String    @unique
+  serialNumber     String    @default("")
+  name             String
+  manufacturer     String    @default("")
+  model            String    @default("")
+  category         String    @default("GENERAL")
+  locationId       String?
+  location         Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  customerId       String?
+  customer         Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  installationDate DateTime?
+  warrantyExpiry   DateTime?
+  pmFrequencyDays  Int       @default(90)
+  status           String    @default("ACTIVE") // ACTIVE | UNDER_MAINTENANCE | RETIRED
+  qrToken          String    @unique @default(cuid())
+  notes            String    @default("")
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  complaints    Complaint[]
+  workOrders    WorkOrder[]
+  pmPlans       PmPlan[]
+  pmTasks       PmTask[]
+  inspections   InspectionReport[]
+}
+
+// ─────────────────────────── COMPLAINTS ───────────────────────────
+
+model Complaint {
+  id                  String    @id @default(cuid())
+  code                String    @unique
+  customerId          String
+  customer            Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  equipmentId         String?
+  equipment           Equipment? @relation(fields: [equipmentId], references: [id], onDelete: SetNull)
+  title               String
+  description         String
+  priority            String    @default("MEDIUM") // LOW | MEDIUM | HIGH | URGENT
+  // NEW → ASSIGNED → IN_PROGRESS → COMPLETED → CONFIRMED → CLOSED
+  status              String    @default("NEW")
+  createdById         String?
+  assignedTechnicianId String?
+  assignedTechnician  TechnicianProfile? @relation("assignedComplaints", fields: [assignedTechnicianId], references: [id], onDelete: SetNull)
+  assignedAt          DateTime?
+  acceptedAt          DateTime?
+  startedAt           DateTime?
+  completedAt         DateTime?
+  confirmedAt         DateTime?
+  closedAt            DateTime?
+  resolutionNotes     String    @default("")
+  customerFeedback    String    @default("")
+  customerRating      Int?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  statusHistory ComplaintStatusHistory[]
+  workOrders    WorkOrder[]
+
+  @@index([status])
+  @@index([customerId])
+  @@index([assignedTechnicianId])
+}
+
+model ComplaintStatusHistory {
+  id          String    @id @default(cuid())
+  complaintId String
+  complaint   Complaint @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+  fromStatus  String
+  toStatus    String
+  changedById String?
+  note        String    @default("")
+  createdAt   DateTime  @default(now())
+}
+
+// ─────────────────────────── WORK ORDERS ───────────────────────────
+
+model WorkOrder {
+  id             String    @id @default(cuid())
+  code           String    @unique
+  complaintId    String?
+  complaint      Complaint? @relation(fields: [complaintId], references: [id], onDelete: SetNull)
+  customerId     String
+  customer       Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  equipmentId    String?
+  equipment      Equipment? @relation(fields: [equipmentId], references: [id], onDelete: SetNull)
+  technicianId   String?
+  technician     TechnicianProfile? @relation("assignedWorkOrders", fields: [technicianId], references: [id], onDelete: SetNull)
+  title          String
+  description    String    @default("")
+  priority       String    @default("MEDIUM")
+  status         String    @default("PENDING") // PENDING | ACCEPTED | IN_PROGRESS | ON_HOLD | COMPLETED | CANCELLED
+  scheduledDate  DateTime?
+  startedAt      DateTime?
+  completedAt    DateTime?
+  labourHours    Float     @default(0)
+  labourRateCents Int      @default(0)
+  labourTotalCents Int    @default(0)
+  materialsTotalCents Int  @default(0)
+  totalCents     Int       @default(0)
+  notes          String    @default("")
+  customerConfirmed Boolean @default(false)
+  confirmedAt    DateTime?
+  invoiceId      String?
+  invoice        Invoice?  @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  checklist WorkOrderChecklistItem[]
+  materials WorkOrderMaterial[]
+
+  @@index([status])
+  @@index([customerId])
+}
+
+model WorkOrderChecklistItem {
+  id          String    @id @default(cuid())
+  workOrderId String
+  workOrder   WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  label       String
+  done        Boolean   @default(false)
+  doneAt      DateTime?
+  sortOrder   Int       @default(0)
+}
+
+model WorkOrderMaterial {
+  id             String         @id @default(cuid())
+  workOrderId    String
+  workOrder      WorkOrder      @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  inventoryItemId String?
+  inventoryItem  InventoryItem? @relation(fields: [inventoryItemId], references: [id], onDelete: SetNull)
+  name           String
+  quantity       Float
+  unit           String         @default("pcs")
+  unitCostCents  Int            @default(0)
+  totalCents     Int            @default(0)
+}
+
+// ─────────────────────────── PREVENTIVE MAINTENANCE ───────────────────────────
+
+model PmPlan {
+  id                  String    @id @default(cuid())
+  code                String    @unique
+  name                String
+  equipmentId         String
+  equipment           Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  frequency           String    @default("MONTHLY") // WEEKLY | MONTHLY | QUARTERLY | SEMI_ANNUAL | ANNUAL
+  assignedTechnicianId String?
+  assignedTechnician  TechnicianProfile? @relation("assignedPmPlans", fields: [assignedTechnicianId], references: [id], onDelete: SetNull)
+  checklistTemplate   String    @default("[]") // JSON string of labels
+  active              Boolean   @default(true)
+  nextDueDate         DateTime?
+  lastCompletedAt     DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  tasks PmTask[]
+}
+
+model PmTask {
+  id             String    @id @default(cuid())
+  code           String    @unique
+  planId         String
+  plan           PmPlan    @relation(fields: [planId], references: [id], onDelete: Cascade)
+  equipmentId    String
+  equipment      Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  technicianId   String?
+  technician     TechnicianProfile? @relation("assignedPmTasks", fields: [technicianId], references: [id], onDelete: SetNull)
+  dueDate        DateTime
+  status         String    @default("SCHEDULED") // SCHEDULED | OVERDUE | IN_PROGRESS | COMPLETED | SKIPPED
+  completedAt    DateTime?
+  notes          String    @default("")
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  checklist PmTaskChecklistItem[]
+}
+
+model PmTaskChecklistItem {
+  id        String  @id @default(cuid())
+  taskId    String
+  task      PmTask  @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  label     String
+  done      Boolean @default(false)
+  sortOrder Int     @default(0)
+}
+
+// ─────────────────────────── IRMS (Inspections) ───────────────────────────
+
+model IrmsProject {
+  id          String    @id @default(cuid())
+  code        String    @unique
+  name        String
+  customerId  String?
+  customer    Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  siteLocation String   @default("")
+  description String    @default("")
+  status      String    @default("ACTIVE") // PLANNING | ACTIVE | ON_HOLD | COMPLETED
+  startDate   DateTime?
+  endDate     DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  inspections InspectionReport[]
+}
+
+model InspectionReport {
+  id               String    @id @default(cuid())
+  code             String    @unique
+  projectId        String
+  project          IrmsProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  equipmentId      String?
+  equipment        Equipment? @relation(fields: [equipmentId], references: [id], onDelete: SetNull)
+  title            String
+  type             String    @default("ROUTINE") // ROUTINE | SAFETY | EQUIPMENT | PROJECT | OTHER
+  inspectionDate   DateTime
+  inspectorId      String?
+  inspector        TechnicianProfile? @relation("inspectorReports", fields: [inspectorId], references: [id], onDelete: SetNull)
+  status           String    @default("DRAFT") // DRAFT | SUBMITTED | APPROVED
+  summary          String    @default("")
+  overallCondition String    @default("GOOD") // EXCELLENT | GOOD | FAIR | POOR | CRITICAL
+  recommendations  String    @default("")
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  findings InspectionFinding[]
+}
+
+model InspectionFinding {
+  id             String           @id @default(cuid())
+  reportId       String
+  report         InspectionReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  finding        String
+  severity       String           @default("MEDIUM") // LOW | MEDIUM | HIGH | CRITICAL
+  recommendation String           @default("")
+}
+
+// ─────────────────────────── INVENTORY / SUPPLIERS / PURCHASES ───────────────────────────
+
+model Supplier {
+  id            String   @id @default(cuid())
+  code          String   @unique
+  name          String
+  contactPerson String   @default("")
+  email         String   @default("")
+  phone         String   @default("")
+  address       String   @default("")
+  status        String   @default("ACTIVE")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  items          InventoryItem[]
+  purchaseOrders PurchaseOrder[]
+  expenses       Expense[]
+}
+
+model InventoryItem {
+  id             String   @id @default(cuid())
+  sku            String   @unique
+  name           String
+  category       String   @default("GENERAL")
+  unit           String   @default("pcs")
+  stockQty       Float    @default(0)
+  minStockQty    Float    @default(0)
+  unitCostCents  Int      @default(0)
+  supplierId     String?
+  supplier       Supplier? @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  status         String   @default("ACTIVE")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  movements        StockMovement[]
+  woMaterials      WorkOrderMaterial[]
+  quotationItems   QuotationItem[]
+  purchaseItems    PurchaseItem[]
+}
+
+model StockMovement {
+  id           String        @id @default(cuid())
+  itemId       String
+  item         InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  type         String // RECEIVE | ISSUE | RETURN | ADJUST
+  quantity     Float // signed
+  balanceAfter Float
+  referenceType String @default("MANUAL") // MANUAL | WORK_ORDER | PURCHASE | QUOTATION
+  referenceId  String @default("")
+  note         String @default("")
+  createdById  String?
+  createdAt    DateTime @default(now())
+
+  @@index([itemId])
+}
+
+model PurchaseOrder {
+  id             String    @id @default(cuid())
+  code           String    @unique
+  supplierId     String
+  supplier       Supplier  @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  orderDate      DateTime  @default(now())
+  expectedDate   DateTime?
+  status         String    @default("DRAFT") // DRAFT | PENDING_APPROVAL | APPROVED | REJECTED | PARTIALLY_RECEIVED | RECEIVED | CANCELLED
+  subtotalCents  Int       @default(0)
+  taxCents       Int       @default(0)
+  totalCents     Int       @default(0)
+  notes          String    @default("")
+  approvedById   String?
+  approvedAt     DateTime?
+  receivedAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  items PurchaseItem[]
+}
+
+model PurchaseItem {
+  id            String        @id @default(cuid())
+  poId          String
+  po            PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
+  itemId        String?
+  item          InventoryItem? @relation(fields: [itemId], references: [id], onDelete: SetNull)
+  description   String
+  quantity      Float
+  unitCostCents Int
+  totalCents    Int
+  receivedQty   Float         @default(0)
+}
+
+// ─────────────────────────── QUOTATIONS ───────────────────────────
+
+model Quotation {
+  id              String    @id @default(cuid())
+  code            String    @unique
+  customerId      String
+  customer        Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  quotationDate   DateTime  @default(now())
+  validUntil      DateTime?
+  status          String    @default("DRAFT") // DRAFT | SENT | APPROVED | REJECTED | EXPIRED | CONVERTED
+  subtotalCents   Int       @default(0)
+  discountCents   Int       @default(0)
+  taxCents        Int       @default(0)
+  shippingCents   Int       @default(0)
+  totalCents      Int       @default(0)
+  labourCostCents Int       @default(0)
+  materialCostCents Int     @default(0)
+  notes           String    @default("")
+  terms           String    @default("")
+  convertedInvoiceId String?
+  createdById     String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  items    QuotationItem[]
+  invoices Invoice[]
+}
+
+model QuotationItem {
+  id              String         @id @default(cuid())
+  quotationId     String
+  quotation       Quotation      @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  kind            String         @default("MATERIAL") // MATERIAL | LABOUR | SERVICE | CUSTOM
+  itemId          String?
+  item            InventoryItem? @relation(fields: [itemId], references: [id], onDelete: SetNull)
+  description     String
+  quantity        Float          @default(1)
+  unit            String         @default("pcs")
+  unitPriceCents  Int            @default(0)
+  discountPercent Float          @default(0)
+  taxPercent      Float          @default(0)
+  totalCents      Int            @default(0)
+}
+
+// ─────────────────────────── INVOICES / PAYMENTS ───────────────────────────
+
+model Invoice {
+  id             String    @id @default(cuid())
+  code           String    @unique
+  customerId     String
+  customer       Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  quotationId    String?
+  quotation      Quotation? @relation(fields: [quotationId], references: [id], onDelete: SetNull)
+  workOrderId    String?
+  complaintId    String?
+  invoiceDate    DateTime  @default(now())
+  dueDate        DateTime?
+  status         String    @default("DRAFT") // DRAFT | SENT | PARTIALLY_PAID | PAID | OVERDUE | CANCELLED
+  subtotalCents  Int       @default(0)
+  discountCents  Int       @default(0)
+  taxCents       Int       @default(0)
+  shippingCents  Int       @default(0)
+  totalCents     Int       @default(0)
+  paidCents      Int       @default(0)
+  balanceCents   Int       @default(0)
+  notes          String    @default("")
+  terms          String    @default("")
+  sentAt         DateTime?
+  createdById    String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  items    InvoiceItem[]
+  payments Payment[]
+  workOrders WorkOrder[]
+}
+
+model InvoiceItem {
+  id              String    @id @default(cuid())
+  invoiceId       String
+  invoice         Invoice   @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  kind            String    @default("MATERIAL")
+  description     String
+  quantity        Float     @default(1)
+  unit            String    @default("pcs")
+  unitPriceCents  Int       @default(0)
+  discountPercent Float     @default(0)
+  taxPercent      Float     @default(0)
+  totalCents      Int       @default(0)
+}
+
+model Payment {
+  id           String    @id @default(cuid())
+  code         String    @unique
+  invoiceId    String?
+  invoice      Invoice?  @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  customerId   String?
+  customer     Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  amountCents  Int
+  method       String    @default("BANK_TRANSFER") // CASH | BANK_TRANSFER | CARD | CHEQUE | ONLINE
+  reference    String    @default("")
+  paidAt       DateTime  @default(now())
+  note         String    @default("")
+  recordedById String?
+  createdAt    DateTime  @default(now())
+
+  @@index([invoiceId])
+}
+
+// ─────────────────────────── FINANCE ───────────────────────────
+
+model Account {
+  id           String @id @default(cuid())
+  code         String @unique
+  name         String
+  type         String // CASH | BANK | RECEIVABLE | PAYABLE | INCOME | EXPENSE
+  balanceCents Int    @default(0)
+
+  transactions Transaction[]
+}
+
+model Transaction {
+  id            String   @id @default(cuid())
+  code          String   @unique
+  type          String // INCOME | EXPENSE
+  category      String   @default("GENERAL")
+  description   String   @default("")
+  amountCents   Int
+  accountId     String?
+  account       Account? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  date          DateTime @default(now())
+  referenceType String   @default("MANUAL") // INVOICE | PAYMENT | PURCHASE | EXPENSE | MANUAL
+  referenceId   String   @default("")
+  createdById   String?
+  createdAt     DateTime @default(now())
+
+  @@index([type])
+  @@index([date])
+}
+
+model Expense {
+  id          String    @id @default(cuid())
+  code        String    @unique
+  category    String    @default("GENERAL")
+  description String    @default("")
+  amountCents Int
+  expenseDate DateTime  @default(now())
+  supplierId  String?
+  supplier    Supplier? @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  status      String    @default("PENDING") // PENDING | APPROVED | PAID
+  approvedById String?
+  receiptNo   String    @default("")
+  createdById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+// ─────────────────────────── VEHICLES ───────────────────────────
+
+model Vehicle {
+  id                 String    @id @default(cuid())
+  code               String    @unique
+  registrationNo     String    @unique
+  make               String    @default("")
+  model              String    @default("")
+  type               String    @default("VAN") // VAN | TRUCK | CAR | PICKUP | OTHER
+  assignedTechnicianId String? @unique
+  assignedTechnician TechnicianProfile? @relation("vehicleAssignee", fields: [assignedTechnicianId], references: [id], onDelete: SetNull)
+  status             String    @default("AVAILABLE") // AVAILABLE | IN_USE | MAINTENANCE | RETIRED
+  odometer           Int       @default(0)
+  lastServiceDate    DateTime?
+  nextServiceDue     DateTime?
+  notes              String    @default("")
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+}
+
+// ─────────────────────────── NOTIFICATIONS / DOCUMENTS / SETTINGS / AUDIT ───────────────────────────
+
+model Notification {
+  id           String    @id @default(cuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channel      String    @default("IN_APP") // IN_APP | EMAIL | WHATSAPP | PUSH
+  type         String    @default("INFO") // INFO | SUCCESS | WARNING | ERROR
+  title        String
+  message      String
+  resourceType String    @default("")
+  resourceId   String    @default("")
+  readAt       DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@index([userId, readAt])
+}
+
+model Document {
+  id          String   @id @default(cuid())
+  name        String
+  safeName    String
+  mimeType    String
+  sizeBytes   Int
+  storagePath String
+  category    String   @default("GENERAL") // COMPLAINT | WORK_ORDER | EQUIPMENT | INSPECTION | QUOTATION | INVOICE | EMPLOYEE | GENERAL
+  resourceType String  @default("")
+  resourceId  String   @default("")
+  uploadedById String?
+  createdAt   DateTime @default(now())
+}
+
+model Setting {
+  key        String   @id
+  value      String
+  updatedAt  DateTime @updatedAt
+}
+
+model AuditLog {
+  id           String   @id @default(cuid())
+  actorId      String?
+  actor        User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  actorEmail   String   @default("")
+  action       String
+  resourceType String   @default("")
+  resourceId   String   @default("")
+  metadata     String   @default("")
+  ip           String   @default("")
+  createdAt    DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([action])
+}
+
+model Counter {
+  key   String @id
+  value Int    @default(0)
+}
+
+model Draft {
+  id        String   @id @default(cuid())
+  userId    String
+  formKey   String
+  data      String // JSON payload
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, formKey])
+}
