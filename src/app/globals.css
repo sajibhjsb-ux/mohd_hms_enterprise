@@ -137,6 +137,15 @@
   background: oklch(0.6 0.12 153);
 }
 
+/* Splash/boot screens: full dynamic viewport height with a static-vh fallback
+   (both declarations in one rule — dvh wins where supported, vh elsewhere).
+   Tailwind's separate min-h-screen/min-h-dvh utilities can't express this
+   fallback because their relative emission order is not guaranteed. */
+.splash-viewport {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
 /* Hide scrollbar while keeping scroll functionality (floating nav strip) */
 .no-scrollbar {
   scrollbar-width: none; /* Firefox */

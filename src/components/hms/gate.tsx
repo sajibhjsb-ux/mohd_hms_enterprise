@@ -9,18 +9,31 @@ export function Gate() {
   const { user, loading } = useSession();
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="flex flex-col items-center gap-3">
-          {/* Official brand logo (same source as login/header/PWA) with loading pulse. */}
+      // Splash container: full dynamic viewport height (splash-viewport helper in
+      // globals.css: 100dvh with 100vh fallback for older browsers) + safe-area
+      // padding so the logo can never sit under a notch, camera cutout or system
+      // navigation area in standalone/PWA mode.
+      <div className="splash-viewport flex items-center justify-center pl-[max(1.25rem,env(safe-area-inset-left))] pr-[max(1.25rem,env(safe-area-inset-right))] pt-[max(1.25rem,env(safe-area-inset-top))] pb-[max(1.25rem,env(safe-area-inset-bottom))]">
+        <div className="flex flex-col items-center gap-4">
+          {/* Official brand logo (same asset family as login/header/PWA icons).
+              Fluid responsive sizing: clamp(96px, 25vmin, 240px) — vmin is
+              min(viewport width, height), so the logo scales with whichever
+              dimension is limiting (width in portrait, height in landscape)
+              across phone → tablet → desktop → 4K without ever dominating or
+              disappearing. Width-only sizing + intrinsic 1:1 source preserve
+              the aspect ratio (never stretched or cropped). The 512px official
+              asset stays sharp up to the 240px cap even at 2x DPR, and is
+              precached by the service worker so offline PWA boots still show it. */}
           <Image
-            src="/brand/logo-128.png"
+            src="/brand/logo-512.png"
             alt="MOHD HMS Enterprise logo"
-            width={64}
-            height={64}
+            width={512}
+            height={512}
             priority
-            className="h-14 w-14 rounded-full ring-1 ring-border/40 shadow-sm animate-pulse"
+            unoptimized
+            className="h-auto w-[clamp(6rem,25vmin,15rem)] max-w-full rounded-full object-contain ring-1 ring-border/40 shadow-sm animate-pulse motion-reduce:animate-none"
           />
-          <p className="text-sm text-muted-foreground">Loading MOHD.HMS Enterprise…</p>
+          <p role="status" className="text-sm text-muted-foreground">Loading MOHD.HMS Enterprise…</p>
         </div>
       </div>
     );
