@@ -1,11 +1,18 @@
 "use client";
 
-// MOHD.HMS ENTERPRISE — application shell (orchestrator).
+// MOHD.HMS ENTERPRISE — application shell (orchestrator + page router).
 // Desktop: premium top header + floating navigation (reference design).
 // Mobile: simplified header + bottom navigation. Role-based nav is a UX hint;
 // the backend enforces real permissions. One authoritative nav config: MODULES.
+//
+// NAVIGATION ARCHITECTURE — dedicated pages, no popup CRUD:
+// Every business form/detail/management view is a full page addressed by a
+// hash route (#/complaints/new, #/complaints/{id}, …). The shell owns the
+// location.hash ⇄ ui-store sync, so browser Back/Forward and direct URLs work.
+// While any form page is dirty, route changes are guarded by a confirm dialog
+// ("Leave with unsaved changes?") — drafts auto-save as a second safety net.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
@@ -16,6 +23,7 @@ import { Badge } from "@/components/ui/badge";
 import { ClientApiError, api } from "@/lib/hms/api-client";
 import { hasPerm, useSession } from "./session";
 import { useUi } from "@/lib/hms/ui-store";
+import { hrefFor, navigateTo, parseHash, replaceHash } from "@/lib/hms/router";
 import { MODULES, type ModuleDef } from "./registry";
 import { humanize } from "@/lib/hms/constants";
 import { cn } from "@/lib/utils";
@@ -28,27 +36,18 @@ import { GlobalSearch, type SearchNavigateTarget } from "./shell/global-search";
 import { QrScanDialog } from "./shell/qr-dialog";
 
 export function AppShell() {
-  const { user, signOut } = useSession();
-  const { activeModule, setActiveModule, deepLink, setDeepLink, complaintFormDirty } = useUi();
+  const { user } = useSession();
+  const activeModule = useUi((s) => s.activeModule);
+  const deepLink = useUi((s) => s.deepLink);
+  const setDeepLink = useUi((s) => s.setDeepLink);
   const [searchOpen, setSearchOpen] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [pwOpen, setPwOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
-  const [pendingNav, setPendingNav] = useState<{ key: string; after?: () => void } | null>(null);
+  /** Hash the user asked for while a dirty form blocked navigation. */
+  const [pendingNav, setPendingNav] = useState<string | null>(null);
   const { toast } = useToast();
-
-  // Deep link handling (QR scans land on /?resource=equipment:{qrToken})
-  useEffect(() => {
-    const sp = new URLSearchParams(window.location.search);
-    const resource = sp.get("resource");
-    if (resource) {
-      const [type, ...rest] = resource.split(":");
-      if (type && rest.length) {
-        setDeepLink({ type, token: rest.join(":") });
-      }
-    }
-  }, [setDeepLink]);
 
   const visible = useMemo(
     () => MODULES.filter((m: ModuleDef) => {
@@ -61,46 +60,91 @@ export function AppShell() {
     [user]
   );
 
-  useEffect(() => {
-    if (visible.length && !visible.some((m) => m.key === activeModule)) {
-      setActiveModule(visible[0].key);
-    }
-  }, [visible, activeModule, setActiveModule]);
+  // Latest visible modules for the hashchange handler (avoids stale closures).
+  const visibleRef = useRef<ModuleDef[]>(visible);
+  useEffect(() => { visibleRef.current = visible; }, [visible]);
 
-  // Consume deep link when its module exists
+  /** Hash of the page currently rendered (drives guard + no-op detection). */
+  const appliedHashRef = useRef<string>("");
+
+  const applyHash = useCallback((hash: string) => {
+    // Re-applying the page we're already on (e.g. browser Back returning to a
+    // dirty form after "Stay") must be a no-op — it must NOT clear dirtiness.
+    if (hash && hash === appliedHashRef.current) return hash;
+    const vis = visibleRef.current;
+    const parsed = parseHash(hash);
+    let target = parsed?.module;
+    let seg = parsed?.seg ?? [];
+    if (!target || (vis.length > 0 && !vis.some((m) => m.key === target))) {
+      target = vis[0]?.key ?? "dashboard";
+      seg = [];
+      replaceHash(hrefFor(target, seg));
+    }
+    const ui = useUi.getState();
+    if (ui.activeModule !== target) ui.setActiveModule(target);
+    ui.setPage(target, seg);
+    // A fresh route is never dirty — the (unmounting) form page keeps its draft.
+    useUi.setState({ pageDirty: false });
+    window.scrollTo(0, 0);
+    appliedHashRef.current = hrefFor(target, seg);
+    return appliedHashRef.current;
+  }, []);
+
+  // Hash ⇄ store sync. Mounted once the user is authenticated so role-based
+  // fallbacks resolve; also handles direct URLs (#/complaints/{id}) after login.
+  useEffect(() => {
+    if (!user) return;
+    applyHash(window.location.hash || `#${visibleRef.current[0]?.key ?? "dashboard"}`);
+    const onHashChange = () => {
+      const next = window.location.hash;
+      if (useUi.getState().pageDirty && next !== appliedHashRef.current) {
+        // Keep rendering the form until the user confirms; URL shows the target.
+        setPendingNav(next);
+        return;
+      }
+      applyHash(next);
+    };
+    window.addEventListener("hashchange", onHashChange);
+    if (!window.location.hash) replaceHash(appliedHashRef.current);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, [user, applyHash]);
+
+  // Deep link handling (QR scans land on /?resource=equipment:{qrToken})
+  useEffect(() => {
+    const sp = new URLSearchParams(window.location.search);
+    const resource = sp.get("resource");
+    if (resource) {
+      const [type, ...rest] = resource.split(":");
+      if (type && rest.length) {
+        setDeepLink({ type, token: rest.join(":") });
+        navigateTo(type);
+      }
+    }
+  }, [setDeepLink]);
+
   useEffect(() => {
     if (deepLink && visible.some((m) => m.key === deepLink.type)) {
-      setActiveModule(deepLink.type);
+      if (!window.location.hash) navigateTo(deepLink.type);
     }
-  }, [deepLink, visible, setActiveModule]);
+  }, [deepLink, visible]);
 
   /**
-   * Single guarded navigation entry used by the header, floating nav, search,
-   * QR dialog and mobile nav. While the complaint entry form is dirty, leaving
-   * the complaints module asks for confirmation first (draft auto-saves too).
-   * NOTE: declared before the early return below (rules of hooks).
+   * Single guarded navigation entry for header / floating nav / mobile nav.
+   * Delegates to the hash router — the hashchange guard asks before leaving
+   * dirty form pages. NOTE: declared before the early return (rules of hooks).
    */
-  const switchModule = useCallback((key: string, after?: () => void) => {
-    if (useUi.getState().complaintFormDirty && key !== "complaints") {
-      setPendingNav({ key, after });
-      return;
-    }
-    setActiveModule(key);
-    after?.();
-  }, [setActiveModule]);
+  const switchModule = useCallback((key: string) => {
+    navigateTo(key);
+  }, []);
 
   const navigateFromSearch = useCallback((t: SearchNavigateTarget) => {
-    switchModule(t.module, () => {
-      if (t.complaintId) {
-        useUi.getState().setComplaintsView("list");
-        useUi.getState().setComplaintsFocusId(t.complaintId);
-      }
-    });
-  }, [switchModule]);
+    navigateTo(t.module, t.id ? [t.id] : []);
+  }, []);
 
   const navigateFromQr = useCallback((module: string, token: string) => {
-    switchModule(module, () => setDeepLink({ type: module, token }));
-  }, [switchModule, setDeepLink]);
+    setDeepLink({ type: module, token });
+    navigateTo(module);
+  }, [setDeepLink]);
 
   if (!user) return null;
 
@@ -131,7 +175,7 @@ export function AppShell() {
             <ShieldCheck className="h-3.5 w-3.5 text-primary" aria-hidden />
             <span>© {new Date().getFullYear()} MOHD.HMS Enterprise — Smart Facility Maintenance Management</span>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center justify-center gap-3">
             <span className="hidden sm:inline">www.mohdhms.com</span>
             <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700 border-emerald-200">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 mr-1 inline-block" aria-hidden /> System healthy
@@ -187,22 +231,30 @@ export function AppShell() {
         </div>
       </nav>
 
-      {/* Overlays */}
+      {/* Overlays (utility dialogs only — business CRUD uses dedicated pages) */}
       <ChangePasswordDialog open={pwOpen} onOpenChange={setPwOpen} />
       <GlobalSearch open={searchOpen} onOpenChange={setSearchOpen} onNavigate={navigateFromSearch} />
       <QrScanDialog open={qrOpen} onOpenChange={setQrOpen} onNavigate={navigateFromQr} />
 
+      {/* Unsaved-changes guard — blocks any route change away from a dirty form */}
       <Dialog open={!!pendingNav} onOpenChange={(o) => { if (!o) setPendingNav(null); }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Leave with unsaved changes?</DialogTitle>
             <DialogDescription>
-              Your complaint draft auto-saves as you type and will be offered for restore when you return.
+              This page has unsaved changes. Your draft auto-saves as you type and will be offered for restore when you return.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="flex-col-reverse sm:flex-row gap-2">
-            <Button variant="outline" onClick={() => setPendingNav(null)}>Stay on this page</Button>
-            <Button onClick={() => { if (pendingNav) { setActiveModule(pendingNav.key); pendingNav.after?.(); } setPendingNav(null); }}>
+            <Button variant="outline" onClick={() => setPendingNav(null)}>
+              Stay on this page
+            </Button>
+            <Button onClick={() => {
+              const target = pendingNav;
+              setPendingNav(null);
+              useUi.getState().setPageDirty(false);
+              if (target) applyHash(target);
+            }}>
               Leave anyway
             </Button>
           </DialogFooter>

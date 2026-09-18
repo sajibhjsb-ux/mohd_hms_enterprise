@@ -11,7 +11,7 @@ import { DataTable, type Column } from "@/components/hms/shared/data-table";
 import { StatCard, PageHeader, StatusBadge, ErrorState } from "@/components/hms/shared/ui-bits";
 import { api, ClientApiError } from "@/lib/hms/api-client";
 import { useSession } from "@/components/hms/session";
-import { useUi } from "@/lib/hms/ui-store";
+import { navigateTo } from "@/lib/hms/router";
 import { money, fmtDate, fmtDateTime } from "@/lib/hms/format";
 import { humanize } from "@/lib/hms/constants";
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis, PieChart, Pie, Legend } from "recharts";
@@ -38,7 +38,7 @@ const PIE_COLORS = ["#16a34a", "#0d9488", "#f59e0b", "#84cc16", "#4d7c0f", "#e11
 
 export function DashboardModule() {
   const { user } = useSession();
-  const setActiveModule = useUi((s) => s.setActiveModule);
+  const go = navigateTo;
   const [data, setData] = useState<Dash | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -101,7 +101,7 @@ export function DashboardModule() {
           <CardContent className="p-4 flex items-center gap-3 text-sm">
             <Boxes className="h-5 w-5 text-amber-600 shrink-0" aria-hidden />
             <span><strong>{k?.lowStock}</strong> inventory item{(k?.lowStock ?? 0) === 1 ? "" : "s"} at or below minimum stock.</span>
-            <Button size="sm" variant="outline" className="ml-auto" onClick={() => setActiveModule("inventory")}>Review inventory</Button>
+            <Button size="sm" variant="outline" className="ml-auto" onClick={() => go("inventory")}>Review inventory</Button>
           </CardContent>
         </Card>
       ) : null}
@@ -149,7 +149,7 @@ export function DashboardModule() {
         <Card className="lg:col-span-2">
           <CardHeader className="pb-2 flex-row items-center justify-between space-y-0">
             <CardTitle className="text-base">Recent complaints</CardTitle>
-            <Button variant="ghost" size="sm" className="text-xs" onClick={() => setActiveModule("complaints")}>View all</Button>
+            <Button variant="ghost" size="sm" className="text-xs" onClick={() => go("complaints")}>View all</Button>
           </CardHeader>
           <CardContent>
             {loading ? <Skeleton className="h-40 w-full" /> : (data?.recentComplaints.length ?? 0) === 0 ? (
@@ -157,7 +157,7 @@ export function DashboardModule() {
             ) : (
               <div className="divide-y">
                 {data?.recentComplaints.map((c) => (
-                  <button key={c.id} onClick={() => setActiveModule("complaints")} className="w-full text-left py-2.5 flex items-center gap-3 hover:bg-accent/40 rounded-md px-1.5">
+                  <button key={c.id} onClick={() => go("complaints", [c.id])} className="w-full text-left py-2.5 flex items-center gap-3 hover:bg-accent/40 rounded-md px-1.5">
                     <div className="min-w-0 flex-1">
                       <div className="text-sm font-medium truncate">{c.title}</div>
                       <div className="text-xs text-muted-foreground truncate">{c.code} · {c.customer.companyName} · {fmtDateTime(c.createdAt)}</div>
@@ -175,7 +175,7 @@ export function DashboardModule() {
         <Card>
           <CardHeader className="pb-2 flex-row items-center justify-between space-y-0">
             <CardTitle className="text-base">Upcoming PM tasks</CardTitle>
-            <Button variant="ghost" size="sm" className="text-xs" onClick={() => setActiveModule("pm")}>View all</Button>
+            <Button variant="ghost" size="sm" className="text-xs" onClick={() => go("pm")}>View all</Button>
           </CardHeader>
           <CardContent>
             {loading ? <Skeleton className="h-40 w-full" /> : (data?.upcomingPm.length ?? 0) === 0 ? (
@@ -243,7 +243,7 @@ export function DashboardModule() {
         <Card>
           <CardHeader className="pb-2 flex-row items-center justify-between space-y-0">
             <CardTitle className="text-base">Recent work orders</CardTitle>
-            <Button variant="ghost" size="sm" className="text-xs" onClick={() => setActiveModule("work-orders")}>View all</Button>
+            <Button variant="ghost" size="sm" className="text-xs" onClick={() => go("work-orders")}>View all</Button>
           </CardHeader>
           <CardContent>
             {loading ? <Skeleton className="h-32 w-full" /> : (data?.recentWorkOrders.length ?? 0) === 0 ? (
@@ -251,7 +251,7 @@ export function DashboardModule() {
             ) : (
               <div className="divide-y">
                 {data?.recentWorkOrders.map((w) => (
-                  <button key={w.id} onClick={() => setActiveModule("work-orders")} className="w-full text-left py-2.5 flex items-center gap-3 hover:bg-accent/40 rounded-md px-1.5">
+                  <button key={w.id} onClick={() => go("work-orders", [w.id])} className="w-full text-left py-2.5 flex items-center gap-3 hover:bg-accent/40 rounded-md px-1.5">
                     <div className="min-w-0 flex-1">
                       <div className="text-sm font-medium truncate">{w.title}</div>
                       <div className="text-xs text-muted-foreground truncate">{w.code} · {w.customer.companyName} · {w.technician?.user.name ?? "Unassigned"}</div>

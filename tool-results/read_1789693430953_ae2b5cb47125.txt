@@ -1,0 +1,580 @@
+     1→     1→"use client";
+     2→     2→
+     3→     3→// MOHD.HMS ENTERPRISE — Quotations module (agent 6-e)
+     4→     4→// List + stats + create dialog (draft-protected) + document preview with workflow
+     5→     5→// actions + convert-to-invoice + print + CSV export. All figures come from the API.
+     6→     6→
+     7→     7→import { useCallback, useEffect, useMemo, useState } from "react";
+     8→     8→import { Button } from "@/components/ui/button";
+     9→     9→import { Input } from "@/components/ui/input";
+    10→    10→import { Label } from "@/components/ui/label";
+    11→    11→import { Textarea } from "@/components/ui/textarea";
+    12→    12→import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+    13→    13→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+    14→    14→import { Separator } from "@/components/ui/separator";
+    15→    15→import { DataTable, type Column } from "@/components/hms/shared/data-table";
+    16→    16→import { PageHeader, StatCard, StatusBadge, LoadingState, EmptyState, ErrorState } from "@/components/hms/shared/ui-bits";
+    17→    17→import { api, qs, ClientApiError } from "@/lib/hms/api-client";
+    18→    18→import { useSession, hasPerm } from "@/components/hms/session";
+    19→    19→import { useToast } from "@/hooks/use-toast";
+    20→    20→import { useDraft } from "@/hooks/use-draft";
+    21→    21→import { money, fmtDate, fromCents } from "@/lib/hms/format";
+    22→    22→import { PERMISSIONS } from "@/lib/hms/constants";
+    23→    23→import { FileText, Plus, Printer, Send, Check, X, Clock, Repeat, Trash2, RotateCcw } from "lucide-react";
+    24→    24→
+    25→    25→// ── Types (mirror API responses) ──
+    26→    26→
+    27→    27→type CustomerLite = { id: string; code: string; companyName: string; contactPerson?: string; email?: string; phone?: string };
+    28→    28→
+    29→    29→type QuotationRow = {
+    30→    30→  id: string; code: string; status: string;
+    31→    31→  quotationDate: string; validUntil: string | null;
+    32→    32→  subtotalCents: number; discountCents: number; taxCents: number; shippingCents: number; totalCents: number;
+    33→    33→  customer: CustomerLite;
+    34→    34→};
+    35→    35→
+    36→    36→type QuotationItemRow = {
+    37→    37→  id: string; kind: string; description: string; quantity: number; unit: string;
+    38→    38→  unitPriceCents: number; discountPercent: number; taxPercent: number; totalCents: number;
+    39→    39→};
+    40→    40→
+    41→    41→type QuotationDetail = QuotationRow & {
+    42→    42→  notes: string; terms: string; labourCostCents: number; materialCostCents: number;
+    43→    43→  convertedInvoiceId: string | null;
+    44→    44→  items: QuotationItemRow[];
+    45→    45→};
+    46→    46→
+    47→    47→type InventoryLite = { id: string; sku: string; name: string; unit: string; unitCostCents: number };
+    48→    48→
+    49→    49→type FormItem = {
+    50→    50→  kind: string; itemId: string; description: string; quantity: string; unit: string;
+    51→    51→  unitPrice: string; discountPercent: string; taxPercent: string;
+    52→    52→};
+    53→    53→
+    54→    54→type QForm = {
+    55→    55→  customerId: string; validUntil: string; discount: string; shipping: string;
+    56→    56→  notes: string; terms: string; items: FormItem[];
+    57→    57→};
+    58→    58→
+    59→    59→const KINDS = ["MATERIAL", "LABOUR", "SERVICE", "CUSTOM"] as const;
+    60→    60→const FALLBACK_COMPANY = "MOHD.HMS Enterprise";
+    61→    61→
+    62→    62→const emptyItem = (): FormItem => ({ kind: "MATERIAL", itemId: "", description: "", quantity: "1", unit: "pcs", unitPrice: "", discountPercent: "0", taxPercent: "0" });
+    63→    63→const emptyForm = (): QForm => ({ customerId: "", validUntil: "", discount: "0", shipping: "0", notes: "", terms: "", items: [emptyItem()] });
+    64→    64→
+    65→    65→// ── Client-side math — mirrors the server exactly ──
+    66→    66→
+    67→    67→function lineTotalCents(quantity: string, unitPrice: string, discountPercent: string): number {
+    68→    68→  const qty = parseFloat(quantity) || 0;
+    69→    69→  const cents = Math.round((parseFloat(unitPrice) || 0) * 100);
+    70→    70→  const disc = parseFloat(discountPercent) || 0;
+    71→    71→  return Math.round(qty * cents * (1 - disc / 100));
+    72→    72→}
+    73→    73→
+    74→    74→function formTotals(items: FormItem[], discount: string, shipping: string) {
+    75→    75→  const subtotalCents = items.reduce((s, it) => s + lineTotalCents(it.quantity, it.unitPrice, it.discountPercent), 0);
+    76→    76→  const taxCents = items.reduce((s, it) => s + Math.round((lineTotalCents(it.quantity, it.unitPrice, it.discountPercent) * (parseFloat(it.taxPercent) || 0)) / 100), 0);
+    77→    77→  const discountCents = Math.round((parseFloat(discount) || 0) * 100);
+    78→    78→  const shippingCents = Math.round((parseFloat(shipping) || 0) * 100);
+    79→    79→  const totalCents = Math.max(0, subtotalCents - discountCents + taxCents + shippingCents);
+    80→    80→  return { subtotalCents, taxCents, discountCents, shippingCents, totalCents };
+    81→    81→}
+    82→    82→
+    83→    83→/** Resolve the company label from /api/v1/settings with a graceful fallback. */
+    84→    84→async function loadCompanyName(): Promise<string> {
+    85→    85→  try {
+    86→    86→    const res = await api.get<unknown>("/api/v1/settings");
+    87→    87→    const d = res.data;
+    88→    88→    if (Array.isArray(d)) {
+    89→    89→      const row = d.find((r) => (r as { key?: string })?.key === "company_name") as { value?: string } | undefined;
+    90→    90→      if (row?.value) return row.value;
+    91→    91→    } else if (d && typeof d === "object") {
+    92→    92→      const obj = d as Record<string, unknown>;
+    93→    93→      if (typeof obj.company_name === "string") return obj.company_name;
+    94→    94→      if (obj.company && typeof obj.company === "object" && typeof (obj.company as Record<string, unknown>).name === "string") {
+    95→    95→        return String((obj.company as Record<string, unknown>).name);
+    96→    96→      }
+    97→    97→    }
+    98→    98→  } catch {
+    99→    99→    /* settings API not available yet — fallback label */
+   100→   100→  }
+   101→   101→  return FALLBACK_COMPANY;
+   102→   102→}
+   103→   103→
+   104→   104→// ── Document preview (screen dialog + print-only container) ──
+   105→   105→
+   106→   106→function DocumentPreview({ q, company }: { q: QuotationDetail; company: string }) {
+   107→   107→  return (
+   108→   108→    <div className="text-sm">
+   109→   109→      <div className="flex flex-col sm:flex-row justify-between gap-4 pb-4">
+   110→   110→        <div>
+   111→   111→          <div className="text-base font-semibold text-primary">{company}</div>
+   112→   112→          <div className="text-xs text-muted-foreground mt-1">Facility Maintenance &amp; Engineering Services</div>
+   113→   113→        </div>
+   114→   114→        <div className="sm:text-right">
+   115→   115→          <div className="text-lg font-semibold">QUOTATION</div>
+   116→   116→          <div className="text-xs text-muted-foreground">{q.code}</div>
+   117→   117→          <div className="text-xs text-muted-foreground mt-1">Date: {fmtDate(q.quotationDate)}</div>
+   118→   118→          <div className="text-xs text-muted-foreground">Valid until: {fmtDate(q.validUntil)}</div>
+   119→   119→        </div>
+   120→   120→      </div>
+   121→   121→      <Separator className="mb-4" />
+   122→   122→      <div className="mb-4">
+   123→   123→        <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Bill to</div>
+   124→   124→        <div className="font-medium">{q.customer?.companyName}</div>
+   125→   125→        {q.customer?.contactPerson ? <div className="text-xs text-muted-foreground">{q.customer.contactPerson}</div> : null}
+   126→   126→        {q.customer?.email ? <div className="text-xs text-muted-foreground">{q.customer.email}</div> : null}
+   127→   127→        {q.customer?.phone ? <div className="text-xs text-muted-foreground">{q.customer.phone}</div> : null}
+   128→   128→      </div>
+   129→   129→      <div className="rounded-lg border overflow-x-auto">
+   130→   130→        <table className="w-full text-xs">
+   131→   131→          <thead>
+   132→   132→            <tr className="border-b bg-muted/50 text-left">
+   133→   133→              <th className="px-2 py-2 font-medium">Description</th>
+   134→   134→              <th className="px-2 py-2 font-medium text-right">Qty</th>
+   135→   135→              <th className="px-2 py-2 font-medium hidden sm:table-cell">Unit</th>
+   136→   136→              <th className="px-2 py-2 font-medium text-right">Unit price</th>
+   137→   137→              <th className="px-2 py-2 font-medium text-right hidden sm:table-cell">Disc %</th>
+   138→   138→              <th className="px-2 py-2 font-medium text-right hidden sm:table-cell">Tax %</th>
+   139→   139→              <th className="px-2 py-2 font-medium text-right">Amount</th>
+   140→   140→            </tr>
+   141→   141→          </thead>
+   142→   142→          <tbody>
+   143→   143→            {q.items.map((it) => (
+   144→   144→              <tr key={it.id} className="border-b last:border-0">
+   145→   145→                <td className="px-2 py-2">
+   146→   146→                  <div className="font-medium">{it.description}</div>
+   147→   147→                  <div className="text-muted-foreground">{it.kind}</div>
+   148→   148→                </td>
+   149→   149→                <td className="px-2 py-2 text-right tabular-nums">{it.quantity}</td>
+   150→   150→                <td className="px-2 py-2 hidden sm:table-cell">{it.unit}</td>
+   151→   151→                <td className="px-2 py-2 text-right tabular-nums">{money(it.unitPriceCents)}</td>
+   152→   152→                <td className="px-2 py-2 text-right tabular-nums hidden sm:table-cell">{it.discountPercent}%</td>
+   153→   153→                <td className="px-2 py-2 text-right tabular-nums hidden sm:table-cell">{it.taxPercent}%</td>
+   154→   154→                <td className="px-2 py-2 text-right tabular-nums">{money(it.totalCents)}</td>
+   155→   155→              </tr>
+   156→   156→            ))}
+   157→   157→          </tbody>
+   158→   158→        </table>
+   159→   159→      </div>
+   160→   160→      <div className="mt-4 flex justify-end">
+   161→   161→        <div className="w-full sm:w-64 space-y-1 text-xs">
+   162→   162→          <div className="flex justify-between"><span className="text-muted-foreground">Subtotal</span><span className="tabular-nums">{money(q.subtotalCents)}</span></div>
+   163→   163→          {q.discountCents > 0 ? <div className="flex justify-between"><span className="text-muted-foreground">Discount</span><span className="tabular-nums">-{money(q.discountCents)}</span></div> : null}
+   164→   164→          <div className="flex justify-between"><span className="text-muted-foreground">Tax</span><span className="tabular-nums">{money(q.taxCents)}</span></div>
+   165→   165→          {q.shippingCents > 0 ? <div className="flex justify-between"><span className="text-muted-foreground">Shipping</span><span className="tabular-nums">{money(q.shippingCents)}</span></div> : null}
+   166→   166→          <Separator />
+   167→   167→          <div className="flex justify-between text-sm font-semibold"><span>Total</span><span className="tabular-nums">{money(q.totalCents)}</span></div>
+   168→   168→        </div>
+   169→   169→      </div>
+   170→   170→      {q.notes ? <div className="mt-4 text-xs"><span className="font-medium">Notes: </span><span className="text-muted-foreground whitespace-pre-line">{q.notes}</span></div> : null}
+   171→   171→      {q.terms ? <div className="mt-2 text-xs"><span className="font-medium">Terms: </span><span className="text-muted-foreground whitespace-pre-line">{q.terms}</span></div> : null}
+   172→   172→    </div>
+   173→   173→  );
+   174→   174→}
+   175→   175→
+   176→   176→// ── Main module ──
+   177→   177→
+   178→   178→export function QuotationsModule() {
+   179→   179→  const { user } = useSession();
+   180→   180→  const { toast } = useToast();
+   181→   181→  const canManage = hasPerm(user, PERMISSIONS.quotations_manage);
+   182→   182→
+   183→   183→  const [rows, setRows] = useState<QuotationRow[]>([]);
+   184→   184→  const [loading, setLoading] = useState(true);
+   185→   185→  const [error, setError] = useState<string | null>(null);
+   186→   186→
+   187→   187→  const [detail, setDetail] = useState<QuotationDetail | null>(null);
+   188→   188→  const [detailLoading, setDetailLoading] = useState(false);
+   189→   189→  const [detailOpen, setDetailOpen] = useState(false);
+   190→   190→  const [company, setCompany] = useState(FALLBACK_COMPANY);
+   191→   191→  const [busy, setBusy] = useState(false);
+   192→   192→
+   193→   193→  const [createOpen, setCreateOpen] = useState(false);
+   194→   194→  const [customers, setCustomers] = useState<CustomerLite[]>([]);
+   195→   195→  const [inventory, setInventory] = useState<InventoryLite[]>([]);
+   196→   196→  const [refsLoading, setRefsLoading] = useState(false);
+   197→   197→
+   198→   198→  const form = useDraft<QForm>({ formKey: "quotation.create", initial: emptyForm() });
+   199→   199→
+   200→   200→  const load = useCallback(async () => {
+   201→   201→    setLoading(true);
+   202→   202→    setError(null);
+   203→   203→    try {
+   204→   204→      const res = await api.get<QuotationRow[]>(`/api/v1/quotations${qs({ pageSize: 200 })}`);
+   205→   205→      setRows(res.data);
+   206→   206→    } catch (e) {
+   207→   207→      setError(e instanceof ClientApiError ? e.message : "Something went wrong. Please try again.");
+   208→   208→    } finally {
+   209→   209→      setLoading(false);
+   210→   210→    }
+   211→   211→  }, []);
+   212→   212→
+   213→   213→  useEffect(() => { load(); }, [load]);
+   214→   214→
+   215→   215→  // Company label for document previews (best-effort)
+   216→   216→  useEffect(() => { loadCompanyName().then(setCompany); }, []);
+   217→   217→
+   218→   218→  // Load select references when the create dialog is opened by a user who can manage
+   219→   219→  useEffect(() => {
+   220→   220→    if (!createOpen || !canManage || customers.length > 0) return;
+   221→   221→    setRefsLoading(true);
+   222→   222→    Promise.all([
+   223→   223→      api.get<CustomerLite[]>("/api/v1/customers").catch(() => null),
+   224→   224→      api.get<InventoryLite[]>("/api/v1/inventory").catch(() => null),
+   225→   225→    ]).then(([c, i]) => {
+   226→   226→      if (c) setCustomers(c.data);
+   227→   227→      if (i) setInventory(i.data);
+   228→   228→      if (!c) toast({ title: "Customers unavailable", description: "Could not load the customer list. Please retry later.", variant: "destructive" });
+   229→   229→    }).finally(() => setRefsLoading(false));
+   230→   230→  }, [createOpen, canManage, customers.length, toast]);
+   231→   231→
+   232→   232→  async function openDetail(id: string) {
+   233→   233→    setDetailOpen(true);
+   234→   234→    setDetailLoading(true);
+   235→   235→    try {
+   236→   236→      const res = await api.get<QuotationDetail>(`/api/v1/quotations/${id}`);
+   237→   237→      setDetail(res.data);
+   238→   238→    } catch (e) {
+   239→   239→      toast({ title: "Unable to load quotation", description: e instanceof ClientApiError ? e.message : undefined, variant: "destructive" });
+   240→   240→      setDetailOpen(false);
+   241→   241→    } finally {
+   242→   242→      setDetailLoading(false);
+   243→   243→    }
+   244→   244→  }
+   245→   245→
+   246→   246→  async function transition(id: string, action: "send" | "approve" | "reject" | "expire") {
+   247→   247→    setBusy(true);
+   248→   248→    try {
+   249→   249→      const res = await api.post<QuotationRow>(`/api/v1/quotations/${id}/transition`, { action });
+   250→   250→      toast({ title: `Quotation ${res.data.code} ${action === "send" ? "sent" : action + "ed"}`, description: `Status: ${res.data.status.replaceAll("_", " ").toLowerCase()}` });
+   251→   251→      await Promise.all([load(), openDetail(id)]);
+   252→   252→    } catch (e) {
+   253→   253→      toast({ title: "Action failed", description: e instanceof ClientApiError ? e.message : undefined, variant: "destructive" });
+   254→   254→    } finally {
+   255→   255→      setBusy(false);
+   256→   256→    }
+   257→   257→  }
+   258→   258→
+   259→   259→  async function convert(id: string) {
+   260→   260→    setBusy(true);
+   261→   261→    try {
+   262→   262→      const res = await api.post<{ id: string; code: string }>(`/api/v1/quotations/${id}/convert`);
+   263→   263→      toast({ title: "Invoice created", description: `Quotation converted to invoice ${res.data.code} (draft).` });
+   264→   264→      await Promise.all([load(), openDetail(id)]);
+   265→   265→    } catch (e) {
+   266→   266→      toast({ title: "Conversion failed", description: e instanceof ClientApiError ? e.message : undefined, variant: "destructive" });
+   267→   267→    } finally {
+   268→   268→      setBusy(false);
+   269→   269→    }
+   270→   270→  }
+   271→   271→
+   272→   272→  async function removeDraft(id: string) {
+   273→   273→    if (!window.confirm("Delete this draft quotation permanently?")) return;
+   274→   274→    setBusy(true);
+   275→   275→    try {
+   276→   276→      await api.del(`/api/v1/quotations/${id}`);
+   277→   277→      toast({ title: "Draft quotation deleted" });
+   278→   278→      setDetailOpen(false);
+   279→   279→      await load();
+   280→   280→    } catch (e) {
+   281→   281→      toast({ title: "Delete failed", description: e instanceof ClientApiError ? e.message : undefined, variant: "destructive" });
+   282→   282→    } finally {
+   283→   283→      setBusy(false);
+   284→   284→    }
+   285→   285→  }
+   286→   286→
+   287→   287→  async function createQuotation() {
+   288→   288→    if (!form.value.customerId) {
+   289→   289→      toast({ title: "Customer required", description: "Select a customer for this quotation.", variant: "destructive" });
+   290→   290→      return;
+   291→   291→    }
+   292→   292→    const validItems = form.value.items.filter((it) => it.description.trim() && (parseFloat(it.unitPrice) || 0) >= 0 && (parseFloat(it.quantity) || 0) > 0);
+   293→   293→    if (validItems.length === 0) {
+   294→   294→      toast({ title: "Line items required", description: "Add at least one item with a description and price.", variant: "destructive" });
+   295→   295→      return;
+   296→   296→    }
+   297→   297→    setBusy(true);
+   298→   298→    try {
+   299→   299→      const res = await api.post<QuotationDetail>("/api/v1/quotations", {
+   300→   300→        customerId: form.value.customerId,
+   301→   301→        validUntil: form.value.validUntil || null,
+   302→   302→        discount: parseFloat(form.value.discount) || 0,
+   303→   303→        shipping: parseFloat(form.value.shipping) || 0,
+   304→   304→        notes: form.value.notes,
+   305→   305→        terms: form.value.terms,
+   306→   306→        items: validItems.map((it) => ({
+   307→   307→          kind: it.kind,
+   308→   308→          itemId: it.itemId || null,
+   309→   309→          description: it.description.trim(),
+   310→   310→          quantity: parseFloat(it.quantity) || 0,
+   311→   311→          unit: it.unit || undefined,
+   312→   312→          unitPrice: parseFloat(it.unitPrice) || 0,
+   313→   313→          discountPercent: parseFloat(it.discountPercent) || 0,
+   314→   314→          taxPercent: parseFloat(it.taxPercent) || 0,
+   315→   315→        })),
+   316→   316→      });
+   317→   317→      toast({ title: `Quotation ${res.data.code} created`, description: `Total ${money(res.data.totalCents)} — draft status.` });
+   318→   318→      form.reset(emptyForm());
+   319→   319→      setCreateOpen(false);
+   320→   320→      await load();
+   321→   321→    } catch (e) {
+   322→   322→      toast({ title: "Could not create quotation", description: e instanceof ClientApiError ? e.message : undefined, variant: "destructive" });
+   323→   323→    } finally {
+   324→   324→      setBusy(false);
+   325→   325→    }
+   326→   326→  }
+   327→   327→
+   328→   328→  function setItem(index: number, patch: Partial<FormItem>) {
+   329→   329→    const items = form.value.items.map((it, i) => (i === index ? { ...it, ...patch } : it));
+   330→   330→    form.setValue({ items });
+   331→   331→  }
+   332→   332→
+   333→   333→  function pickInventory(index: number, itemId: string) {
+   334→   334→    const item = inventory.find((i) => i.id === itemId);
+   335→   335→    if (!item) { setItem(index, { itemId: "" }); return; }
+   336→   336→    setItem(index, { itemId, description: item.name, unit: item.unit, unitPrice: fromCents(item.unitCostCents) });
+   337→   337→  }
+   338→   338→
+   339→   339→  const stats = useMemo(() => ({
+   340→   340→    draft: rows.filter((r) => r.status === "DRAFT").length,
+   341→   341→    sent: rows.filter((r) => r.status === "SENT").length,
+   342→   342→    approved: rows.filter((r) => r.status === "APPROVED").length,
+   343→   343→    convertedValue: rows.filter((r) => r.status === "CONVERTED").reduce((s, r) => s + r.totalCents, 0),
+   344→   344→  }), [rows]);
+   345→   345→
+   346→   346→  const columns: Column<QuotationRow>[] = [
+   347→   347→    { key: "code", header: "Code", value: (r) => r.code, render: (r) => <span className="font-medium">{r.code}</span> },
+   348→   348→    { key: "customer", header: "Customer", value: (r) => r.customer?.companyName, className: "max-w-[180px] truncate" },
+   349→   349→    { key: "quotationDate", header: "Date", value: (r) => r.quotationDate, render: (r) => fmtDate(r.quotationDate), hideOnMobile: true },
+   350→   350→    { key: "validUntil", header: "Valid until", value: (r) => r.validUntil, render: (r) => fmtDate(r.validUntil), hideOnMobile: true },
+   351→   351→    { key: "totalCents", header: "Total", value: (r) => r.totalCents, render: (r) => <span className="tabular-nums">{money(r.totalCents)}</span> },
+   352→   352→    { key: "status", header: "Status", value: (r) => r.status, render: (r) => <StatusBadge status={r.status} /> },
+   353→   353→  ];
+   354→   354→
+   355→   355→  return (
+   356→   356→    <div>
+   357→   357→      {/* Screen content — hidden in print */}
+   358→   358→      <div className="print:hidden">
+   359→   359→        <PageHeader
+   360→   360→          title="Quotations"
+   361→   361→          subtitle="Prepare, send and convert customer quotations"
+   362→   362→          actions={canManage ? (
+   363→   363→            <Button size="sm" onClick={() => setCreateOpen(true)}>
+   364→   364→              <Plus className="h-4 w-4 mr-1.5" /> New Quotation
+   365→   365→            </Button>
+   366→   366→          ) : null}
+   367→   367→        />
+   368→   368→
+   369→   369→        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+   370→   370→          <StatCard title="Draft" value={stats.draft} icon={<FileText className="h-5 w-5" />} loading={loading} />
+   371→   371→          <StatCard title="Sent" value={stats.sent} icon={<Send className="h-5 w-5" />} loading={loading} />
+   372→   372→          <StatCard title="Approved" value={stats.approved} icon={<Check className="h-5 w-5" />} tone="success" loading={loading} />
+   373→   373→          <StatCard title="Converted value" value={money(stats.convertedValue)} icon={<Repeat className="h-5 w-5" />} loading={loading} />
+   374→   374→        </div>
+   375→   375→
+   376→   376→        {error ? (
+   377→   377→          <ErrorState message={error} onRetry={load} />
+   378→   378→        ) : loading ? (
+   379→   379→          <LoadingState label="Loading quotations…" />
+   380→   380→        ) : rows.length === 0 ? (
+   381→   381→          <EmptyState
+   382→   382→            title="No quotations yet"
+   383→   383→            hint={canManage ? "Create your first quotation to start the sales workflow." : "Quotations shared with you will appear here."}
+   384→   384→            action={canManage ? <Button size="sm" onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4 mr-1.5" /> New Quotation</Button> : undefined}
+   385→   385→          />
+   386→   386→        ) : (
+   387→   387→          <DataTable
+   388→   388→            columns={columns}
+   389→   389→            rows={rows}
+   390→   390→            rowKey={(r) => r.id}
+   391→   391→            onRowClick={(r) => openDetail(r.id)}
+   392→   392→            searchPlaceholder="Search quotations…"
+   393→   393→            filters={[{
+   394→   394→              key: "status", label: "Status",
+   395→   395→              options: ["DRAFT", "SENT", "APPROVED", "REJECTED", "EXPIRED", "CONVERTED"].map((s) => ({ value: s, label: s.replaceAll("_", " ") })),
+   396→   396→              match: (r, v) => r.status === v,
+   397→   397→            }]}
+   398→   398→            exportName="quotations"
+   399→   399→            emptyTitle="No quotations match"
+   400→   400→          />
+   401→   401→        )}
+   402→   402→      </div>
+   403→   403→
+   404→   404→      {/* Print-only document */}
+   405→   405→      {detail ? (
+   406→   406→        <div className="hidden print:block">
+   407→   407→          <DocumentPreview q={detail} company={company} />
+   408→   408→        </div>
+   409→   409→      ) : null}
+   410→   410→
+   411→   411→      {/* Create dialog */}
+   412→   412→      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+   413→   413→        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+   414→   414→          <DialogHeader>
+   415→   415→            <DialogTitle>New Quotation</DialogTitle>
+   416→   416→            <DialogDescription>
+   417→   417→              Totals are computed server-side from the line items below.
+   418→   418→              {form.dirty ? " Draft auto-saved locally." : ""}
+   419→   419→            </DialogDescription>
+   420→   420→          </DialogHeader>
+   421→   421→
+   422→   422→          {form.draftExists ? (
+   423→   423→            <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm">
+   424→   424→              <FileText className="h-4 w-4 text-amber-600 shrink-0" />
+   425→   425→              <span className="flex-1">An unsent draft exists from a previous session.</span>
+   426→   426→              <Button size="sm" variant="outline" onClick={form.restore}><RotateCcw className="h-3.5 w-3.5 mr-1" /> Restore</Button>
+   427→   427→              <Button size="sm" variant="ghost" onClick={form.discard}>Discard</Button>
+   428→   428→            </div>
+   429→   429→          ) : null}
+   430→   430→
+   431→   431→          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+   432→   432→            <div className="space-y-1.5">
+   433→   433→              <Label>Customer *</Label>
+   434→   434→              <Select value={form.value.customerId} onValueChange={(v) => form.setValue({ customerId: v })}>
+   435→   435→                <SelectTrigger aria-label="Customer"><SelectValue placeholder={refsLoading ? "Loading customers…" : "Select customer"} /></SelectTrigger>
+   436→   436→                <SelectContent>
+   437→   437→                  {customers.map((c) => <SelectItem key={c.id} value={c.id}>{c.companyName} ({c.code})</SelectItem>)}
+   438→   438→                </SelectContent>
+   439→   439→              </Select>
+   440→   440→            </div>
+   441→   441→            <div className="space-y-1.5">
+   442→   442→              <Label>Valid until</Label>
+   443→   443→              <Input type="date" value={form.value.validUntil} onChange={(e) => form.setValue({ validUntil: e.target.value })} />
+   444→   444→            </div>
+   445→   445→          </div>
+   446→   446→
+   447→   447→          <div className="space-y-3">
+   448→   448→            <div className="flex items-center justify-between">
+   449→   449→              <Label>Line items *</Label>
+   450→   450→              <Button type="button" size="sm" variant="outline" onClick={() => form.setValue({ items: [...form.value.items, emptyItem()] })}>
+   451→   451→                <Plus className="h-3.5 w-3.5 mr-1" /> Add item
+   452→   452→              </Button>
+   453→   453→            </div>
+   454→   454→            {form.value.items.map((it, idx) => (
+   455→   455→              <div key={idx} className="rounded-lg border p-3 space-y-2">
+   456→   456→                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+   457→   457→                  <Select value={it.kind} onValueChange={(v) => setItem(idx, { kind: v })}>
+   458→   458→                    <SelectTrigger aria-label="Kind"><SelectValue /></SelectTrigger>
+   459→   459→                    <SelectContent>{KINDS.map((k) => <SelectItem key={k} value={k}>{k}</SelectItem>)}</SelectContent>
+   460→   460→                  </Select>
+   461→   461→                  <Select value={it.itemId || "CUSTOM"} onValueChange={(v) => pickInventory(idx, v === "CUSTOM" ? "" : v)}>
+   462→   462→                    <SelectTrigger aria-label="Inventory item" className="sm:col-span-3">
+   463→   463→                      <SelectValue placeholder="Custom line — or pick from inventory" />
+   464→   464→                    </SelectTrigger>
+   465→   465→                    <SelectContent>
+   466→   466→                      <SelectItem value="CUSTOM">Custom line</SelectItem>
+   467→   467→                      {inventory.map((inv) => <SelectItem key={inv.id} value={inv.id}>{inv.name} · {inv.sku}</SelectItem>)}
+   468→   468→                    </SelectContent>
+   469→   469→                  </Select>
+   470→   470→                </div>
+   471→   471→                <Input placeholder="Description" value={it.description} onChange={(e) => setItem(idx, { description: e.target.value })} aria-label="Description" />
+   472→   472→                <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+   473→   473→                  <div className="space-y-1"><Label className="text-xs text-muted-foreground">Qty</Label><Input inputMode="decimal" value={it.quantity} onChange={(e) => setItem(idx, { quantity: e.target.value })} /></div>
+   474→   474→                  <div className="space-y-1"><Label className="text-xs text-muted-foreground">Unit</Label><Input value={it.unit} onChange={(e) => setItem(idx, { unit: e.target.value })} /></div>
+   475→   475→                  <div className="space-y-1"><Label className="text-xs text-muted-foreground">Price RM</Label><Input inputMode="decimal" value={it.unitPrice} onChange={(e) => setItem(idx, { unitPrice: e.target.value })} placeholder="0.00" /></div>
+   476→   476→                  <div className="space-y-1"><Label className="text-xs text-muted-foreground">Disc %</Label><Input inputMode="decimal" value={it.discountPercent} onChange={(e) => setItem(idx, { discountPercent: e.target.value })} /></div>
+   477→   477→                  <div className="space-y-1"><Label className="text-xs text-muted-foreground">Tax %</Label><Input inputMode="decimal" value={it.taxPercent} onChange={(e) => setItem(idx, { taxPercent: e.target.value })} /></div>
+   478→   478→                </div>
+   479→   479→                <div className="flex items-center justify-between text-xs text-muted-foreground">
+   480→   480→                  <Button type="button" variant="ghost" size="sm" className="h-7 text-red-600 hover:text-red-700 hover:bg-red-50"
+   481→   481→                    disabled={form.value.items.length === 1}
+   482→   482→                    onClick={() => form.setValue({ items: form.value.items.filter((_, i) => i !== idx) })}>
+   483→   483→                    <Trash2 className="h-3.5 w-3.5 mr-1" /> Remove
+   484→   484→                  </Button>
+   485→   485→                  <span>Line total: <strong className="text-foreground tabular-nums">{money(lineTotalCents(it.quantity, it.unitPrice, it.discountPercent))}</strong></span>
+   486→   486→                </div>
+   487→   487→              </div>
+   488→   488→            ))}
+   489→   489→          </div>
+   490→   490→
+   491→   491→          <div className="grid grid-cols-2 gap-4">
+   492→   492→            <div className="space-y-1.5"><Label>Discount (RM)</Label><Input inputMode="decimal" value={form.value.discount} onChange={(e) => form.setValue({ discount: e.target.value })} /></div>
+   493→   493→            <div className="space-y-1.5"><Label>Shipping (RM)</Label><Input inputMode="decimal" value={form.value.shipping} onChange={(e) => form.setValue({ shipping: e.target.value })} /></div>
+   494→   494→          </div>
+   495→   495→          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+   496→   496→            <div className="space-y-1.5"><Label>Notes</Label><Textarea rows={2} value={form.value.notes} onChange={(e) => form.setValue({ notes: e.target.value })} placeholder="Internal or customer notes" /></div>
+   497→   497→            <div className="space-y-1.5"><Label>Terms</Label><Textarea rows={2} value={form.value.terms} onChange={(e) => form.setValue({ terms: e.target.value })} placeholder="Payment / validity terms" /></div>
+   498→   498→          </div>
+   499→   499→
+   500→   500→          {(() => {
+   501→   501→            const t = formTotals(form.value.items, form.value.discount, form.value.shipping);
+   502→   502→            return (
+   503→   503→              <div className="rounded-lg bg-muted/50 border p-3 text-sm space-y-1">
+   504→   504→                <div className="flex justify-between"><span className="text-muted-foreground">Subtotal</span><span className="tabular-nums">{money(t.subtotalCents)}</span></div>
+   505→   505→                <div className="flex justify-between"><span className="text-muted-foreground">Discount</span><span className="tabular-nums">-{money(t.discountCents)}</span></div>
+   506→   506→                <div className="flex justify-between"><span className="text-muted-foreground">Tax</span><span className="tabular-nums">{money(t.taxCents)}</span></div>
+   507→   507→                <div className="flex justify-between"><span className="text-muted-foreground">Shipping</span><span className="tabular-nums">{money(t.shippingCents)}</span></div>
+   508→   508→                <Separator />
+   509→   509→                <div className="flex justify-between font-semibold"><span>Total</span><span className="tabular-nums">{money(t.totalCents)}</span></div>
+   510→   510→              </div>
+   511→   511→            );
+   512→   512→          })()}
+   513→   513→
+   514→   514→          <DialogFooter>
+   515→   515→            <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
+   516→   516→            <Button onClick={createQuotation} disabled={busy || refsLoading}>
+   517→   517→              {busy ? "Saving…" : "Create quotation"}
+   518→   518→            </Button>
+   519→   519→          </DialogFooter>
+   520→   520→        </DialogContent>
+   521→   521→      </Dialog>
+   522→   522→
+   523→   523→      {/* Detail dialog */}
+   524→   524→      <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
+   525→   525→        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto print:hidden">
+   526→   526→          <DialogHeader>
+   527→   527→            <DialogTitle className="flex items-center gap-2">
+   528→   528→              Quotation {detail?.code ?? ""}
+   529→   529→              {detail ? <StatusBadge status={detail.status} /> : null}
+   530→   530→            </DialogTitle>
+   531→   531→            <DialogDescription>Document preview and workflow actions</DialogDescription>
+   532→   532→          </DialogHeader>
+   533→   533→
+   534→   534→          {detailLoading || !detail ? (
+   535→   535→            <LoadingState label="Loading quotation…" rows={2} />
+   536→   536→          ) : (
+   537→   537→            <>
+   538→   538→              <DocumentPreview q={detail} company={company} />
+   539→   539→
+   540→   540→              <div className="flex flex-wrap gap-2 pt-2 no-print">
+   541→   541→                {canManage && detail.status === "DRAFT" ? (
+   542→   542→                  <Button size="sm" disabled={busy} onClick={() => transition(detail.id, "send")}>
+   543→   543→                    <Send className="h-4 w-4 mr-1.5" /> Send to customer
+   544→   544→                  </Button>
+   545→   545→                ) : null}
+   546→   546→                {canManage && detail.status === "SENT" ? (
+   547→   547→                  <>
+   548→   548→                    <Button size="sm" disabled={busy} onClick={() => transition(detail.id, "approve")}>
+   549→   549→                      <Check className="h-4 w-4 mr-1.5" /> Approve
+   550→   550→                    </Button>
+   551→   551→                    <Button size="sm" variant="outline" disabled={busy} onClick={() => transition(detail.id, "reject")}>
+   552→   552→                      <X className="h-4 w-4 mr-1.5" /> Reject
+   553→   553→                    </Button>
+   554→   554→                    <Button size="sm" variant="outline" disabled={busy} onClick={() => transition(detail.id, "expire")}>
+   555→   555→                      <Clock className="h-4 w-4 mr-1.5" /> Mark expired
+   556→   556→                    </Button>
+   557→   557→                  </>
+   558→   558→                ) : null}
+   559→   559→                {canManage && detail.status === "APPROVED" ? (
+   560→   560→                  <Button size="sm" disabled={busy} onClick={() => convert(detail.id)}>
+   561→   561→                    <Repeat className="h-4 w-4 mr-1.5" /> Convert to Invoice
+   562→   562→                  </Button>
+   563→   563→                ) : null}
+   564→   564→                {canManage && detail.status === "DRAFT" ? (
+   565→   565→                  <Button size="sm" variant="outline" className="text-red-600 hover:bg-red-50" disabled={busy} onClick={() => removeDraft(detail.id)}>
+   566→   566→                    <Trash2 className="h-4 w-4 mr-1.5" /> Delete draft
+   567→   567→                  </Button>
+   568→   568→                ) : null}
+   569→   569→                <Button size="sm" variant="outline" className="ml-auto" onClick={() => window.print()}>
+   570→   570→                  <Printer className="h-4 w-4 mr-1.5" /> Print
+   571→   571→                </Button>
+   572→   572→              </div>
+   573→   573→            </>
+   574→   574→          )}
+   575→   575→        </DialogContent>
+   576→   576→      </Dialog>
+   577→   577→    </div>
+   578→   578→  );
+   579→   579→}
+   580→   580→

@@ -1,0 +1,677 @@
+     1→     1→"use client";
+     2→     2→
+     3→     3→// Preventive Maintenance module — plan register + task execution.
+     4→     4→// Plans: create (draft-protected), activate/deactivate inline, generate tasks.
+     5→     5→// Tasks: lifecycle actions (start / complete with checklist / skip), overdue highlighting.
+     6→     6→
+     7→     7→import { useCallback, useEffect, useMemo, useState } from "react";
+     8→     8→import {
+     9→     9→  CalendarClock, CalendarCheck2, AlarmClock, CheckCircle2, Play, Flag, Zap,
+    10→    10→  ClipboardList, RotateCw, Plus, CircleOff,
+    11→    11→} from "lucide-react";
+    12→    12→import { api, qs } from "@/lib/hms/api-client";
+    13→    13→import { fmtDate } from "@/lib/hms/format";
+    14→    14→import { humanize, PERMISSIONS, PM_FREQUENCIES } from "@/lib/hms/constants";
+    15→    15→import { hasPerm, useSession } from "@/components/hms/session";
+    16→    16→import { useToast } from "@/hooks/use-toast";
+    17→    17→import { useDraft } from "@/hooks/use-draft";
+    18→    18→import { DataTable, type Column } from "@/components/hms/shared/data-table";
+    19→    19→import {
+    20→    20→  EmptyState, ErrorState, LoadingState, PageHeader, StatCard, StatusBadge,
+    21→    21→} from "@/components/hms/shared/ui-bits";
+    22→    22→import { Button } from "@/components/ui/button";
+    23→    23→import {
+    24→    24→  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+    25→    25→} from "@/components/ui/dialog";
+    26→    26→import { Input } from "@/components/ui/input";
+    27→    27→import { Label } from "@/components/ui/label";
+    28→    28→import {
+    29→    29→  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+    30→    30→} from "@/components/ui/select";
+    31→    31→import { Switch } from "@/components/ui/switch";
+    32→    32→import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+    33→    33→import { Textarea } from "@/components/ui/textarea";
+    34→    34→
+    35→    35→// ── Types ──
+    36→    36→
+    37→    37→type EquipmentRef = { id: string; assetTag: string; name: string };
+    38→    38→type TechnicianRef = { id: string; employeeNo: string; user: { id: string; name: string } | null };
+    39→    39→
+    40→    40→type PmPlan = {
+    41→    41→  id: string;
+    42→    42→  code: string;
+    43→    43→  name: string;
+    44→    44→  frequency: string;
+    45→    45→  active: boolean;
+    46→    46→  nextDueDate: string | null;
+    47→    47→  lastCompletedAt: string | null;
+    48→    48→  checklistTemplate: string;
+    49→    49→  equipment: EquipmentRef | null;
+    50→    50→  assignedTechnician: TechnicianRef | null;
+    51→    51→};
+    52→    52→
+    53→    53→type ChecklistItem = { id: string; label: string; done: boolean; sortOrder: number };
+    54→    54→
+    55→    55→type PmTask = {
+    56→    56→  id: string;
+    57→    57→  code: string;
+    58→    58→  dueDate: string;
+    59→    59→  status: string;
+    60→    60→  completedAt: string | null;
+    61→    61→  notes: string;
+    62→    62→  plan: { id: string; name: string; code: string } | null;
+    63→    63→  equipment: EquipmentRef | null;
+    64→    64→  technician: TechnicianRef | null;
+    65→    65→  checklist?: ChecklistItem[];
+    66→    66→};
+    67→    67→
+    68→    68→type Option = { id: string; label: string };
+    69→    69→
+    70→    70→const emptyPlanForm = {
+    71→    71→  name: "",
+    72→    72→  equipmentId: "",
+    73→    73→  frequency: "MONTHLY",
+    74→    74→  assignedTechnicianId: "",
+    75→    75→  checklist: "",
+    76→    76→  nextDueDate: "",
+    77→    77→};
+    78→    78→
+    79→    79→export function PmModule() {
+    80→    80→  const { user } = useSession();
+    81→    81→  const { toast } = useToast();
+    82→    82→
+    83→    83→  const canManage = hasPerm(user, PERMISSIONS.pm_manage);
+    84→    84→  const canExecute = hasPerm(user, PERMISSIONS.pm_execute);
+    85→    85→  const isTechnicianRole = user?.role === "TECHNICIAN";
+    86→    86→
+    87→    87→  // ── Data ──
+    88→    88→  const [plans, setPlans] = useState<PmPlan[]>([]);
+    89→    89→  const [tasks, setTasks] = useState<PmTask[]>([]);
+    90→    90→  const [loading, setLoading] = useState(true);
+    91→    91→  const [error, setError] = useState<string | null>(null);
+    92→    92→  const [tab, setTab] = useState("plans");
+    93→    93→
+    94→    94→  const [equipmentOptions, setEquipmentOptions] = useState<Option[] | null>(null);
+    95→    95→  const [technicianOptions, setTechnicianOptions] = useState<Option[] | null>(null);
+    96→    96→
+    97→    97→  const [generatingPlanId, setGeneratingPlanId] = useState<string | null>(null);
+    98→    98→  const [bulkGenerating, setBulkGenerating] = useState(false);
+    99→    99→  const [busyTaskId, setBusyTaskId] = useState<string | null>(null);
+   100→   100→
+   101→   101→  // ── Create plan dialog (draft-protected) ──
+   102→   102→  const [createOpen, setCreateOpen] = useState(false);
+   103→   103→  const [saving, setSaving] = useState(false);
+   104→   104→  const draft = useDraft({ formKey: "pm.plan.create", initial: emptyPlanForm });
+   105→   105→
+   106→   106→  // ── Complete dialog ──
+   107→   107→  const [completeTask, setCompleteTask] = useState<PmTask | null>(null);
+   108→   108→  const [completeItems, setCompleteItems] = useState<ChecklistItem[]>([]);
+   109→   109→  const [completeNotes, setCompleteNotes] = useState("");
+   110→   110→  const [completing, setCompleting] = useState(false);
+   111→   111→
+   112→   112→  const load = useCallback(async () => {
+   113→   113→    setLoading(true);
+   114→   114→    setError(null);
+   115→   115→    try {
+   116→   116→      const mineParam = isTechnicianRole && !canManage ? { mine: "1" } : {};
+   117→   117→      const [plansRes, tasksRes] = await Promise.all([
+   118→   118→        api.get<PmPlan[]>(`/api/v1/pm/plans${qs({ pageSize: "200" })}`),
+   119→   119→        api.get<PmTask[]>(`/api/v1/pm/tasks${qs({ pageSize: "200", ...mineParam })}`),
+   120→   120→      ]);
+   121→   121→      setPlans(plansRes.data ?? []);
+   122→   122→      setTasks(tasksRes.data ?? []);
+   123→   123→    } catch (e) {
+   124→   124→      setError(e instanceof Error ? e.message : "Unable to load preventive maintenance data.");
+   125→   125→    } finally {
+   126→   126→      setLoading(false);
+   127→   127→    }
+   128→   128→  }, [canManage, isTechnicianRole]);
+   129→   129→
+   130→   130→  // Reference data (equipment + technicians) — degrade gracefully when unavailable
+   131→   131→  useEffect(() => {
+   132→   132→    (async () => {
+   133→   133→      try {
+   134→   134→        const res = await api.get<EquipmentRef[]>(`/api/v1/equipment${qs({ pageSize: "200" })}`);
+   135→   135→        setEquipmentOptions((res.data ?? []).map((e) => ({ id: e.id, label: `${e.name} (${e.assetTag})` })));
+   136→   136→      } catch {
+   137→   137→        setEquipmentOptions(null);
+   138→   138→      }
+   139→   139→    })();
+   140→   140→    (async () => {
+   141→   141→      try {
+   142→   142→        const res = await api.get<TechnicianRef[]>(`/api/v1/technicians${qs({ pageSize: "200" })}`);
+   143→   143→        setTechnicianOptions((res.data ?? []).map((t) => ({
+   144→   144→          id: t.id,
+   145→   145→          label: t.user?.name ? `${t.user.name} (${t.employeeNo})` : t.employeeNo,
+   146→   146→        })));
+   147→   147→      } catch {
+   148→   148→        setTechnicianOptions(null);
+   149→   149→      }
+   150→   150→    })();
+   151→   151→  }, []);
+   152→   152→
+   153→   153→  useEffect(() => {
+   154→   154→    load();
+   155→   155→  }, [load]);
+   156→   156→
+   157→   157→  // ── Stats ──
+   158→   158→  const stats = useMemo(() => {
+   159→   159→    const now = new Date();
+   160→   160→    const in7 = new Date(Date.now() + 7 * 86400000);
+   161→   161→    return {
+   162→   162→      activePlans: plans.filter((p) => p.active).length,
+   163→   163→      dueThisWeek: plans.filter((p) => p.active && p.nextDueDate && new Date(p.nextDueDate) <= in7).length,
+   164→   164→      overdue: tasks.filter((t) => t.status === "OVERDUE" || (["SCHEDULED", "IN_PROGRESS"].includes(t.status) && new Date(t.dueDate) < now)).length,
+   165→   165→      completedThisMonth: tasks.filter((t) => {
+   166→   166→        if (t.status !== "COMPLETED" || !t.completedAt) return false;
+   167→   167→        const d = new Date(t.completedAt);
+   168→   168→        return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+   169→   169→      }).length,
+   170→   170→    };
+   171→   171→  }, [plans, tasks]);
+   172→   172→
+   173→   173→  // ── Plan actions ──
+   174→   174→  const createPlan = async () => {
+   175→   175→    if (!draft.value.name.trim()) {
+   176→   176→      toast({ title: "Plan name is required", variant: "destructive" });
+   177→   177→      return;
+   178→   178→    }
+   179→   179→    if (!draft.value.equipmentId) {
+   180→   180→      toast({ title: "Select equipment for this plan", variant: "destructive" });
+   181→   181→      return;
+   182→   182→    }
+   183→   183→    setSaving(true);
+   184→   184→    try {
+   185→   185→      const labels = draft.value.checklist.split("\n").map((l) => l.trim()).filter(Boolean);
+   186→   186→      const res = await api.post<PmPlan>("/api/v1/pm/plans", {
+   187→   187→        name: draft.value.name.trim(),
+   188→   188→        equipmentId: draft.value.equipmentId,
+   189→   189→        frequency: draft.value.frequency,
+   190→   190→        assignedTechnicianId: draft.value.assignedTechnicianId || null,
+   191→   191→        checklistTemplate: labels,
+   192→   192→        nextDueDate: draft.value.nextDueDate || null,
+   193→   193→      });
+   194→   194→      draft.reset(emptyPlanForm);
+   195→   195→      setCreateOpen(false);
+   196→   196→      toast({ title: "PM plan created", description: `${res.data.code} — ${res.data.name}.` });
+   197→   197→      await load();
+   198→   198→    } catch (e) {
+   199→   199→      toast({ title: "Could not create plan", description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+   200→   200→    } finally {
+   201→   201→      setSaving(false);
+   202→   202→    }
+   203→   203→  };
+   204→   204→
+   205→   205→  const toggleActive = async (plan: PmPlan, active: boolean) => {
+   206→   206→    try {
+   207→   207→      await api.patch(`/api/v1/pm/plans/${plan.id}`, { active });
+   208→   208→      setPlans((prev) => prev.map((p) => (p.id === plan.id ? { ...p, active } : p)));
+   209→   209→      toast({ title: active ? "Plan activated" : "Plan deactivated", description: `${plan.code} — ${plan.name}.` });
+   210→   210→    } catch (e) {
+   211→   211→      toast({ title: "Update failed", description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+   212→   212→    }
+   213→   213→  };
+   214→   214→
+   215→   215→  const generateForPlan = async (plan: PmPlan) => {
+   216→   216→    setGeneratingPlanId(plan.id);
+   217→   217→    try {
+   218→   218→      const res = await api.post<PmTask>(`/api/v1/pm/plans/${plan.id}/generate`);
+   219→   219→      toast({ title: "Task generated", description: `${res.data.code} scheduled for ${fmtDate(res.data.dueDate)}.` });
+   220→   220→      await load();
+   221→   221→    } catch (e) {
+   222→   222→      toast({ title: "Generation failed", description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+   223→   223→    } finally {
+   224→   224→      setGeneratingPlanId(null);
+   225→   225→    }
+   226→   226→  };
+   227→   227→
+   228→   228→  const generateDueTasks = async () => {
+   229→   229→    const today = new Date();
+   230→   230→    const due = plans.filter((p) => p.active && p.nextDueDate && new Date(p.nextDueDate) <= today);
+   231→   231→    if (due.length === 0) {
+   232→   232→      toast({ title: "No plans are due", description: "All active plans have a next due date in the future." });
+   233→   233→      return;
+   234→   234→    }
+   235→   235→    setBulkGenerating(true);
+   236→   236→    let ok = 0;
+   237→   237→    let failed = 0;
+   238→   238→    for (const plan of due) {
+   239→   239→      try {
+   240→   240→        await api.post(`/api/v1/pm/plans/${plan.id}/generate`);
+   241→   241→        ok += 1;
+   242→   242→      } catch {
+   243→   243→        failed += 1;
+   244→   244→      }
+   245→   245→    }
+   246→   246→    setBulkGenerating(false);
+   247→   247→    toast({
+   248→   248→      title: `Generated ${ok} task${ok === 1 ? "" : "s"}`,
+   249→   249→      description: failed > 0 ? `${failed} plan${failed === 1 ? "" : "s"} could not be generated.` : "All due plans now have scheduled tasks.",
+   250→   250→      variant: failed > 0 ? "destructive" : "default",
+   251→   251→    });
+   252→   252→    await load();
+   253→   253→  };
+   254→   254→
+   255→   255→  // ── Task actions ──
+   256→   256→  const transition = async (task: PmTask, action: "start" | "skip", notes?: string) => {
+   257→   257→    setBusyTaskId(task.id);
+   258→   258→    try {
+   259→   259→      await api.post(`/api/v1/pm/tasks/${task.id}/transition`, { action, notes });
+   260→   260→      toast({ title: action === "start" ? "Task started" : "Task skipped", description: `${task.code} → ${action === "start" ? "In Progress" : "Skipped"}.` });
+   261→   261→      await load();
+   262→   262→    } catch (e) {
+   263→   263→      toast({ title: "Action failed", description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+   264→   264→    } finally {
+   265→   265→      setBusyTaskId(null);
+   266→   266→    }
+   267→   267→  };
+   268→   268→
+   269→   269→  const openComplete = async (task: PmTask) => {
+   270→   270→    setCompleteTask(task);
+   271→   271→    setCompleteItems([]);
+   272→   272→    setCompleteNotes("");
+   273→   273→    try {
+   274→   274→      const res = await api.get<PmTask>(`/api/v1/pm/tasks/${task.id}`);
+   275→   275→      setCompleteItems(res.data.checklist ?? []);
+   276→   276→      if (res.data.notes) setCompleteNotes(res.data.notes);
+   277→   277→    } catch {
+   278→   278→      setCompleteItems([]); // checklist failed to load — task can still be completed if no items
+   279→   279→    }
+   280→   280→  };
+   281→   281→
+   282→   282→  const submitComplete = async () => {
+   283→   283→    if (!completeTask) return;
+   284→   284→    const allDone = completeItems.length === 0 || completeItems.every((i) => i.done);
+   285→   285→    if (!allDone) {
+   286→   286→      toast({ title: "Checklist incomplete", description: "Tick off every checklist item before completing.", variant: "destructive" });
+   287→   287→      return;
+   288→   288→    }
+   289→   289→    setCompleting(true);
+   290→   290→    try {
+   291→   291→      await api.post(`/api/v1/pm/tasks/${completeTask.id}/transition`, {
+   292→   292→        action: "complete",
+   293→   293→        notes: completeNotes || undefined,
+   294→   294→        checklist: completeItems.map((i) => ({ id: i.id, done: i.done })),
+   295→   295→      });
+   296→   296→      toast({ title: "PM completed", description: `${completeTask.code} marked as completed.` });
+   297→   297→      setCompleteTask(null);
+   298→   298→      await load();
+   299→   299→    } catch (e) {
+   300→   300→      toast({ title: "Could not complete task", description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+   301→   301→    } finally {
+   302→   302→      setCompleting(false);
+   303→   303→    }
+   304→   304→  };
+   305→   305→
+   306→   306→  const isOverdue = (t: PmTask) => ["SCHEDULED", "IN_PROGRESS", "OVERDUE"].includes(t.status) && new Date(t.dueDate) < new Date();
+   307→   307→
+   308→   308→  // ── Plan columns ──
+   309→   309→  const planColumns: Column<PmPlan>[] = [
+   310→   310→    { key: "code", header: "Code", value: (p) => p.code, className: "font-medium whitespace-nowrap" },
+   311→   311→    { key: "name", header: "Plan", value: (p) => p.name },
+   312→   312→    {
+   313→   313→      key: "equipment", header: "Equipment", hideOnMobile: true,
+   314→   314→      value: (p) => (p.equipment ? `${p.equipment.name} ${p.equipment.assetTag}` : ""),
+   315→   315→      render: (p) => p.equipment ? (
+   316→   316→        <span>
+   317→   317→          {p.equipment.name} <span className="text-muted-foreground text-xs">({p.equipment.assetTag})</span>
+   318→   318→        </span>
+   319→   319→      ) : "—",
+   320→   320→    },
+   321→   321→    { key: "frequency", header: "Frequency", value: (p) => p.frequency, render: (p) => <StatusBadge status={p.frequency} /> },
+   322→   322→    {
+   323→   323→      key: "nextDueDate", header: "Next Due", value: (p) => p.nextDueDate ?? "", hideOnMobile: true,
+   324→   324→      render: (p) => {
+   325→   325→        const due = p.nextDueDate ? new Date(p.nextDueDate) : null;
+   326→   326→        const isDue = p.active && due && due <= new Date();
+   327→   327→        return <span className={isDue ? "text-red-600 font-medium" : ""}>{fmtDate(p.nextDueDate)}</span>;
+   328→   328→      },
+   329→   329→    },
+   330→   330→    {
+   331→   331→      key: "technician", header: "Technician", hideOnMobile: true,
+   332→   332→      value: (p) => p.assignedTechnician?.user?.name ?? "",
+   333→   333→      render: (p) => p.assignedTechnician?.user?.name ?? <span className="text-muted-foreground">—</span>,
+   334→   334→    },
+   335→   335→    ...(canManage
+   336→   336→      ? [{
+   337→   337→          key: "active", header: "Active", sortable: false,
+   338→   338→          render: (p: PmPlan) => (
+   339→   339→            <Switch
+   340→   340→              checked={p.active}
+   341→   341→              onCheckedChange={(v) => void toggleActive(p, v)}
+   342→   342→              aria-label={`Toggle ${p.code}`}
+   343→   343→            />
+   344→   344→          ),
+   345→   345→        } satisfies Column<PmPlan>]
+   346→   346→      : []),
+   347→   347→    ...(canManage || canExecute
+   348→   348→      ? [{
+   349→   349→          key: "actions", header: "", sortable: false,
+   350→   350→          render: (p: PmPlan) => (
+   351→   351→            <Button
+   352→   352→              variant="outline" size="sm"
+   353→   353→              disabled={!p.active || generatingPlanId === p.id || bulkGenerating}
+   354→   354→              onClick={() => void generateForPlan(p)}
+   355→   355→              aria-label={`Generate task for ${p.code}`}
+   356→   356→            >
+   357→   357→              <Zap className="h-3.5 w-3.5 mr-1" /> {generatingPlanId === p.id ? "Generating…" : "Generate"}
+   358→   358→            </Button>
+   359→   359→          ),
+   360→   360→        } satisfies Column<PmPlan>]
+   361→   361→      : []),
+   362→   362→  ];
+   363→   363→
+   364→   364→  // ── Task columns ──
+   365→   365→  const taskColumns: Column<PmTask>[] = [
+   366→   366→    { key: "code", header: "Code", value: (t) => t.code, className: "font-medium whitespace-nowrap" },
+   367→   367→    { key: "plan", header: "Plan", value: (t) => t.plan?.name ?? "", render: (t) => t.plan?.name ?? "—" },
+   368→   368→    {
+   369→   369→      key: "equipment", header: "Equipment", hideOnMobile: true,
+   370→   370→      value: (t) => (t.equipment ? `${t.equipment.name} ${t.equipment.assetTag}` : ""),
+   371→   371→      render: (t) => t.equipment ? `${t.equipment.name} (${t.equipment.assetTag})` : "—",
+   372→   372→    },
+   373→   373→    {
+   374→   374→      key: "dueDate", header: "Due", value: (t) => t.dueDate,
+   375→   375→      render: (t) => (
+   376→   376→        <span className={isOverdue(t) ? "text-red-600 font-medium" : ""}>{fmtDate(t.dueDate)}</span>
+   377→   377→      ),
+   378→   378→    },
+   379→   379→    { key: "status", header: "Status", value: (t) => t.status, render: (t) => <StatusBadge status={t.status} /> },
+   380→   380→    {
+   381→   381→      key: "technician", header: "Technician", hideOnMobile: true,
+   382→   382→      value: (t) => t.technician?.user?.name ?? "",
+   383→   383→      render: (t) => t.technician?.user?.name ?? <span className="text-muted-foreground">Unassigned</span>,
+   384→   384→    },
+   385→   385→    ...(canManage || canExecute
+   386→   386→      ? [{
+   387→   387→          key: "taskActions", header: "Actions", sortable: false,
+   388→   388→          render: (t: PmTask) => {
+   389→   389→            const active = ["SCHEDULED", "OVERDUE", "IN_PROGRESS"].includes(t.status);
+   390→   390→            if (!active) return <span className="text-xs text-muted-foreground">—</span>;
+   391→   391→            return (
+   392→   392→              <div className="flex items-center gap-1.5">
+   393→   393→                {t.status !== "IN_PROGRESS" ? (
+   394→   394→                  <Button
+   395→   395→                    variant="outline" size="sm"
+   396→   396→                    disabled={busyTaskId === t.id}
+   397→   397→                    onClick={() => void transition(t, "start")}
+   398→   398→                    aria-label={`Start ${t.code}`}
+   399→   399→                  >
+   400→   400→                    <Play className="h-3.5 w-3.5 mr-1" /> Start
+   401→   401→                  </Button>
+   402→   402→                ) : null}
+   403→   403→                <Button
+   404→   404→                  variant="outline" size="sm"
+   405→   405→                  disabled={busyTaskId === t.id}
+   406→   406→                  onClick={() => void openComplete(t)}
+   407→   407→                  aria-label={`Complete ${t.code}`}
+   408→   408→                >
+   409→   409→                  <CheckCircle2 className="h-3.5 w-3.5 mr-1" /> Complete
+   410→   410→                </Button>
+   411→   411→                {canManage ? (
+   412→   412→                  <Button
+   413→   413→                    variant="ghost" size="sm"
+   414→   414→                    disabled={busyTaskId === t.id}
+   415→   415→                    onClick={() => {
+   416→   416→                      if (window.confirm(`Skip ${t.code}? The task will be marked SKIPPED.`)) void transition(t, "skip");
+   417→   417→                    }}
+   418→   418→                    aria-label={`Skip ${t.code}`}
+   419→   419→                  >
+   420→   420→                    <CircleOff className="h-3.5 w-3.5 mr-1" /> Skip
+   421→   421→                  </Button>
+   422→   422→                ) : null}
+   423→   423→              </div>
+   424→   424→            );
+   425→   425→          },
+   426→   426→        } satisfies Column<PmTask>]
+   427→   427→      : []),
+   428→   428→  ];
+   429→   429→
+   430→   430→  return (
+   431→   431→    <div>
+   432→   432→      <PageHeader
+   433→   433→        title="Preventive Maintenance"
+   434→   434→        subtitle="Recurring equipment care: plans, schedules and task execution"
+   435→   435→        actions={
+   436→   436→          <>
+   437→   437→            <Button variant="outline" size="sm" onClick={() => void generateDueTasks()} disabled={bulkGenerating || !canManage && !canExecute}>
+   438→   438→              <RotateCw className={`h-4 w-4 mr-1.5 ${bulkGenerating ? "animate-spin" : ""}`} />
+   439→   439→              {bulkGenerating ? "Generating…" : "Generate due tasks"}
+   440→   440→            </Button>
+   441→   441→            {canManage ? (
+   442→   442→              <Button size="sm" onClick={() => setCreateOpen(true)}>
+   443→   443→                <Plus className="h-4 w-4 mr-1.5" /> New Plan
+   444→   444→              </Button>
+   445→   445→            ) : null}
+   446→   446→          </>
+   447→   447→        }
+   448→   448→      />
+   449→   449→
+   450→   450→      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+   451→   451→        <StatCard title="Active Plans" value={stats.activePlans} icon={<CalendarClock className="h-5 w-5" />} loading={loading} />
+   452→   452→        <StatCard title="Due This Week" value={stats.dueThisWeek} icon={<CalendarCheck2 className="h-5 w-5" />} tone="warning" loading={loading} />
+   453→   453→        <StatCard title="Overdue Tasks" value={stats.overdue} icon={<AlarmClock className="h-5 w-5" />} tone="danger" loading={loading} />
+   454→   454→        <StatCard title="Completed This Month" value={stats.completedThisMonth} icon={<CheckCircle2 className="h-5 w-5" />} tone="success" loading={loading} />
+   455→   455→      </div>
+   456→   456→
+   457→   457→      <Tabs value={tab} onValueChange={setTab}>
+   458→   458→        <TabsList className="mb-4">
+   459→   459→          <TabsTrigger value="plans"><CalendarClock className="h-4 w-4 mr-1.5" /> Plans</TabsTrigger>
+   460→   460→          <TabsTrigger value="tasks"><ClipboardList className="h-4 w-4 mr-1.5" /> Tasks</TabsTrigger>
+   461→   461→        </TabsList>
+   462→   462→
+   463→   463→        <TabsContent value="plans">
+   464→   464→          {loading ? (
+   465→   465→            <LoadingState label="Loading plans…" />
+   466→   466→          ) : error ? (
+   467→   467→            <ErrorState message={error} onRetry={() => void load()} />
+   468→   468→          ) : plans.length === 0 ? (
+   469→   469→            <EmptyState
+   470→   470→              title="No PM plans yet"
+   471→   471→              hint={canManage ? "Create a plan to schedule recurring maintenance for an equipment." : "No maintenance plans have been published yet."}
+   472→   472→              action={canManage ? <Button size="sm" onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4 mr-1.5" /> New Plan</Button> : undefined}
+   473→   473→            />
+   474→   474→          ) : (
+   475→   475→            <DataTable
+   476→   476→              columns={planColumns}
+   477→   477→              rows={plans}
+   478→   478→              rowKey={(p) => p.id}
+   479→   479→              searchPlaceholder="Search code, plan, equipment…"
+   480→   480→              emptyTitle="No plans match"
+   481→   481→              exportName="pm-plans"
+   482→   482→            />
+   483→   483→          )}
+   484→   484→        </TabsContent>
+   485→   485→
+   486→   486→        <TabsContent value="tasks">
+   487→   487→          {loading ? (
+   488→   488→            <LoadingState label="Loading tasks…" />
+   489→   489→          ) : error ? (
+   490→   490→            <ErrorState message={error} onRetry={() => void load()} />
+   491→   491→          ) : tasks.length === 0 ? (
+   492→   492→            <EmptyState
+   493→   493→              title="No PM tasks"
+   494→   494→              hint={canManage || canExecute ? "Use “Generate due tasks” or a plan's Generate action to schedule work." : "No maintenance tasks have been scheduled."}
+   495→   495→            />
+   496→   496→          ) : (
+   497→   497→            <DataTable
+   498→   498→              columns={taskColumns}
+   499→   499→              rows={tasks}
+   500→   500→              rowKey={(t) => t.id}
+   501→   501→              searchPlaceholder="Search code, plan, equipment…"
+   502→   502→              emptyTitle="No tasks match"
+   503→   503→              exportName="pm-tasks"
+   504→   504→            />
+   505→   505→          )}
+   506→   506→        </TabsContent>
+   507→   507→      </Tabs>
+   508→   508→
+   509→   509→      {/* ── New Plan dialog ── */}
+   510→   510→      <Dialog open={createOpen} onOpenChange={(open) => { if (!open && draft.dirty) { /* draft persists for restore */ } setCreateOpen(open); }}>
+   511→   511→        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto hms-scroll">
+   512→   512→          <DialogHeader>
+   513→   513→            <DialogTitle>New PM Plan</DialogTitle>
+   514→   514→            <DialogDescription>
+   515→   515→              Schedule recurring maintenance. Your draft is auto-saved if you step away.
+   516→   516→              {draft.draftExists ? (
+   517→   517→                <button type="button" className="ml-1 underline underline-offset-2 text-primary" onClick={draft.restore}>
+   518→   518→                  Restore saved draft
+   519→   519→                </button>
+   520→   520→              ) : null}
+   521→   521→            </DialogDescription>
+   522→   522→          </DialogHeader>
+   523→   523→
+   524→   524→          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 py-2">
+   525→   525→            <div className="space-y-1.5 sm:col-span-2">
+   526→   526→              <Label htmlFor="pm-plan-name">Plan Name *</Label>
+   527→   527→              <Input
+   528→   528→                id="pm-plan-name"
+   529→   529→                value={draft.value.name}
+   530→   530→                onChange={(e) => draft.setValue({ name: e.target.value })}
+   531→   531→                placeholder="Monthly HVAC filter service"
+   532→   532→              />
+   533→   533→            </div>
+   534→   534→            <div className="space-y-1.5">
+   535→   535→              <Label>Equipment *</Label>
+   536→   536→              <Select value={draft.value.equipmentId || undefined} onValueChange={(v) => draft.setValue({ equipmentId: v })}>
+   537→   537→                <SelectTrigger aria-label="Equipment"><SelectValue placeholder={equipmentOptions === null ? "Equipment list unavailable" : "Select equipment"} /></SelectTrigger>
+   538→   538→                <SelectContent>
+   539→   539→                  {(equipmentOptions ?? []).map((e) => (
+   540→   540→                    <SelectItem key={e.id} value={e.id}>{e.label}</SelectItem>
+   541→   541→                  ))}
+   542→   542→                </SelectContent>
+   543→   543→              </Select>
+   544→   544→              {equipmentOptions === null ? <p className="text-xs text-amber-600">Equipment list could not be loaded. Try refreshing the page.</p> : null}
+   545→   545→            </div>
+   546→   546→            <div className="space-y-1.5">
+   547→   547→              <Label>Frequency</Label>
+   548→   548→              <Select value={draft.value.frequency} onValueChange={(v) => draft.setValue({ frequency: v })}>
+   549→   549→                <SelectTrigger aria-label="Frequency"><SelectValue /></SelectTrigger>
+   550→   550→                <SelectContent>
+   551→   551→                  {PM_FREQUENCIES.map((f) => (
+   552→   552→                    <SelectItem key={f} value={f}>{humanize(f)}</SelectItem>
+   553→   553→                  ))}
+   554→   554→                </SelectContent>
+   555→   555→              </Select>
+   556→   556→            </div>
+   557→   557→            <div className="space-y-1.5">
+   558→   558→              <Label>Assigned Technician</Label>
+   559→   559→              <Select
+   560→   560→                value={draft.value.assignedTechnicianId || "NONE"}
+   561→   561→                onValueChange={(v) => draft.setValue({ assignedTechnicianId: v === "NONE" ? "" : v })}
+   562→   562→                disabled={technicianOptions === null}
+   563→   563→              >
+   564→   564→                <SelectTrigger aria-label="Technician"><SelectValue placeholder={technicianOptions === null ? "Unavailable" : "Unassigned"} /></SelectTrigger>
+   565→   565→                <SelectContent>
+   566→   566→                  <SelectItem value="NONE">Unassigned</SelectItem>
+   567→   567→                  {(technicianOptions ?? []).map((t) => (
+   568→   568→                    <SelectItem key={t.id} value={t.id}>{t.label}</SelectItem>
+   569→   569→                  ))}
+   570→   570→                </SelectContent>
+   571→   571→              </Select>
+   572→   572→            </div>
+   573→   573→            <div className="space-y-1.5">
+   574→   574→              <Label htmlFor="pm-plan-due">Next Due Date</Label>
+   575→   575→              <Input
+   576→   576→                id="pm-plan-due"
+   577→   577→                type="date"
+   578→   578→                value={draft.value.nextDueDate}
+   579→   579→                onChange={(e) => draft.setValue({ nextDueDate: e.target.value })}
+   580→   580→              />
+   581→   581→              <p className="text-xs text-muted-foreground">Defaults to one frequency cycle from today.</p>
+   582→   582→            </div>
+   583→   583→            <div className="space-y-1.5 sm:col-span-2">
+   584→   584→              <Label htmlFor="pm-plan-checklist">Checklist Labels (one per line)</Label>
+   585→   585→              <Textarea
+   586→   586→                id="pm-plan-checklist"
+   587→   587→                rows={5}
+   588→   588→                value={draft.value.checklist}
+   589→   589→                onChange={(e) => draft.setValue({ checklist: e.target.value })}
+   590→   590→                placeholder={"Inspect air filter\nCheck refrigerant pressure\nTest thermostat"}
+   591→   591→              />
+   592→   592→            </div>
+   593→   593→          </div>
+   594→   594→
+   595→   595→          <DialogFooter>
+   596→   596→            <div className="flex w-full items-center justify-between gap-2">
+   597→   597→              <span className="text-xs text-muted-foreground">
+   598→   598→                {draft.dirty ? "Draft auto-saved" : "All changes saved"}
+   599→   599→              </span>
+   600→   600→              <div className="flex gap-2">
+   601→   601→                <Button variant="outline" onClick={() => setCreateOpen(false)} disabled={saving}>Cancel</Button>
+   602→   602→                <Button onClick={() => void createPlan()} disabled={saving}>
+   603→   603→                  {saving ? "Creating…" : "Create Plan"}
+   604→   604→                </Button>
+   605→   605→              </div>
+   606→   606→            </div>
+   607→   607→          </DialogFooter>
+   608→   608→        </DialogContent>
+   609→   609→      </Dialog>
+   610→   610→
+   611→   611→      {/* ── Complete dialog (checklist) ── */}
+   612→   612→      <Dialog open={completeTask !== null} onOpenChange={(open) => { if (!open) setCompleteTask(null); }}>
+   613→   613→        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto hms-scroll">
+   614→   614→          <DialogHeader>
+   615→   615→            <DialogTitle>Complete {completeTask?.code}</DialogTitle>
+   616→   616→            <DialogDescription>
+   617→   617→              {completeTask?.plan?.name} — {completeTask?.equipment?.name}. Tick every checklist item, add notes, then complete.
+   618→   618→            </DialogDescription>
+   619→   619→          </DialogHeader>
+   620→   620→
+   621→   621→          {completeTask ? (
+   622→   622→            <div className="space-y-3 py-2">
+   623→   623→              <div className="text-sm text-muted-foreground">
+   624→   624→                Due <span className="font-medium text-foreground">{fmtDate(completeTask.dueDate)}</span>
+   625→   625→                {completeTask.status === "OVERDUE" ? <span className="text-red-600 font-medium"> · overdue</span> : null}
+   626→   626→              </div>
+   627→   627→
+   628→   628→              {completeItems.length > 0 ? (
+   629→   629→                <div className="space-y-2">
+   630→   630→                  <Label>Checklist ({completeItems.filter((i) => i.done).length}/{completeItems.length} done)</Label>
+   631→   631→                  {completeItems.map((item) => (
+   632→   632→                    <label
+   633→   633→                      key={item.id}
+   634→   634→                      className="flex items-center gap-3 rounded-lg border px-3 py-2.5 cursor-pointer hover:bg-muted/50"
+   635→   635→                    >
+   636→   636→                      <Switch
+   637→   637→                        checked={item.done}
+   638→   638→                        onCheckedChange={(v) => setCompleteItems((items) => items.map((i) => (i.id === item.id ? { ...i, done: v } : i)))}
+   639→   639→                        aria-label={item.label}
+   640→   640→                      />
+   641→   641→                      <span className={`text-sm ${item.done ? "line-through text-muted-foreground" : ""}`}>{item.label}</span>
+   642→   642→                    </label>
+   643→   643→                  ))}
+   644→   644→                </div>
+   645→   645→              ) : (
+   646→   646→                <p className="text-sm text-muted-foreground">This task has no checklist items.</p>
+   647→   647→              )}
+   648→   648→
+   649→   649→              <div className="space-y-1.5">
+   650→   650→                <Label htmlFor="pm-complete-notes">Notes</Label>
+   651→   651→                <Textarea
+   652→   652→                  id="pm-complete-notes"
+   653→   653→                  rows={3}
+   654→   654→                  value={completeNotes}
+   655→   655→                  onChange={(e) => setCompleteNotes(e.target.value)}
+   656→   656→                  placeholder="Observations, parts replaced, follow-ups…"
+   657→   657→                />
+   658→   658→              </div>
+   659→   659→            </div>
+   660→   660→          ) : null}
+   661→   661→
+   662→   662→          <DialogFooter>
+   663→   663→            <Button variant="outline" onClick={() => setCompleteTask(null)} disabled={completing}>Cancel</Button>
+   664→   664→            <Button
+   665→   665→              onClick={() => void submitComplete()}
+   666→   666→              disabled={completing || !(completeItems.length === 0 || completeItems.every((i) => i.done))}
+   667→   667→              title={completeItems.some((i) => !i.done) ? "Complete every checklist item first" : undefined}
+   668→   668→            >
+   669→   669→              <Flag className="h-4 w-4 mr-1.5" /> {completing ? "Completing…" : "Complete Task"}
+   670→   670→            </Button>
+   671→   671→          </DialogFooter>
+   672→   672→        </DialogContent>
+   673→   673→      </Dialog>
+   674→   674→    </div>
+   675→   675→  );
+   676→   676→}
+   677→   677→

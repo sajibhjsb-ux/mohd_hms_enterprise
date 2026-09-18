@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, qs } from "@/lib/hms/api-client";
 import { hasPerm, useSession } from "@/components/hms/session";
 import { useUi } from "@/lib/hms/ui-store";
+import { navigateTo } from "@/lib/hms/router";
 import { useToast } from "@/hooks/use-toast";
 import { useDraft } from "@/hooks/use-draft";
 import {
@@ -63,9 +64,7 @@ const DESC_MAX = 5000;
 export function ComplaintNewPage() {
   const { user } = useSession();
   const { toast } = useToast();
-  const setComplaintsView = useUi((s) => s.setComplaintsView);
-  const setComplaintsFocusId = useUi((s) => s.setComplaintsFocusId);
-  const setComplaintFormDirty = useUi((s) => s.setComplaintFormDirty);
+  const setPageDirty = useUi((s) => s.setPageDirty);
   const isStaffUser = !!user && user.role !== "CUSTOMER";
   const canCreate = hasPerm(user, PERMISSIONS.complaints_create);
 
@@ -193,15 +192,15 @@ export function ComplaintNewPage() {
     [equipment, draft.value.equipmentId]
   );
 
-  // ── Dirty-state wiring (shell guard + data protection) ──
+  // ── Dirty-state wiring (central router guard + data protection) ──
   useEffect(() => {
-    setComplaintFormDirty(draft.dirty);
-    return () => { setComplaintFormDirty(false); };
-  }, [draft.dirty, setComplaintFormDirty]);
+    setPageDirty(draft.dirty);
+    return () => { setPageDirty(false); };
+  }, [draft.dirty, setPageDirty]);
 
   function goBackToList() {
     draft.saveNow(); // silent protection — never lose typed data when leaving via Back
-    setComplaintsView("list");
+    navigateTo("complaints");
   }
 
   function saveDraft() {
@@ -257,10 +256,9 @@ export function ComplaintNewPage() {
       draft.reset(EMPTY_CREATE);
       setSelectedCustomer(null);
       setCustQuery("");
-      setComplaintFormDirty(false);
-      // Continue with the existing complaint workflow: open Complaint Details.
-      setComplaintsFocusId(res.data.id);
-      setComplaintsView("list");
+      setPageDirty(false);
+      // Continue the existing workflow on the complaint's dedicated detail page.
+      navigateTo("complaints", [res.data.id]);
     } catch (e) {
       // CRITICAL: keep every user-entered value on failure — show the error and allow retry.
       const msg = e instanceof Error ? e.message : "Could not create the complaint. Please try again.";

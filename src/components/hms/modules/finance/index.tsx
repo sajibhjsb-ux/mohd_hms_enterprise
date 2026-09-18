@@ -1,16 +1,20 @@
 "use client";
 
-// MOHD.HMS ENTERPRISE — Finance module (agent 6-e)
+// MOHD.HMS ENTERPRISE — Finance module
 // Overview (KPIs + income vs expense chart + accounts + recent ledger),
 // Receivables, Expenses (approval workflow) and Transactions tabs.
 // Every figure is loaded live from /api/v1/finance/*.
+//
+// NAVIGATION ARCHITECTURE (hash router, ui-store pages["finance"]):
+//   []                     → this list page (Overview tab)
+//   ["expenses"]           → this list page (Expenses tab — deep-linkable)
+//   ["expenses", "new"]    → FinanceNewExpensePage (dedicated add-expense page)
+// Receivable rows navigate to the invoice detail pages via navigateTo.
 
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
@@ -18,14 +22,15 @@ import { DataTable, type Column } from "@/components/hms/shared/data-table";
 import { PageHeader, StatCard, StatusBadge, LoadingState, EmptyState, ErrorState } from "@/components/hms/shared/ui-bits";
 import { api, qs, ClientApiError } from "@/lib/hms/api-client";
 import { useSession, hasPerm } from "@/components/hms/session";
+import { navigateTo, pageFromSeg } from "@/lib/hms/router";
 import { useUi } from "@/lib/hms/ui-store";
 import { useToast } from "@/hooks/use-toast";
-import { useDraft } from "@/hooks/use-draft";
-import { money, fmtDate, toDateInput } from "@/lib/hms/format";
+import { money, fmtDate } from "@/lib/hms/format";
 import { PERMISSIONS } from "@/lib/hms/constants";
 import { cn } from "@/lib/utils";
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Wallet, TrendingDown, TrendingUp, Receipt, Landmark, Plus, Check, BadgeDollarSign, RefreshCcw } from "lucide-react";
+import { FinanceNewExpensePage } from "./new-expense-page";
 
 // ── Types (mirror API responses) ──
 
@@ -59,9 +64,6 @@ type TransactionRow = {
   account: { id: string; code: string; name: string; type: string } | null;
 };
 
-type EForm = { category: string; description: string; amount: string; expenseDate: string; receiptNo: string };
-
-const CATEGORIES = ["MATERIALS", "FUEL", "RENT", "UTILITIES", "SALARIES", "EQUIPMENT", "TRANSPORT", "MAINTENANCE", "SUBCONTRACT", "GENERAL", "OTHER"];
 const INCOME_GREEN = "oklch(0.53 0.14 154)";
 const EXPENSE_AMBER = "oklch(0.78 0.15 75)";
 
@@ -70,10 +72,6 @@ function monthLabel(ym: string): string {
   if (!y || !m) return ym;
   return new Date(y, m - 1, 1).toLocaleDateString("en-GB", { month: "short", year: "2-digit" });
 }
-
-const emptyExpenseForm = (): EForm => ({
-  category: "MATERIALS", description: "", amount: "", expenseDate: toDateInput(new Date()), receiptNo: "",
-});
 
 /** Income / Expense badge with correct label and tone. */
 function TypeBadge({ type }: { type: string }) {
@@ -85,12 +83,26 @@ function TypeBadge({ type }: { type: string }) {
   );
 }
 
-// ── Main module ──
+// ── Module router ──
 
 export function FinanceModule() {
+  const seg = useUi((s) => s.pages["finance"]) ?? [];
+  const page = pageFromSeg(seg);
+
+  // ["expenses", "new"] → pageFromSeg → { view: "expenses", id: "new" } → dedicated create page.
+  if (page.view === "expenses" && page.id === "new") return <FinanceNewExpensePage />;
+
+  // ["expenses"] → pageFromSeg → { view: "detail", id: "expenses" } → list on the Expenses tab.
+  const initialTab = page.view === "detail" && page.id === "expenses" ? "expenses" : undefined;
+  return <FinanceList key={initialTab ?? "list"} initialTab={initialTab} />;
+}
+
+// ── List page ──
+
+function FinanceList({ initialTab }: { initialTab?: string }) {
   const { user } = useSession();
   const { toast } = useToast();
-  const setActiveModule = useUi((s) => s.setActiveModule);
+  const goToInvoices = (id?: string) => navigateTo("invoices", id ? [id] : []);
   const canRead = hasPerm(user, PERMISSIONS.finance_read);
   const canManage = hasPerm(user, PERMISSIONS.finance_manage);
 
@@ -101,7 +113,6 @@ export function FinanceModule() {
   const [expenses, setExpenses] = useState<ExpenseRow[]>([]);
   const [expLoading, setExpLoading] = useState(true);
   const [expError, setExpError] = useState<string | null>(null);
-  const [addOpen, setAddOpen] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const [transactions, setTransactions] = useState<TransactionRow[]>([]);
@@ -110,7 +121,7 @@ export function FinanceModule() {
   const [month, setMonth] = useState("");
   const [trxType, setTrxType] = useState("ALL");
 
-  const form = useDraft<EForm>({ formKey: "finance.expense.create", initial: emptyExpenseForm() });
+  const [tab, setTab] = useState(initialTab ?? "overview");
 
   const loadSummary = useCallback(async () => {
     setLoading(true);
@@ -156,7 +167,6 @@ export function FinanceModule() {
     loadSummary();
     loadExpenses();
     loadTransactions(month, trxType);
-     
   }, [canRead]);
 
   if (!canRead) {
@@ -164,7 +174,7 @@ export function FinanceModule() {
       <EmptyState
         title="Finance access required"
         hint="Your role does not include finance visibility. You can review your invoices in the Invoices module."
-        action={<Button size="sm" onClick={() => setActiveModule("invoices")}>Go to Invoices</Button>}
+        action={<Button size="sm" onClick={() => goToInvoices()}>Go to Invoices</Button>}
       />
     );
   }
@@ -180,32 +190,6 @@ export function FinanceModule() {
       await Promise.all([loadExpenses(), loadSummary()]);
     } catch (e) {
       toast({ title: "Action failed", description: e instanceof ClientApiError ? e.message : undefined, variant: "destructive" });
-    } finally {
-      setBusyId(null);
-    }
-  }
-
-  async function createExpense() {
-    const amount = parseFloat(form.value.amount);
-    if (!form.value.description.trim() || !isFinite(amount) || amount <= 0) {
-      toast({ title: "Missing details", description: "Category, description and a positive amount are required.", variant: "destructive" });
-      return;
-    }
-    setBusyId("creating");
-    try {
-      const res = await api.post<ExpenseRow>("/api/v1/finance/expenses", {
-        category: form.value.category,
-        description: form.value.description.trim(),
-        amount,
-        expenseDate: form.value.expenseDate || undefined,
-        receiptNo: form.value.receiptNo || undefined,
-      });
-      toast({ title: `Expense ${res.data.code} submitted`, description: "Pending approval by finance." });
-      form.reset(emptyExpenseForm());
-      setAddOpen(false);
-      await Promise.all([loadExpenses(), loadSummary()]);
-    } catch (e) {
-      toast({ title: "Could not create expense", description: e instanceof ClientApiError ? e.message : undefined, variant: "destructive" });
     } finally {
       setBusyId(null);
     }
@@ -275,7 +259,7 @@ export function FinanceModule() {
         actions={<Button variant="outline" size="sm" onClick={() => { loadSummary(); loadExpenses(); loadTransactions(month, trxType); }}><RefreshCcw className="h-4 w-4 mr-1.5" /> Refresh</Button>}
       />
 
-      <Tabs defaultValue="overview">
+      <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="mb-4 flex-wrap h-auto">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="receivables">Receivables{summary ? ` (${summary.receivables.length})` : ""}</TabsTrigger>
@@ -371,7 +355,7 @@ export function FinanceModule() {
               columns={receivableColumns}
               rows={summary?.receivables ?? []}
               rowKey={(r) => r.id}
-              onRowClick={() => setActiveModule("invoices")}
+              onRowClick={(r) => goToInvoices(r.id)}
               searchPlaceholder="Search receivables…"
               exportName="receivables"
               emptyTitle="No receivables"
@@ -385,7 +369,7 @@ export function FinanceModule() {
           {expError ? <ErrorState message={expError} onRetry={loadExpenses} /> : null}
           <div className="flex justify-end mb-3 no-print">
             {canManage ? (
-              <Button size="sm" onClick={() => setAddOpen(true)}><Plus className="h-4 w-4 mr-1.5" /> Add expense</Button>
+              <Button size="sm" onClick={() => navigateTo("finance", ["expenses", "new"])}><Plus className="h-4 w-4 mr-1.5" /> Add expense</Button>
             ) : null}
           </div>
           {expLoading ? (
@@ -394,7 +378,7 @@ export function FinanceModule() {
             <EmptyState
               title="No expenses recorded"
               hint={canManage ? "Submit the first expense for approval." : "Expenses will appear here once submitted."}
-              action={canManage ? <Button size="sm" onClick={() => setAddOpen(true)}><Plus className="h-4 w-4 mr-1.5" /> Add expense</Button> : undefined}
+              action={canManage ? <Button size="sm" onClick={() => navigateTo("finance", ["expenses", "new"])}><Plus className="h-4 w-4 mr-1.5" /> Add expense</Button> : undefined}
             />
           ) : (
             <DataTable
@@ -450,50 +434,6 @@ export function FinanceModule() {
           )}
         </TabsContent>
       </Tabs>
-
-      {/* Add expense dialog */}
-      <Dialog open={addOpen} onOpenChange={setAddOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Add expense</DialogTitle>
-            <DialogDescription>Submitted expenses start as PENDING until a finance manager approves them.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label>Category *</Label>
-                <Select value={form.value.category} onValueChange={(v) => form.setValue({ category: v })}>
-                  <SelectTrigger aria-label="Category"><SelectValue /></SelectTrigger>
-                  <SelectContent>{CATEGORIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label>Amount (RM) *</Label>
-                <Input inputMode="decimal" value={form.value.amount} onChange={(e) => form.setValue({ amount: e.target.value })} placeholder="0.00" />
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Description *</Label>
-              <Input value={form.value.description} onChange={(e) => form.setValue({ description: e.target.value })} placeholder="What was purchased?" />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label>Expense date</Label>
-                <Input type="date" value={form.value.expenseDate} onChange={(e) => form.setValue({ expenseDate: e.target.value })} />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Receipt no.</Label>
-                <Input value={form.value.receiptNo} onChange={(e) => form.setValue({ receiptNo: e.target.value })} placeholder="Optional" />
-              </div>
-            </div>
-            {form.dirty ? <p className="text-xs text-muted-foreground">Draft auto-saved locally.</p> : null}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setAddOpen(false)}>Cancel</Button>
-            <Button onClick={createExpense} disabled={busyId === "creating"}>{busyId === "creating" ? "Saving…" : "Submit expense"}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

@@ -1,7 +1,16 @@
 "use client";
 
 // HR module — workforce overview (headcount, attendance KPIs, 7-day trend),
-// read-only employee register, attendance marking and leave approval workflow.
+// read-only employee register, attendance register and leave approval workflow.
+//
+// NAVIGATION ARCHITECTURE: every business form is a DEDICATED PAGE routed by
+// the hash router (ui-store pages["hr"]) — no popup CRUD:
+//   []                        → this list page (overview + tabs)
+//   ["attendance", "new"]     → Mark Attendance page (create)
+//   ["attendance", id]        → Edit Attendance page (prefilled)
+//   ["leave", "new"]          → New Leave Request page
+//   ["departments", "new"]    → New Department page
+// Leave approve/reject stays inline (PATCH, same as before).
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -10,24 +19,22 @@ import {
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api, qs } from "@/lib/hms/api-client";
 import { fmtDate, toDateInput } from "@/lib/hms/format";
-import { humanize, PERMISSIONS } from "@/lib/hms/constants";
+import { PERMISSIONS } from "@/lib/hms/constants";
 import { hasPerm, useSession } from "@/components/hms/session";
+import { useUi } from "@/lib/hms/ui-store";
+import { navigateTo, pageFromSeg } from "@/lib/hms/router";
 import { useToast } from "@/hooks/use-toast";
 import { DataTable, type Column } from "@/components/hms/shared/data-table";
 import {
   EmptyState, ErrorState, LoadingState, PageHeader, StatCard, StatusBadge,
 } from "@/components/hms/shared/ui-bits";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Textarea } from "@/components/ui/textarea";
+import { HrAttendancePage } from "./attendance-page";
+import { HrLeaveNewPage } from "./leave-page";
+import { HrDepartmentNewPage } from "./department-page";
 
 // ── Types ──
 
@@ -79,20 +86,31 @@ type LeaveRequest = {
   employee: { id: string; firstName: string; lastName: string; employeeNo: string };
 };
 
-type Option = { id: string; label: string };
-
-const LEAVE_TYPES = ["ANNUAL", "SICK", "UNPAID", "OTHER"];
-const ATTENDANCE_STATUSES = ["PRESENT", "ABSENT", "LEAVE", "HALF_DAY"];
-
 const todayInput = () => toDateInput(new Date());
 
+// ── Module router ──
+
 export function HrModule() {
+  const seg = useUi((s) => s.pages["hr"]) ?? [];
+  const page = pageFromSeg(seg);
+
+  if (page.view === "attendance" && page.id) return <HrAttendancePage attendanceId={page.id} />;
+  if (page.view === "leave" && page.id === "new") return <HrLeaveNewPage />;
+  if (page.view === "departments" && page.id === "new") return <HrDepartmentNewPage />;
+  return <HrList />;
+}
+
+// ── List page ──
+
+function HrList() {
   const { user } = useSession();
   const { toast } = useToast();
 
   const canManage = hasPerm(user, PERMISSIONS.hr_manage);
   const canReadEmployees = hasPerm(user, PERMISSIONS.employees_read) || canManage;
-  const canFileForOthers = canManage || user?.role === "SUPER_ADMIN" || user?.role === "ADMIN";
+
+  // All page navigation flows through the hash router (URL + Back/Forward).
+  const openPage = useCallback((seg: string[]) => navigateTo("hr", seg), []);
 
   // ── Overview ──
   const [overview, setOverview] = useState<Overview | null>(null);
@@ -110,32 +128,6 @@ export function HrModule() {
   const [leaveLoading, setLeaveLoading] = useState(true);
 
   const [tab, setTab] = useState("attendance");
-
-  // ── Dialogs ──
-  const [markOpen, setMarkOpen] = useState(false);
-  const [markSaving, setMarkSaving] = useState(false);
-  const [markForm, setMarkForm] = useState({
-    employeeId: "",
-    date: todayInput(),
-    status: "PRESENT",
-    checkIn: "08:00",
-    checkOut: "17:00",
-    notes: "",
-  });
-
-  const [leaveOpen, setLeaveOpen] = useState(false);
-  const [leaveSaving, setLeaveSaving] = useState(false);
-  const [leaveForm, setLeaveForm] = useState({
-    employeeId: "",
-    type: "ANNUAL",
-    startDate: todayInput(),
-    endDate: todayInput(),
-    reason: "",
-  });
-
-  const [deptOpen, setDeptOpen] = useState(false);
-  const [deptSaving, setDeptSaving] = useState(false);
-  const [deptForm, setDeptForm] = useState({ name: "", description: "" });
 
   const [busyLeaveId, setBusyLeaveId] = useState<string | null>(null);
 
@@ -198,11 +190,6 @@ export function HrModule() {
     loadLeaves();
   }, [loadLeaves]);
 
-  const employeeOptions = useMemo<Option[]>(() => {
-    if (employees === null) return [];
-    return employees.map((e) => ({ id: e.id, label: `${e.firstName} ${e.lastName} (${e.employeeNo})` }));
-  }, [employees]);
-
   const chartData = useMemo(() => {
     if (!overview) return [];
     return overview.attendance7d.map((d) => ({
@@ -214,74 +201,7 @@ export function HrModule() {
     }));
   }, [overview]);
 
-  // ── Attendance mark (upsert) ──
-  const openMark = (record?: AttendanceRecord) => {
-    setMarkForm({
-      employeeId: record?.employee.id ?? "",
-      date: record ? toDateInput(record.date) : attendanceDate,
-      status: record?.status ?? "PRESENT",
-      checkIn: record?.checkIn ? new Date(record.checkIn).toTimeString().slice(0, 5) : "08:00",
-      checkOut: record?.checkOut ? new Date(record.checkOut).toTimeString().slice(0, 5) : "17:00",
-      notes: record?.notes ?? "",
-    });
-    setMarkOpen(true);
-  };
-
-  const saveMark = async () => {
-    if (!markForm.employeeId) {
-      toast({ title: "Select an employee", variant: "destructive" });
-      return;
-    }
-    setMarkSaving(true);
-    try {
-      const existing = attendance.find((a) => a.employee.id === markForm.employeeId);
-      await api.post("/api/v1/hr/attendance", {
-        employeeId: markForm.employeeId,
-        date: markForm.date,
-        status: markForm.status,
-        checkIn: ["PRESENT", "HALF_DAY"].includes(markForm.status) ? markForm.checkIn || null : null,
-        checkOut: ["PRESENT", "HALF_DAY"].includes(markForm.status) ? markForm.checkOut || null : null,
-        notes: markForm.notes || null,
-      });
-      toast({
-        title: existing ? "Attendance updated" : "Attendance marked",
-        description: `${humanize(markForm.status)} on ${markForm.date}.`,
-      });
-      setMarkOpen(false);
-      await Promise.all([loadAttendance(), loadOverview()]);
-    } catch (e) {
-      toast({ title: "Could not mark attendance", description: e instanceof Error ? e.message : undefined, variant: "destructive" });
-    } finally {
-      setMarkSaving(false);
-    }
-  };
-
-  // ── Leave actions ──
-  const saveLeave = async () => {
-    if (leaveForm.endDate < leaveForm.startDate) {
-      toast({ title: "End date cannot be before start date", variant: "destructive" });
-      return;
-    }
-    setLeaveSaving(true);
-    try {
-      await api.post("/api/v1/hr/leave", {
-        employeeId: canFileForOthers && leaveForm.employeeId ? leaveForm.employeeId : undefined,
-        type: leaveForm.type,
-        startDate: leaveForm.startDate,
-        endDate: leaveForm.endDate,
-        reason: leaveForm.reason,
-      });
-      toast({ title: "Leave request submitted", description: "It is now pending approval." });
-      setLeaveOpen(false);
-      setLeaveForm({ employeeId: "", type: "ANNUAL", startDate: todayInput(), endDate: todayInput(), reason: "" });
-      await Promise.all([loadLeaves(), loadOverview()]);
-    } catch (e) {
-      toast({ title: "Could not submit request", description: e instanceof Error ? e.message : undefined, variant: "destructive" });
-    } finally {
-      setLeaveSaving(false);
-    }
-  };
-
+  // ── Leave decision (stays inline — no navigation required) ──
   const decideLeave = async (leave: LeaveRequest, action: "approve" | "reject") => {
     setBusyLeaveId(leave.id);
     try {
@@ -295,26 +215,6 @@ export function HrModule() {
       toast({ title: "Decision failed", description: e instanceof Error ? e.message : undefined, variant: "destructive" });
     } finally {
       setBusyLeaveId(null);
-    }
-  };
-
-  // ── Department create ──
-  const saveDepartment = async () => {
-    if (!deptForm.name.trim()) {
-      toast({ title: "Department name is required", variant: "destructive" });
-      return;
-    }
-    setDeptSaving(true);
-    try {
-      await api.post("/api/v1/hr/departments", { name: deptForm.name.trim(), description: deptForm.description.trim() });
-      toast({ title: "Department created", description: deptForm.name.trim() });
-      setDeptForm({ name: "", description: "" });
-      setDeptOpen(false);
-      await loadOverview();
-    } catch (e) {
-      toast({ title: "Could not create department", description: e instanceof Error ? e.message : undefined, variant: "destructive" });
-    } finally {
-      setDeptSaving(false);
     }
   };
 
@@ -357,7 +257,11 @@ export function HrModule() {
       ? [{
           key: "attActions", header: "", sortable: false,
           render: (a: AttendanceRecord) => (
-            <Button variant="outline" size="sm" onClick={() => openMark(a)} aria-label={`Edit attendance for ${a.employee.employeeNo}`}>
+            <Button
+              variant="outline" size="sm"
+              onClick={() => openPage(["attendance", a.id])}
+              aria-label={`Edit attendance for ${a.employee.employeeNo}`}
+            >
               Edit
             </Button>
           ),
@@ -427,18 +331,18 @@ export function HrModule() {
         actions={
           canManage ? (
             <>
-              <Button variant="outline" size="sm" onClick={() => openMark()} disabled={employees === null && employeeOptions.length === 0}>
+              <Button variant="outline" size="sm" onClick={() => openPage(["attendance", "new"])}>
                 <Clock className="h-4 w-4 mr-1.5" /> Mark Attendance
               </Button>
-              <Button variant="outline" size="sm" onClick={() => setLeaveOpen(true)}>
+              <Button variant="outline" size="sm" onClick={() => openPage(["leave", "new"])}>
                 <CalendarPlus className="h-4 w-4 mr-1.5" /> New Leave Request
               </Button>
-              <Button size="sm" onClick={() => setDeptOpen(true)}>
+              <Button size="sm" onClick={() => openPage(["departments", "new"])}>
                 <Plus className="h-4 w-4 mr-1.5" /> Department
               </Button>
             </>
           ) : (
-            <Button variant="outline" size="sm" onClick={() => setLeaveOpen(true)}>
+            <Button variant="outline" size="sm" onClick={() => openPage(["leave", "new"])}>
               <CalendarPlus className="h-4 w-4 mr-1.5" /> New Leave Request
             </Button>
           )
@@ -483,7 +387,7 @@ export function HrModule() {
               <div className="flex items-center justify-between mb-3">
                 <div className="text-sm font-medium">Departments</div>
                 {canManage ? (
-                  <Button variant="ghost" size="sm" onClick={() => setDeptOpen(true)} aria-label="Add department">
+                  <Button variant="ghost" size="sm" onClick={() => openPage(["departments", "new"])} aria-label="Add department">
                     <Plus className="h-4 w-4" />
                   </Button>
                 ) : null}
@@ -561,7 +465,7 @@ export function HrModule() {
               />
             </div>
             {canManage ? (
-              <Button variant="outline" size="sm" onClick={() => openMark()} disabled={employees === null && employeeOptions.length === 0}>
+              <Button variant="outline" size="sm" onClick={() => openPage(["attendance", "new"])}>
                 <Plus className="h-4 w-4 mr-1.5" /> Mark Attendance
               </Button>
             ) : null}
@@ -573,7 +477,7 @@ export function HrModule() {
             <EmptyState
               title="No attendance records for this date"
               hint={canManage ? "Use Mark Attendance to record the register for this day." : "Nothing was recorded for this date."}
-              action={canManage ? <Button size="sm" variant="outline" onClick={() => openMark()}><Plus className="h-4 w-4 mr-1.5" /> Mark Attendance</Button> : undefined}
+              action={canManage ? <Button size="sm" variant="outline" onClick={() => openPage(["attendance", "new"])}><Plus className="h-4 w-4 mr-1.5" /> Mark Attendance</Button> : undefined}
             />
           ) : (
             <DataTable
@@ -594,7 +498,7 @@ export function HrModule() {
             <EmptyState
               title="No leave requests"
               hint="Requests submitted here appear in this list for approval."
-              action={<Button size="sm" variant="outline" onClick={() => setLeaveOpen(true)}><CalendarPlus className="h-4 w-4 mr-1.5" /> New Leave Request</Button>}
+              action={<Button size="sm" variant="outline" onClick={() => openPage(["leave", "new"])}><CalendarPlus className="h-4 w-4 mr-1.5" /> New Leave Request</Button>}
             />
           ) : (
             <DataTable
@@ -608,159 +512,6 @@ export function HrModule() {
           )}
         </TabsContent>
       </Tabs>
-
-      {/* ── Mark attendance dialog ── */}
-      <Dialog open={markOpen} onOpenChange={setMarkOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Mark Attendance</DialogTitle>
-            <DialogDescription>Recording is idempotent — marking the same employee and day again updates the record.</DialogDescription>
-          </DialogHeader>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 py-2">
-            <div className="space-y-1.5 sm:col-span-2">
-              <Label>Employee *</Label>
-              <Select value={markForm.employeeId || undefined} onValueChange={(v) => setMarkForm((f) => ({ ...f, employeeId: v }))}>
-                <SelectTrigger aria-label="Employee"><SelectValue placeholder={employeeOptions.length === 0 ? "Employee list unavailable" : "Select employee"} /></SelectTrigger>
-                <SelectContent>
-                  {employeeOptions.map((o) => (
-                    <SelectItem key={o.id} value={o.id}>{o.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="mark-date">Date</Label>
-              <Input id="mark-date" type="date" value={markForm.date} onChange={(e) => setMarkForm((f) => ({ ...f, date: e.target.value }))} />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Status</Label>
-              <Select value={markForm.status} onValueChange={(v) => setMarkForm((f) => ({ ...f, status: v }))}>
-                <SelectTrigger aria-label="Attendance status"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {ATTENDANCE_STATUSES.map((s) => (
-                    <SelectItem key={s} value={s}>{humanize(s)}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="mark-in">Check In</Label>
-              <Input
-                id="mark-in" type="time" value={markForm.checkIn}
-                onChange={(e) => setMarkForm((f) => ({ ...f, checkIn: e.target.value }))}
-                disabled={!["PRESENT", "HALF_DAY"].includes(markForm.status)}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="mark-out">Check Out</Label>
-              <Input
-                id="mark-out" type="time" value={markForm.checkOut}
-                onChange={(e) => setMarkForm((f) => ({ ...f, checkOut: e.target.value }))}
-                disabled={!["PRESENT", "HALF_DAY"].includes(markForm.status)}
-              />
-            </div>
-            <div className="space-y-1.5 sm:col-span-2">
-              <Label htmlFor="mark-notes">Notes</Label>
-              <Textarea id="mark-notes" rows={2} value={markForm.notes} onChange={(e) => setMarkForm((f) => ({ ...f, notes: e.target.value }))} placeholder="Optional remarks…" />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setMarkOpen(false)} disabled={markSaving}>Cancel</Button>
-            <Button onClick={() => void saveMark()} disabled={markSaving}>
-              {markSaving ? "Saving…" : "Save Attendance"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* ── New leave request dialog ── */}
-      <Dialog open={leaveOpen} onOpenChange={setLeaveOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>New Leave Request</DialogTitle>
-            <DialogDescription>
-              {canFileForOthers
-                ? "File on behalf of any employee, or leave the employee blank to file for yourself."
-                : "The request will be filed against your own employee record and sent for approval."}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 py-2">
-            {canFileForOthers ? (
-              <div className="space-y-1.5 sm:col-span-2">
-                <Label>Employee</Label>
-                <Select
-                  value={leaveForm.employeeId || "SELF"}
-                  onValueChange={(v) => setLeaveForm((f) => ({ ...f, employeeId: v === "SELF" ? "" : v }))}
-                >
-                  <SelectTrigger aria-label="Employee"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="SELF">Myself</SelectItem>
-                    {employeeOptions.map((o) => (
-                      <SelectItem key={o.id} value={o.id}>{o.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            ) : null}
-            <div className="space-y-1.5">
-              <Label>Type</Label>
-              <Select value={leaveForm.type} onValueChange={(v) => setLeaveForm((f) => ({ ...f, type: v }))}>
-                <SelectTrigger aria-label="Leave type"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {LEAVE_TYPES.map((t) => (
-                    <SelectItem key={t} value={t}>{humanize(t)}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="leave-start">Start Date</Label>
-              <Input id="leave-start" type="date" value={leaveForm.startDate} onChange={(e) => setLeaveForm((f) => ({ ...f, startDate: e.target.value }))} />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="leave-end">End Date</Label>
-              <Input id="leave-end" type="date" value={leaveForm.endDate} onChange={(e) => setLeaveForm((f) => ({ ...f, endDate: e.target.value }))} />
-              <p className="text-xs text-muted-foreground">Days are computed automatically (inclusive).</p>
-            </div>
-            <div className="space-y-1.5 sm:col-span-2">
-              <Label htmlFor="leave-reason">Reason</Label>
-              <Textarea id="leave-reason" rows={3} value={leaveForm.reason} onChange={(e) => setLeaveForm((f) => ({ ...f, reason: e.target.value }))} placeholder="Brief reason for the request…" />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setLeaveOpen(false)} disabled={leaveSaving}>Cancel</Button>
-            <Button onClick={() => void saveLeave()} disabled={leaveSaving}>
-              {leaveSaving ? "Submitting…" : "Submit Request"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* ── New department dialog ── */}
-      <Dialog open={deptOpen} onOpenChange={setDeptOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>New Department</DialogTitle>
-            <DialogDescription>Department names must be unique.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="dept-name">Name *</Label>
-              <Input id="dept-name" value={deptForm.name} onChange={(e) => setDeptForm((f) => ({ ...f, name: e.target.value }))} placeholder="Field Operations" />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="dept-desc">Description</Label>
-              <Textarea id="dept-desc" rows={2} value={deptForm.description} onChange={(e) => setDeptForm((f) => ({ ...f, description: e.target.value }))} placeholder="What this team does…" />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeptOpen(false)} disabled={deptSaving}>Cancel</Button>
-            <Button onClick={() => void saveDepartment()} disabled={deptSaving}>
-              {deptSaving ? "Creating…" : "Create Department"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

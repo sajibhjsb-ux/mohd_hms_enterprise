@@ -1,38 +1,46 @@
 "use client";
 
+// MOHD.HMS ENTERPRISE — UI store.
+// activeModule: which module is mounted. pages: per-module "page route" as raw
+// hash segments ([] = list view, ["new"], [id], [id, "edit"], …) so every
+// business form/detail lives on its own dedicated full page (no popup CRUD).
+// The hash router (lib/hms/router.ts) keeps pages in sync with location.hash
+// so browser Back/Forward and direct URLs work.
+
 import { create } from "zustand";
+
+/** Empty segment list = the module's list page. */
+export const LIST_SEG: string[] = [];
 
 type UiState = {
   activeModule: string;
-  deepLink: { type: string; token: string } | null;
-  consumeDeepLink: () => { type: string; token: string } | null;
   setActiveModule: (m: string) => void;
+  /** Current page per module as hash segments, e.g. complaints → ["CPT-1","edit"]. */
+  pages: Record<string, string[]>;
+  pageOf: (module: string) => string[];
+  setPage: (module: string, seg: string[]) => void;
+  /** True while ANY dedicated form page has unsaved changes — the shell guards navigation. */
+  pageDirty: boolean;
+  setPageDirty: (d: boolean) => void;
+  /** QR deep link ({ type: module, token }) consumed by the target module. */
+  deepLink: { type: string; token: string } | null;
   setDeepLink: (l: { type: string; token: string } | null) => void;
-  /** Complaints module sub-view: "list" (default) or "new" (dedicated entry page). */
-  complaintsView: "list" | "new";
-  setComplaintsView: (v: "list" | "new") => void;
-  /** When set, the complaints list opens the detail dialog for this complaint id (e.g. right after creation). */
-  complaintsFocusId: string | null;
-  setComplaintsFocusId: (id: string | null) => void;
-  /** True while the complaint entry form has unsaved changes — the shell guards module switches. */
-  complaintFormDirty: boolean;
-  setComplaintFormDirty: (d: boolean) => void;
+  consumeDeepLink: () => { type: string; token: string } | null;
 };
 
 export const useUi = create<UiState>((set, get) => ({
   activeModule: "dashboard",
+  setActiveModule: (m) => set({ activeModule: m }),
+  pages: {},
+  pageOf: (module) => get().pages[module] ?? LIST_SEG,
+  setPage: (module, seg) => set((s) => ({ pages: { ...s.pages, [module]: seg } })),
+  pageDirty: false,
+  setPageDirty: (d) => set({ pageDirty: d }),
   deepLink: null,
+  setDeepLink: (l) => set({ deepLink: l }),
   consumeDeepLink: () => {
     const l = get().deepLink;
     if (l) set({ deepLink: null });
     return l;
   },
-  setActiveModule: (m) => set({ activeModule: m }),
-  setDeepLink: (l) => set({ deepLink: l }),
-  complaintsView: "list",
-  setComplaintsView: (v) => set({ complaintsView: v }),
-  complaintsFocusId: null,
-  setComplaintsFocusId: (id) => set({ complaintsFocusId: id }),
-  complaintFormDirty: false,
-  setComplaintFormDirty: (d) => set({ complaintFormDirty: d }),
 }));

@@ -1,56 +1,57 @@
 "use client";
 
 // MOHD.HMS ENTERPRISE — Technicians module (workforce roster).
-// Cards with skills chips + live workload counts, inline duty status change
-// and an hourly-rate / skills editor. Data: /api/v1/technicians (users.read).
+// Cards with skills chips + live workload counts. Data: /api/v1/technicians (users.read).
+//
+// NAVIGATION ARCHITECTURE: the rate/skills editor is a DEDICATED PAGE routed
+// by the hash router (ui-store pages["technicians"]) — no popup CRUD:
+//   []                  → this list page (card grid)
+//   [id]                → detail view → falls back to the edit page
+//                         (technicians have no separate detail page)
+//   [id, "edit"]        → TechnicianEditPage (skills, specialty, hourly rate)
+// The per-card duty-status Select stays INLINE on purpose: it is a quick
+// action (PATCH /api/v1/technicians/{id} { status }), not a form.
 
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PageHeader, StatCard, StatusBadge, LoadingState, ErrorState, EmptyState } from "@/components/hms/shared/ui-bits";
 import { api, ClientApiError, qs } from "@/lib/hms/api-client";
 import { useSession } from "@/components/hms/session";
+import { useUi } from "@/lib/hms/ui-store";
+import { navigateTo, pageFromSeg } from "@/lib/hms/router";
 import { useToast } from "@/hooks/use-toast";
-import type { Permission } from "@/lib/hms/constants";
-import { money, fromCents, toCents } from "@/lib/hms/format";
+import { hasPerm } from "@/components/hms/session";
+import { PERMISSIONS } from "@/lib/hms/constants";
+import { money } from "@/lib/hms/format";
 import { CircleCheck, ClipboardList, HardHat, Hourglass, Pencil, RefreshCw } from "lucide-react";
+import { TechnicianEditPage, parseSkills, type TechRow } from "./edit-page";
 
-type TechRow = {
-  id: string;
-  employeeNo: string;
-  skills: string;
-  specialty: string;
-  hourlyRateCents: number;
-  status: string; // AVAILABLE | ON_JOB | OFF_DUTY
-  user: { id: string; name: string; email: string; phone: string | null; status: string };
-  openWorkOrders: number;
-  completedWorkOrders: number;
-  openComplaints: number;
-  openPmTasks: number;
-};
+// ── Module router ──
+
+export function TechniciansModule() {
+  const seg = useUi((s) => s.pages["technicians"]) ?? [];
+  const page = pageFromSeg(seg);
+
+  // "detail" view falls back to the edit page — technicians have no separate detail page.
+  if ((page.view === "edit" || page.view === "detail") && page.id) return <TechnicianEditPage id={page.id} />;
+  return <TechniciansList />;
+}
+
+// ── List page (card grid) ──
 
 const TECH_STATUSES = ["AVAILABLE", "ON_JOB", "OFF_DUTY"] as const;
 
-export function TechniciansModule() {
+function TechniciansList() {
   const { user } = useSession();
   const { toast } = useToast();
-  const can = (p: Permission) => !!user?.permissions.includes(p);
+  const canUpdate = hasPerm(user, PERMISSIONS.users_update);
 
   const [rows, setRows] = useState<TechRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-
-  // Rate / skills editor
-  const [editRow, setEditRow] = useState<TechRow | null>(null);
-  const [editSkills, setEditSkills] = useState("");
-  const [editSpecialty, setEditSpecialty] = useState("");
-  const [editRate, setEditRate] = useState("");
-  const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -67,10 +68,7 @@ export function TechniciansModule() {
 
   useEffect(() => { load(); }, [load]);
 
-  function parseSkills(s: string): string[] {
-    return s.split(",").map((x) => x.trim()).filter(Boolean).slice(0, 8);
-  }
-
+  // Quick action, kept inline: PATCH { status } only.
   async function changeStatus(t: TechRow, status: string) {
     setBusyId(t.id);
     try {
@@ -85,36 +83,7 @@ export function TechniciansModule() {
     }
   }
 
-  const openEdit = (t: TechRow) => {
-    setEditRow(t);
-    setEditSkills(t.skills);
-    setEditSpecialty(t.specialty);
-    setEditRate(fromCents(t.hourlyRateCents));
-  };
-
-  async function submitEdit() {
-    if (!editRow) return;
-    const rateNum = parseFloat(editRate);
-    if (editRate !== "" && (isNaN(rateNum) || rateNum < 0)) {
-      toast({ title: "Invalid hourly rate", description: "Enter a number, e.g. 55.25", variant: "destructive" });
-      return;
-    }
-    setSaving(true);
-    try {
-      await api.patch(`/api/v1/technicians/${editRow.id}`, {
-        skills: editSkills,
-        specialty: editSpecialty || undefined,
-        hourlyRate: editRate === "" ? 0 : toCents(editRate) / 100, // decimal ringgit
-      });
-      toast({ title: "Technician updated", description: `${editRow.user.name} saved.` });
-      setEditRow(null);
-      load();
-    } catch (e) {
-      toast({ title: "Could not update technician", description: e instanceof ClientApiError ? e.message : undefined, variant: "destructive" });
-    } finally {
-      setSaving(false);
-    }
-  }
+  const openEdit = useCallback((t: TechRow) => navigateTo("technicians", [t.id, "edit"]), []);
 
   const available = rows.filter((r) => r.status === "AVAILABLE").length;
   const onJob = rows.filter((r) => r.status === "ON_JOB").length;
@@ -154,7 +123,18 @@ export function TechniciansModule() {
             <div key={t.id} className="rounded-xl border bg-card shadow-sm p-4 flex flex-col gap-3">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <div className="font-medium truncate">{t.user.name}</div>
+                  {canUpdate ? (
+                    <button
+                      type="button"
+                      onClick={() => openEdit(t)}
+                      className="font-medium truncate max-w-full text-left hover:underline underline-offset-2 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      aria-label={`Edit skills and rate for ${t.user.name}`}
+                    >
+                      {t.user.name}
+                    </button>
+                  ) : (
+                    <div className="font-medium truncate">{t.user.name}</div>
+                  )}
                   <div className="text-xs text-muted-foreground truncate">
                     {t.employeeNo} · {t.specialty !== "GENERAL" ? humanizeSpecialty(t.specialty) : "Generalist"}
                   </div>
@@ -198,7 +178,7 @@ export function TechniciansModule() {
                   <span className="font-medium">{t.hourlyRateCents > 0 ? `${money(t.hourlyRateCents)}/h` : "—"}</span>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  {can("users.update") ? (
+                  {canUpdate ? (
                     <>
                       <Select value={t.status} onValueChange={(v) => changeStatus(t, v)} disabled={busyId === t.id}>
                         <SelectTrigger className="h-8 w-[120px]" aria-label={`Duty status for ${t.user.name}`}>
@@ -219,42 +199,6 @@ export function TechniciansModule() {
           ))}
         </div>
       )}
-
-      {/* Rate / skills editor */}
-      <Dialog open={!!editRow} onOpenChange={(o) => !o && setEditRow(null)}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Edit {editRow?.user.name}</DialogTitle>
-            <DialogDescription>{editRow?.employeeNo} · skills, specialty and billing rate.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label htmlFor="t-skills">Skills (comma separated)</Label>
-              <Input id="t-skills" value={editSkills} onChange={(e) => setEditSkills(e.target.value)} placeholder="e.g. HVAC, ELECTRICAL, PLUMBING" />
-              {editSkills ? (
-                <div className="flex flex-wrap gap-1 mt-2">
-                  {parseSkills(editSkills).map((s) => <Badge key={s} variant="secondary" className="text-[11px] font-normal">{s}</Badge>)}
-                </div>
-              ) : null}
-            </div>
-            <div>
-              <Label htmlFor="t-specialty">Specialty</Label>
-              <Input id="t-specialty" value={editSpecialty} onChange={(e) => setEditSpecialty(e.target.value)} placeholder="e.g. ELECTRICAL" />
-            </div>
-            <div>
-              <Label htmlFor="t-rate">Hourly rate (MYR)</Label>
-              <Input id="t-rate" inputMode="decimal" value={editRate} onChange={(e) => setEditRate(e.target.value)} placeholder="e.g. 55.25" />
-              {editRate !== "" && !isNaN(parseFloat(editRate)) ? (
-                <p className="text-xs text-muted-foreground mt-1">Stored as {toCents(editRate).toLocaleString()} cents/hour</p>
-              ) : null}
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditRow(null)}>Cancel</Button>
-            <Button onClick={submitEdit} disabled={saving}>{saving ? "Saving…" : "Save changes"}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

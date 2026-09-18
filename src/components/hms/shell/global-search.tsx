@@ -21,7 +21,7 @@ type ComplaintHit = { id: string; code: string; title: string; status: string };
 type CustomerHit = { id: string; companyName?: string; code?: string; contactPerson?: string };
 type EquipmentHit = { id: string; name?: string; assetTag?: string; customer?: { companyName?: string } | null };
 
-export type SearchNavigateTarget = { module: string; complaintId?: string };
+export type SearchNavigateTarget = { module: string; id?: string };
 
 type Props = {
   open: boolean;
@@ -158,7 +158,7 @@ export function GlobalSearch({ open, onOpenChange, onNavigate }: Props) {
         {complaints.length > 0 ? (
           <CommandGroup heading="Complaints">
             {complaints.map((c) => (
-              <CommandItem key={c.id} value={`cpt-${c.code}-${c.title}`} onSelect={() => go({ module: "complaints", complaintId: c.id })}>
+              <CommandItem key={c.id} value={`cpt-${c.code}-${c.title}`} onSelect={() => go({ module: "complaints", id: c.id })}>
                 <AlertTriangle className="h-4 w-4 text-amber-500" aria-hidden />
                 <span className="font-mono text-xs text-muted-foreground">{c.code}</span>
                 <span className="truncate max-w-[16rem]">{c.title}</span>
@@ -170,7 +170,7 @@ export function GlobalSearch({ open, onOpenChange, onNavigate }: Props) {
         {customers.length > 0 ? (
           <CommandGroup heading="Customers">
             {customers.map((c) => (
-              <CommandItem key={c.id} value={`cus-${c.companyName ?? c.id}`} onSelect={() => go({ module: "customers" })}>
+              <CommandItem key={c.id} value={`cus-${c.companyName ?? c.id}`} onSelect={() => go({ module: "customers", id: c.id })}>
                 <Building2 className="h-4 w-4 text-teal-600" aria-hidden />
                 <span className="truncate">{c.companyName ?? c.id}</span>
                 {c.code ? <span className="ml-auto text-xs text-muted-foreground">#{c.code}</span> : null}
@@ -182,7 +182,7 @@ export function GlobalSearch({ open, onOpenChange, onNavigate }: Props) {
         {equipment.length > 0 ? (
           <CommandGroup heading="Equipment">
             {equipment.map((e) => (
-              <CommandItem key={e.id} value={`eq-${e.assetTag ?? e.id}-${e.name ?? ""}`} onSelect={() => go({ module: "equipment" })}>
+              <CommandItem key={e.id} value={`eq-${e.assetTag ?? e.id}-${e.name ?? ""}`} onSelect={() => go({ module: "equipment", id: e.id })}>
                 <QrCode className="h-4 w-4 text-primary" aria-hidden />
                 <span className="truncate">{e.name ?? e.id}</span>
                 <span className="ml-auto font-mono text-xs text-muted-foreground">{e.assetTag}</span>

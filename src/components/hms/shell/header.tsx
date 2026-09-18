@@ -15,6 +15,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { ClientApiError, api } from "@/lib/hms/api-client";
 import { hasPerm, useSession } from "@/components/hms/session";
 import { useUi } from "@/lib/hms/ui-store";
+import { navigateTo, RESOURCE_ROUTES } from "@/lib/hms/router";
 import { humanize, PERMISSIONS } from "@/lib/hms/constants";
 import { initials } from "@/lib/hms/format";
 import { cn } from "@/lib/utils";
@@ -138,7 +139,6 @@ export function TopHeader({ onOpenSearch, onOpenQr, onSelectModule, onOpenChange
               onOpen={loadNotifs}
               markAllRead={markAllRead}
               markRead={markRead}
-              onSelectModule={onSelectModule}
             />
 
             <Tooltip>
@@ -179,13 +179,12 @@ function SearchShortcutHint() {
   return <span aria-hidden>{isMac ? "⌘K" : "Ctrl K"}</span>;
 }
 
-function NotifMenu({ notifs, unread, onOpen, markAllRead, markRead, onSelectModule }: {
+function NotifMenu({ notifs, unread, onOpen, markAllRead, markRead }: {
   notifs: NotifItem[];
   unread: number;
   onOpen: () => void;
   markAllRead: () => void;
   markRead: (id: string) => void;
-  onSelectModule: (key: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -216,11 +215,13 @@ function NotifMenu({ notifs, unread, onOpen, markAllRead, markRead, onSelectModu
                 key={n.id}
                 onClick={() => {
                   if (!n.readAt) markRead(n.id);
-                  if (n.resourceType === "COMPLAINT" && n.resourceId) {
-                    setOpen(false);
-                    useUi.getState().setComplaintsView("list");
-                    useUi.getState().setComplaintsFocusId(n.resourceId);
-                    onSelectModule("complaints");
+                  // Navigate to the resource's dedicated detail page when one exists.
+                  if (n.resourceId) {
+                    const route = RESOURCE_ROUTES[n.resourceType];
+                    if (route) {
+                      setOpen(false);
+                      navigateTo(route.module, route.seg(n.resourceId));
+                    }
                   }
                 }}
                 className={cn("w-full text-left px-3 py-2.5 border-b last:border-0 flex gap-2.5 hover:bg-accent/60", !n.readAt && "bg-primary/5")}

@@ -1,33 +1,36 @@
 "use client";
 
-// MOHD.HMS ENTERPRISE — Complaints module.
+// MOHD.HMS ENTERPRISE — Complaints module (list page).
 // Customer portal + staff workflow: NEW → ASSIGNED → IN_PROGRESS → COMPLETED →
 // CONFIRMED → CLOSED (+ CANCELLED). Role-gated actions, live status timeline.
-// Complaint creation uses the dedicated full-page entry (complaintsView = "new").
+//
+// NAVIGATION ARCHITECTURE: complaint create / detail / assign are DEDICATED
+// PAGES routed by the hash router (ui-store pages["complaints"]):
+//   []                  → this list page
+//   ["new"]             → ComplaintNewPage
+//   [id]                → ComplaintDetailPage
+//   [id, "assign"]      → ComplaintAssignPage
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, qs } from "@/lib/hms/api-client";
 import { hasPerm, useSession } from "@/components/hms/session";
 import { useUi } from "@/lib/hms/ui-store";
+import { navigateTo, pageFromSeg } from "@/lib/hms/router";
 import { useToast } from "@/hooks/use-toast";
 import { DataTable, type Column } from "@/components/hms/shared/data-table";
 import {
   PageHeader, StatCard, StatusBadge, PriorityBadge, LoadingState, EmptyState, ErrorState,
 } from "@/components/hms/shared/ui-bits";
 import { PERMISSIONS, PRIORITIES, humanize } from "@/lib/hms/constants";
-import { fmtDate, fmtDateTime } from "@/lib/hms/format";
+import { fmtDate } from "@/lib/hms/format";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
-  AlertTriangle, CheckCircle2, ClipboardCheck, Clock, Hammer, ListChecks, Plus, Send,
+  AlertTriangle, CheckCircle2, ClipboardCheck, Clock, Hammer, ListChecks, Plus,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ComplaintNewPage } from "./new-page";
+import { ComplaintDetailPage } from "./detail-page";
+import { ComplaintAssignPage } from "./assign-page";
 
 // ── Types ──
 
@@ -45,30 +48,6 @@ type ComplaintRow = {
   assignedTechnician?: { id: string; user?: { id: string; name: string } | null } | null;
 };
 
-type HistoryRow = {
-  id: string;
-  fromStatus: string;
-  toStatus: string;
-  note: string;
-  createdAt: string;
-  changedByName?: string | null;
-};
-
-type ComplaintDetail = ComplaintRow & {
-  resolutionNotes: string;
-  customerFeedback: string;
-  assignedAt: string | null;
-  acceptedAt: string | null;
-  startedAt: string | null;
-  completedAt: string | null;
-  confirmedAt: string | null;
-  closedAt: string | null;
-  statusHistory: HistoryRow[];
-  workOrders: { id: string; code: string; title: string; status: string; technician?: { user?: { name: string } | null } | null }[];
-};
-
-type TechOpt = { id: string; employeeNo?: string; specialty?: string; user?: { name?: string } | null };
-
 const OPEN_STATUSES = ["NEW", "ASSIGNED"];
 const PROGRESS_STATUSES = ["IN_PROGRESS"];
 const RESOLVED_STATUSES = ["COMPLETED", "CONFIRMED"];
@@ -82,18 +61,27 @@ const STATUS_TABS: { key: string; label: string; match: (s: string) => boolean }
   { key: "CANCELLED", label: "Cancelled", match: (s) => s === "CANCELLED" },
 ];
 
-// ── Module ──
+// ── Module router ──
 
 export function ComplaintsModule() {
-  const { user } = useSession();
-  const { toast } = useToast();
-  const { complaintsView, setComplaintsView, complaintsFocusId, setComplaintsFocusId } = useUi();
+  const seg = useUi((s) => s.pages["complaints"]) ?? [];
+  const page = pageFromSeg(seg);
 
+  if (page.view === "new") return <ComplaintNewPage />;
+  if (page.view === "assign" && page.id) return <ComplaintAssignPage id={page.id} />;
+  if (page.view === "detail" && page.id) return <ComplaintDetailPage id={page.id} />;
+  return <ComplaintsList />;
+}
+
+// ── List page ──
+
+function ComplaintsList() {
+  const { user } = useSession();
   const canCreate = hasPerm(user, PERMISSIONS.complaints_create);
-  const canAssign = hasPerm(user, PERMISSIONS.complaints_assign);
-  const canUpdate = hasPerm(user, PERMISSIONS.complaints_update);
-  const canClose = hasPerm(user, PERMISSIONS.complaints_close);
   const isStaffUser = !!user && user.role !== "CUSTOMER";
+
+  // All page navigation flows through the hash router (URL + Back/Forward).
+  const openPage = useCallback((seg: string[]) => navigateTo("complaints", seg), []);
 
   // ── List state ──
   const [rows, setRows] = useState<ComplaintRow[] | null>(null);
@@ -116,67 +104,6 @@ export function ComplaintsModule() {
   }, []);
 
   useEffect(() => { load(); }, [load, reloadKey]);
-
-  // ── Detail state ──
-  const [detail, setDetail] = useState<ComplaintDetail | null>(null);
-  const [detailOpen, setDetailOpen] = useState(false);
-  const [detailLoading, setDetailLoading] = useState(false);
-  const [note, setNote] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  const [techs, setTechs] = useState<TechOpt[]>([]);
-  const [assignTo, setAssignTo] = useState<string>("");
-
-  const openDetail = useCallback(async (id: string) => {
-    setDetailOpen(true);
-    setDetailLoading(true);
-    setDetail(null);
-    setNote("");
-    setAssignTo("");
-    try {
-      const res = await api.get<ComplaintDetail>(`/api/v1/complaints/${id}`);
-      setDetail(res.data);
-    } catch (e) {
-      toast({ title: "Could not load complaint", description: e instanceof Error ? e.message : undefined, variant: "destructive" });
-      setDetailOpen(false);
-    } finally {
-      setDetailLoading(false);
-    }
-  }, [toast]);
-
-  // Technician options for the assign control
-  useEffect(() => {
-    if (!detailOpen || !canAssign) return;
-    let alive = true;
-    api.get<TechOpt[]>(`/api/v1/technicians${qs({ pageSize: 200 })}`)
-      .then((r) => { if (alive) setTechs(Array.isArray(r.data) ? r.data : []); })
-      .catch(() => { if (alive) setTechs([]); });
-    return () => { alive = false; };
-  }, [detailOpen, canAssign]);
-
-  // After the dedicated entry page creates a complaint, open its details here.
-  useEffect(() => {
-    if (!complaintsFocusId) return;
-    const id = complaintsFocusId;
-    setComplaintsFocusId(null);
-    openDetail(id);
-  }, [complaintsFocusId, setComplaintsFocusId, openDetail]);
-
-  const runTransition = useCallback(async (action: string, extra?: Record<string, unknown>) => {
-    if (!detail) return;
-    setBusy(true);
-    try {
-      await api.post<ComplaintDetail>(`/api/v1/complaints/${detail.id}/transition`, { action, ...extra });
-      toast({ title: "Success", description: `Complaint ${detail.code} — ${humanize(action)} done.` });
-      setDetailOpen(false);
-      setDetail(null);
-      setReloadKey((k) => k + 1);
-    } catch (e) {
-      toast({ title: "Action failed", description: e instanceof Error ? e.message : "Please try again.", variant: "destructive" });
-    } finally {
-      setBusy(false);
-    }
-  }, [detail, toast]);
 
   // ── Derived views ──
   const stats = useMemo(() => {
@@ -214,23 +141,13 @@ export function ComplaintsModule() {
     { key: "createdAt", header: "Created", value: (r) => r.createdAt, render: (r) => fmtDate(r.createdAt), hideOnMobile: true },
   ];
 
-  // ── Detail action visibility ──
-  const isAssignedTech = !!detail && !!user && detail.assignedTechnician?.user?.id === user.id;
-  const isPortalOwner = !!detail && !!user && user.role === "CUSTOMER" && user.customerId === detail.customerId;
-  const status = detail?.status;
-
-  // Dedicated complaint entry page (replaces the old create modal).
-  if (complaintsView === "new") {
-    return <ComplaintNewPage />;
-  }
-
   return (
     <div>
       <PageHeader
         title="Complaints"
         subtitle={isStaffUser ? "Track, assign and resolve customer complaints end-to-end." : "Your complaints and their live progress."}
         actions={canCreate ? (
-          <Button onClick={() => setComplaintsView("new")}>
+          <Button onClick={() => openPage(["new"])}>
             <Plus className="h-4 w-4 mr-1.5" /> New Complaint
           </Button>
         ) : null}
@@ -270,14 +187,14 @@ export function ComplaintsModule() {
         <EmptyState
           title="No complaints in this view"
           hint={canCreate ? "Log a new complaint to get started — drafts are saved automatically while you type." : "Complaints will appear here as they are filed."}
-          action={canCreate ? <Button variant="outline" onClick={() => setComplaintsView("new")}><Plus className="h-4 w-4 mr-1.5" /> New Complaint</Button> : undefined}
+          action={canCreate ? <Button variant="outline" onClick={() => openPage(["new"])}><Plus className="h-4 w-4 mr-1.5" /> New Complaint</Button> : undefined}
         />
       ) : (
         <DataTable
           columns={columns}
           rows={visibleRows}
           rowKey={(r) => r.id}
-          onRowClick={(r) => openDetail(r.id)}
+          onRowClick={(r) => openPage([r.id])}
           searchPlaceholder="Search code, title, description…"
           filters={[{
             key: "priority",
@@ -289,173 +206,6 @@ export function ComplaintsModule() {
           exportName="complaints"
         />
       )}
-
-      {/* ── Detail dialog ── */}
-      <Dialog open={detailOpen} onOpenChange={(open) => { if (!open) { setDetailOpen(false); setDetail(null); } }}>
-        <DialogContent className="max-w-3xl max-h-[88vh] overflow-y-auto hms-scroll">
-          <DialogTitle className="sr-only">Details</DialogTitle>
-          {detailLoading || !detail ? (
-            <LoadingState label="Loading complaint…" />
-          ) : (
-            <>
-              <DialogHeader>
-                <DialogTitle className="flex flex-wrap items-center gap-2">
-                  <span className="font-mono text-sm text-muted-foreground">{detail.code}</span>
-                  <span className="text-base">{detail.title}</span>
-                  <StatusBadge status={detail.status} />
-                  <PriorityBadge priority={detail.priority} />
-                </DialogTitle>
-                <DialogDescription>
-                  {detail.customer?.companyName ?? "—"}
-                  {detail.equipment ? ` · ${detail.equipment.name} (${detail.equipment.assetTag})` : ""}
-                  {` · Logged ${fmtDateTime(detail.createdAt)}`}
-                </DialogDescription>
-              </DialogHeader>
-
-              <div className="grid gap-4 sm:grid-cols-2 text-sm">
-                <div className="space-y-1">
-                  <p className="text-muted-foreground text-xs uppercase tracking-wide">Technician</p>
-                  <p>{detail.assignedTechnician?.user?.name ?? "Unassigned"}</p>
-                </div>
-                <div className="space-y-1">
-                  <p className="text-muted-foreground text-xs uppercase tracking-wide">Reported</p>
-                  <p>{fmtDateTime(detail.createdAt)}</p>
-                </div>
-              </div>
-
-              <div className="text-sm space-y-1">
-                <p className="text-muted-foreground text-xs uppercase tracking-wide">Description</p>
-                <p className="whitespace-pre-wrap rounded-lg bg-muted/40 p-3">{detail.description}</p>
-              </div>
-
-              {detail.resolutionNotes ? (
-                <div className="text-sm space-y-1">
-                  <p className="text-muted-foreground text-xs uppercase tracking-wide">Resolution notes</p>
-                  <p className="whitespace-pre-wrap rounded-lg bg-muted/40 p-3">{detail.resolutionNotes}</p>
-                </div>
-              ) : null}
-              {detail.customerFeedback ? (
-                <div className="text-sm space-y-1">
-                  <p className="text-muted-foreground text-xs uppercase tracking-wide">Customer feedback</p>
-                  <p className="whitespace-pre-wrap rounded-lg bg-muted/40 p-3">{detail.customerFeedback}</p>
-                </div>
-              ) : null}
-
-              {/* Timeline */}
-              <div className="text-sm">
-                <p className="text-muted-foreground text-xs uppercase tracking-wide mb-2">Status timeline</p>
-                {detail.statusHistory.length === 0 ? (
-                  <p className="text-muted-foreground">No history recorded.</p>
-                ) : (
-                  <ol className="relative border-l ml-2 space-y-3">
-                    {detail.statusHistory.map((h) => (
-                      <li key={h.id} className="ml-4">
-                        <span className="absolute -left-[5px] mt-1.5 h-2.5 w-2.5 rounded-full bg-primary" aria-hidden />
-                        <div className="flex flex-wrap items-center gap-2">
-                          <StatusBadge status={h.toStatus} />
-                          <span className="text-xs text-muted-foreground">{fmtDateTime(h.createdAt)}</span>
-                          {h.changedByName ? <Badge variant="outline" className="text-[10px]">{h.changedByName}</Badge> : null}
-                        </div>
-                        {h.note ? <p className="text-xs text-muted-foreground mt-0.5">{h.note}</p> : null}
-                      </li>
-                    ))}
-                  </ol>
-                )}
-              </div>
-
-              {detail.workOrders.length > 0 ? (
-                <div className="text-sm">
-                  <p className="text-muted-foreground text-xs uppercase tracking-wide mb-2">Linked work orders</p>
-                  <div className="flex flex-wrap gap-2">
-                    {detail.workOrders.map((w) => (
-                      <span key={w.id} className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs">
-                        <span className="font-mono">{w.code}</span>
-                        <StatusBadge status={w.status} />
-                        {w.technician?.user?.name ? <span className="text-muted-foreground">{w.technician.user.name}</span> : null}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-
-              <Separator />
-
-              {/* Actions — contextual to role and status */}
-              <div className="space-y-3">
-                {status === "NEW" && canAssign ? (
-                  <div className="rounded-lg border p-3 space-y-2">
-                    <Label className="text-xs uppercase tracking-wide text-muted-foreground">Assign technician</Label>
-                    <div className="flex flex-col sm:flex-row gap-2">
-                      <Select value={assignTo} onValueChange={setAssignTo}>
-                        <SelectTrigger className="flex-1" aria-label="Technician">
-                          <SelectValue placeholder={techs.length ? "Select technician…" : "No technicians available"} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {techs.map((t) => (
-                            <SelectItem key={t.id} value={t.id}>
-                              {t.user?.name ?? t.employeeNo ?? t.id}{t.specialty ? ` — ${humanize(t.specialty)}` : ""}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <Button disabled={!assignTo || busy} onClick={() => runTransition("assign", { technicianId: assignTo })}>
-                        <Send className="h-4 w-4 mr-1.5" /> Assign
-                      </Button>
-                    </div>
-                  </div>
-                ) : null}
-
-                {status === "ASSIGNED" && isAssignedTech ? (
-                  <div className="rounded-lg border p-3">
-                    <p className="text-sm mb-2">This complaint is assigned to you. Accept to start work?</p>
-                    <Button disabled={busy} onClick={() => runTransition("accept")}>
-                      <Hammer className="h-4 w-4 mr-1.5" /> Accept &amp; Start Work
-                    </Button>
-                  </div>
-                ) : null}
-
-                {status === "IN_PROGRESS" && (isAssignedTech || canUpdate) ? (
-                  <div className="rounded-lg border p-3 space-y-2">
-                    <Label htmlFor="complete-note" className="text-xs uppercase tracking-wide text-muted-foreground">Resolution notes</Label>
-                    <Textarea id="complete-note" value={note} onChange={(e) => setNote(e.target.value)} placeholder="What was done to resolve this complaint…" rows={3} />
-                    <Button disabled={busy} onClick={() => runTransition("complete", { note: note || undefined })}>
-                      <CheckCircle2 className="h-4 w-4 mr-1.5" /> Mark Completed
-                    </Button>
-                  </div>
-                ) : null}
-
-                {status === "COMPLETED" && (isPortalOwner || canUpdate) ? (
-                  <div className="rounded-lg border p-3 space-y-2">
-                    <Label htmlFor="confirm-note" className="text-xs uppercase tracking-wide text-muted-foreground">Confirm resolution{isPortalOwner ? "" : " (on behalf of customer)"}</Label>
-                    <Textarea id="confirm-note" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Optional feedback…" rows={2} />
-                    <Button disabled={busy} onClick={() => runTransition("confirm", { note: note || undefined })}>
-                      <CheckCircle2 className="h-4 w-4 mr-1.5" /> Confirm Resolved
-                    </Button>
-                  </div>
-                ) : null}
-
-                {status === "CONFIRMED" && canClose ? (
-                  <div className="rounded-lg border p-3">
-                    <p className="text-sm mb-2">Customer confirmed. Close this complaint to archive it?</p>
-                    <Button variant="outline" disabled={busy} onClick={() => runTransition("close")}>
-                      <ClipboardCheck className="h-4 w-4 mr-1.5" /> Close Complaint
-                    </Button>
-                  </div>
-                ) : null}
-
-                {status && ["NEW", "ASSIGNED", "IN_PROGRESS"].includes(status) && isStaffUser ? (
-                  <div className="rounded-lg border border-destructive/30 p-3">
-                    <p className="text-sm mb-2 text-muted-foreground">Cancelling stops the workflow permanently.</p>
-                    <Button variant="destructive" disabled={busy} onClick={() => { if (window.confirm(`Cancel complaint ${detail.code}? This cannot be undone.`)) runTransition("cancel"); }}>
-                      Cancel Complaint
-                    </Button>
-                  </div>
-                ) : null}
-              </div>
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

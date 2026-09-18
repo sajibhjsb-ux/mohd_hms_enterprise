@@ -1,0 +1,565 @@
+     1→"use client";
+     2→
+     3→// MOHD.HMS ENTERPRISE — Customers module.
+     4→// List + stat cards + create (draft-protected) / edit / detail / soft-delete.
+     5→// Portal account is provisioned inline during creation.
+     6→
+     7→import { useCallback, useEffect, useState } from "react";
+     8→import { Button } from "@/components/ui/button";
+     9→import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+    10→import {
+    11→  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+    12→  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+    13→} from "@/components/ui/alert-dialog";
+    14→import { Input } from "@/components/ui/input";
+    15→import { Label } from "@/components/ui/label";
+    16→import { Textarea } from "@/components/ui/textarea";
+    17→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+    18→import { DataTable, type Column } from "@/components/hms/shared/data-table";
+    19→import { PageHeader, StatCard, StatusBadge, LoadingState, ErrorState } from "@/components/hms/shared/ui-bits";
+    20→import { api, ClientApiError, qs } from "@/lib/hms/api-client";
+    21→import { useSession } from "@/components/hms/session";
+    22→import { useToast } from "@/hooks/use-toast";
+    23→import { useDraft } from "@/hooks/use-draft";
+    24→import type { Permission } from "@/lib/hms/constants";
+    25→import { fmtDate, money } from "@/lib/hms/format";
+    26→import { Building2, ClipboardList, KeyRound, Pencil, Plus, Receipt, RotateCcw, Trash2, Users, Wifi } from "lucide-react";
+    27→
+    28→type CustomerRow = {
+    29→  id: string; code: string; companyName: string; contactPerson: string;
+    30→  email: string; phone: string; address: string; city: string; status: string; notes: string;
+    31→  createdAt: string;
+    32→  portalUser: { id: string; email: string; name: string; status: string } | null;
+    33→  _count: { equipment: number; complaints: number; invoices: number };
+    34→};
+    35→
+    36→type CustomerDetail = CustomerRow & {
+    37→  _count: { equipment: number; complaints: number; invoices: number; workOrders: number; quotations: number; payments: number };
+    38→  complaints: { id: string; code: string; title: string; status: string; priority: string; createdAt: string }[];
+    39→  invoices: { id: string; code: string; totalCents: number; paidCents: number; status: string; invoiceDate: string }[];
+    40→};
+    41→
+    42→// The DRAFT never stores secrets (see use-draft contract) — portalPassword is
+    43→// kept in transient state outside the persisted draft.
+    44→type FormState = {
+    45→  companyName: string; contactPerson: string; email: string; phone: string;
+    46→  address: string; city: string; notes: string; portalEmail: string;
+    47→};
+    48→
+    49→const EMPTY_FORM: FormState = {
+    50→  companyName: "", contactPerson: "", email: "", phone: "",
+    51→  address: "", city: "", notes: "", portalEmail: "",
+    52→};
+    53→
+    54→type FieldErrors = Record<string, string>;
+    55→
+    56→function extractFieldErrors(e: unknown): FieldErrors {
+    57→  if (e instanceof ClientApiError && Array.isArray(e.details)) {
+    58→    const out: FieldErrors = {};
+    59→    for (const d of e.details as { path?: string; message?: string }[]) {
+    60→      if (d?.path && d?.message) out[d.path] = d.message;
+    61→    }
+    62→    return out;
+    63→  }
+    64→  return {};
+    65→}
+    66→
+    67→function FieldError({ msg }: { msg?: string }) {
+    68→  if (!msg) return null;
+    69→  return <p className="text-xs text-destructive mt-1">{msg}</p>;
+    70→}
+    71→
+    72→export function CustomersModule() {
+    73→  const { user } = useSession();
+    74→  const { toast } = useToast();
+    75→  const can = (p: Permission) => !!user?.permissions.includes(p);
+    76→
+    77→  const [rows, setRows] = useState<CustomerRow[]>([]);
+    78→  const [loading, setLoading] = useState(true);
+    79→  const [error, setError] = useState<string | null>(null);
+    80→
+    81→  // Create dialog + draft protection
+    82→  const [createOpen, setCreateOpen] = useState(false);
+    83→  const [saving, setSaving] = useState(false);
+    84→  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+    85→  const [portalPassword, setPortalPassword] = useState(""); // transient, never drafted
+    86→  const draft = useDraft<FormState>({ formKey: "customer.create", initial: EMPTY_FORM });
+    87→
+    88→  // Edit dialog
+    89→  const [editRow, setEditRow] = useState<CustomerRow | null>(null);
+    90→  const [editForm, setEditForm] = useState<FormState>(EMPTY_FORM);
+    91→
+    92→  // Detail dialog
+    93→  const [detailId, setDetailId] = useState<string | null>(null);
+    94→  const [detail, setDetail] = useState<CustomerDetail | null>(null);
+    95→  const [detailLoading, setDetailLoading] = useState(false);
+    96→
+    97→  // Delete confirm
+    98→  const [deleteRow, setDeleteRow] = useState<CustomerRow | null>(null);
+    99→  const [deleting, setDeleting] = useState(false);
+   100→
+   101→  const load = useCallback(async () => {
+   102→    setLoading(true);
+   103→    setError(null);
+   104→    try {
+   105→      const res = await api.get<CustomerRow[]>(`/api/v1/customers${qs({ pageSize: 200 })}`);
+   106→      setRows(res.data);
+   107→    } catch (e) {
+   108→      setError(e instanceof ClientApiError ? e.message : "Something went wrong. Please try again.");
+   109→    } finally {
+   110→      setLoading(false);
+   111→    }
+   112→  }, []);
+   113→
+   114→  useEffect(() => { load(); }, [load]);
+   115→
+   116→  const openCreate = () => {
+   117→    setFieldErrors({});
+   118→    setPortalPassword("");
+   119→    setCreateOpen(true);
+   120→  };
+   121→
+   122→  const openEdit = (row: CustomerRow) => {
+   123→    setFieldErrors({});
+   124→    setEditRow(row);
+   125→    setEditForm({
+   126→      companyName: row.companyName, contactPerson: row.contactPerson, email: row.email,
+   127→      phone: row.phone, address: row.address, city: row.city, notes: row.notes,
+   128→      portalEmail: "",
+   129→    });
+   130→  };
+   131→
+   132→  const openDetail = (row: CustomerRow) => {
+   133→    setDetailId(row.id);
+   134→    setDetail(null);
+   135→    setDetailLoading(true);
+   136→    api.get<CustomerDetail>(`/api/v1/customers/${row.id}`)
+   137→      .then((res) => setDetail(res.data))
+   138→      .catch((e) => toast({ title: "Could not load customer", description: e instanceof ClientApiError ? e.message : undefined, variant: "destructive" }))
+   139→      .finally(() => setDetailLoading(false));
+   140→  };
+   141→
+   142→  async function submitCreate() {
+   143→    setSaving(true);
+   144→    setFieldErrors({});
+   145→    try {
+   146→      const res = await api.post<CustomerRow>("/api/v1/customers", {
+   147→        companyName: draft.value.companyName,
+   148→        contactPerson: draft.value.contactPerson,
+   149→        email: draft.value.email,
+   150→        phone: draft.value.phone,
+   151→        address: draft.value.address || undefined,
+   152→        city: draft.value.city || undefined,
+   153→        notes: draft.value.notes || undefined,
+   154→        portalEmail: draft.value.portalEmail || undefined,
+   155→        portalPassword: portalPassword || undefined,
+   156→      });
+   157→      toast({
+   158→        title: "Customer created",
+   159→        description: `${res.data.companyName} (${res.data.code})${res.data.portalUser ? " — portal account ready" : ""}.`,
+   160→      });
+   161→      draft.reset(EMPTY_FORM);
+   162→      setPortalPassword("");
+   163→      setCreateOpen(false);
+   164→      load();
+   165→    } catch (e) {
+   166→      setFieldErrors(extractFieldErrors(e));
+   167→      toast({ title: "Could not create customer", description: e instanceof ClientApiError ? e.message : undefined, variant: "destructive" });
+   168→    } finally {
+   169→      setSaving(false);
+   170→    }
+   171→  }
+   172→
+   173→  async function submitEdit() {
+   174→    if (!editRow) return;
+   175→    setSaving(true);
+   176→    setFieldErrors({});
+   177→    try {
+   178→      await api.patch(`/api/v1/customers/${editRow.id}`, {
+   179→        companyName: editForm.companyName,
+   180→        contactPerson: editForm.contactPerson,
+   181→        email: editForm.email,
+   182→        phone: editForm.phone,
+   183→        address: editForm.address || undefined,
+   184→        city: editForm.city || undefined,
+   185→        notes: editForm.notes || undefined,
+   186→      });
+   187→      toast({ title: "Customer updated", description: `${editForm.companyName} saved.` });
+   188→      setEditRow(null);
+   189→      load();
+   190→    } catch (e) {
+   191→      setFieldErrors(extractFieldErrors(e));
+   192→      toast({ title: "Could not update customer", description: e instanceof ClientApiError ? e.message : undefined, variant: "destructive" });
+   193→    } finally {
+   194→      setSaving(false);
+   195→    }
+   196→  }
+   197→
+   198→  async function submitDelete() {
+   199→    if (!deleteRow) return;
+   200→    setDeleting(true);
+   201→    try {
+   202→      const res = await api.del<{ deleted?: boolean; softDeleted?: boolean }>(`/api/v1/customers/${deleteRow.id}`);
+   203→      toast({
+   204→        title: res.data.softDeleted ? "Customer deactivated" : "Customer deleted",
+   205→        description: res.data.softDeleted
+   206→          ? "The customer has linked records, so it was set to INACTIVE instead of removed."
+   207→          : `${deleteRow.companyName} removed.`,
+   208→      });
+   209→      setDeleteRow(null);
+   210→      load();
+   211→    } catch (e) {
+   212→      toast({ title: "Could not delete customer", description: e instanceof ClientApiError ? e.message : undefined, variant: "destructive" });
+   213→    } finally {
+   214→      setDeleting(false);
+   215→    }
+   216→  }
+   217→
+   218→  const totalEquipment = rows.reduce((s, r) => s + r._count.equipment, 0);
+   219→  const portalCount = rows.filter((r) => r.portalUser).length;
+   220→  const activeCount = rows.filter((r) => r.status === "ACTIVE").length;
+   221→
+   222→  const columns: Column<CustomerRow>[] = [
+   223→    { key: "code", header: "Code", value: (r) => r.code, className: "font-mono text-xs whitespace-nowrap" },
+   224→    {
+   225→      key: "companyName", header: "Company", value: (r) => r.companyName,
+   226→      render: (r) => (
+   227→        <div className="min-w-[160px]">
+   228→          <div className="font-medium truncate">{r.companyName}</div>
+   229→          <div className="text-xs text-muted-foreground truncate">{r.contactPerson}</div>
+   230→        </div>
+   231→      ),
+   232→    },
+   233→    {
+   234→      key: "email", header: "Contact", value: (r) => `${r.email} ${r.phone}`,
+   235→      render: (r) => (
+   236→        <div className="min-w-[150px]">
+   237→          <div className="text-sm truncate">{r.email}</div>
+   238→          <div className="text-xs text-muted-foreground">{r.phone}</div>
+   239→        </div>
+   240→      ),
+   241→      hideOnMobile: true,
+   242→    },
+   243→    { key: "city", header: "City", value: (r) => r.city, render: (r) => r.city || "—", hideOnMobile: true },
+   244→    { key: "equipment", header: "Equipment", value: (r) => r._count.equipment, render: (r) => r._count.equipment },
+   245→    { key: "complaints", header: "Complaints", value: (r) => r._count.complaints, render: (r) => r._count.complaints, hideOnMobile: true },
+   246→    { key: "invoices", header: "Invoices", value: (r) => r._count.invoices, render: (r) => r._count.invoices, hideOnMobile: true },
+   247→    {
+   248→      key: "portal", header: "Portal", value: (r) => (r.portalUser ? "yes" : "no"),
+   249→      render: (r) =>
+   250→        r.portalUser ? (
+   251→          <span className="inline-flex items-center gap-1 text-xs text-emerald-700 bg-emerald-100 rounded-full px-2 py-0.5">
+   252→            <Wifi className="h-3 w-3" /> {r.portalUser.email}
+   253→          </span>
+   254→        ) : (
+   255→          <span className="text-xs text-muted-foreground">—</span>
+   256→        ),
+   257→      hideOnMobile: true,
+   258→    },
+   259→    { key: "status", header: "Status", value: (r) => r.status, render: (r) => <StatusBadge status={r.status} /> },
+   260→    {
+   261→      key: "actions", header: "", sortable: false,
+   262→      render: (r) => (
+   263→        <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+   264→          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openDetail(r)} aria-label={`View ${r.companyName}`}>
+   265→            <Users className="h-4 w-4" />
+   266→          </Button>
+   267→          {can("customers.update") ? (
+   268→            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(r)} aria-label={`Edit ${r.companyName}`}>
+   269→              <Pencil className="h-4 w-4" />
+   270→            </Button>
+   271→          ) : null}
+   272→          {can("customers.delete") ? (
+   273→            <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => setDeleteRow(r)} aria-label={`Delete ${r.companyName}`}>
+   274→              <Trash2 className="h-4 w-4" />
+   275→            </Button>
+   276→          ) : null}
+   277→        </div>
+   278→      ),
+   279→      className: "w-4",
+   280→    },
+   281→  ];
+   282→
+   283→  return (
+   284→    <div>
+   285→      <PageHeader
+   286→        title="Customers"
+   287→        subtitle="Corporate accounts, portal access and engagement overview"
+   288→        actions={
+   289→          can("customers.create") ? (
+   290→            <Button onClick={openCreate}>
+   291→              <Plus className="h-4 w-4 mr-1.5" /> New Customer
+   292→            </Button>
+   293→          ) : null
+   294→        }
+   295→      />
+   296→
+   297→      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+   298→        <StatCard title="Customers" value={rows.length} icon={<Building2 className="h-5 w-5" />} loading={loading} />
+   299→        <StatCard title="Active" value={activeCount} icon={<ClipboardList className="h-5 w-5" />} tone="success" loading={loading} />
+   300→        <StatCard title="Portal accounts" value={portalCount} icon={<KeyRound className="h-5 w-5" />} loading={loading} />
+   301→        <StatCard title="Equipment units" value={totalEquipment} icon={<Receipt className="h-5 w-5" />} loading={loading} />
+   302→      </div>
+   303→
+   304→      {error ? (
+   305→        <ErrorState message={error} onRetry={load} />
+   306→      ) : loading ? (
+   307→        <LoadingState label="Loading customers…" />
+   308→      ) : (
+   309→        <DataTable
+   310→          columns={columns}
+   311→          rows={rows}
+   312→          rowKey={(r) => r.id}
+   313→          onRowClick={openDetail}
+   314→          searchPlaceholder="Search company, contact, email, code…"
+   315→          filters={[
+   316→            {
+   317→              key: "status", label: "Status",
+   318→              options: [{ value: "ACTIVE", label: "Active" }, { value: "INACTIVE", label: "Inactive" }],
+   319→              match: (r, v) => r.status === v,
+   320→            },
+   321→          ]}
+   322→          emptyTitle="No customers yet"
+   323→          emptyHint={can("customers.create") ? "Create your first customer to start tracking equipment and service." : "Customers will appear here once created."}
+   324→          exportName="customers"
+   325→        />
+   326→      )}
+   327→
+   328→      {/* Create dialog (draft-protected) */}
+   329→      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+   330→        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+   331→          <DialogHeader>
+   332→            <DialogTitle>New customer</DialogTitle>
+   333→            <DialogDescription>Code is generated automatically. Optionally provision a portal login.</DialogDescription>
+   334→          </DialogHeader>
+   335→
+   336→          {draft.draftExists ? (
+   337→            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm">
+   338→              <span className="flex-1 min-w-[140px]">You have an unsent draft from a previous session.</span>
+   339→              <Button size="sm" variant="outline" onClick={draft.restore}>
+   340→                <RotateCcw className="h-3.5 w-3.5 mr-1" /> Restore draft
+   341→              </Button>
+   342→              <Button size="sm" variant="ghost" onClick={draft.discard}>Discard</Button>
+   343→            </div>
+   344→          ) : draft.dirty && draft.lastSavedAt ? (
+   345→            <p className="text-xs text-muted-foreground">Draft saved automatically at {draft.lastSavedAt.toLocaleTimeString()} — restored automatically if you leave.</p>
+   346→          ) : null}
+   347→
+   348→          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+   349→            <div className="sm:col-span-2">
+   350→              <Label htmlFor="cus-name">Company name *</Label>
+   351→              <Input id="cus-name" value={draft.value.companyName} onChange={(e) => draft.setValue({ companyName: e.target.value })} placeholder="e.g. Metro Tower Facilities" />
+   352→              <FieldError msg={fieldErrors.companyName} />
+   353→            </div>
+   354→            <div>
+   355→              <Label htmlFor="cus-contact">Contact person *</Label>
+   356→              <Input id="cus-contact" value={draft.value.contactPerson} onChange={(e) => draft.setValue({ contactPerson: e.target.value })} placeholder="Full name" />
+   357→              <FieldError msg={fieldErrors.contactPerson} />
+   358→            </div>
+   359→            <div>
+   360→              <Label htmlFor="cus-phone">Phone *</Label>
+   361→              <Input id="cus-phone" value={draft.value.phone} onChange={(e) => draft.setValue({ phone: e.target.value })} placeholder="+60 3-…" />
+   362→              <FieldError msg={fieldErrors.phone} />
+   363→            </div>
+   364→            <div>
+   365→              <Label htmlFor="cus-email">Email *</Label>
+   366→              <Input id="cus-email" type="email" value={draft.value.email} onChange={(e) => draft.setValue({ email: e.target.value })} placeholder="contact@company.my" />
+   367→              <FieldError msg={fieldErrors.email} />
+   368→            </div>
+   369→            <div>
+   370→              <Label htmlFor="cus-city">City</Label>
+   371→              <Input id="cus-city" value={draft.value.city} onChange={(e) => draft.setValue({ city: e.target.value })} placeholder="Kuala Lumpur" />
+   372→              <FieldError msg={fieldErrors.city} />
+   373→            </div>
+   374→            <div className="sm:col-span-2">
+   375→              <Label htmlFor="cus-address">Address</Label>
+   376→              <Input id="cus-address" value={draft.value.address} onChange={(e) => draft.setValue({ address: e.target.value })} placeholder="Street, building, postcode" />
+   377→              <FieldError msg={fieldErrors.address} />
+   378→            </div>
+   379→            <div className="sm:col-span-2">
+   380→              <Label htmlFor="cus-notes">Notes</Label>
+   381→              <Textarea id="cus-notes" rows={2} value={draft.value.notes} onChange={(e) => draft.setValue({ notes: e.target.value })} placeholder="Internal notes (optional)" />
+   382→              <FieldError msg={fieldErrors.notes} />
+   383→            </div>
+   384→
+   385→            <div className="sm:col-span-2 rounded-lg border bg-muted/40 p-3 space-y-3">
+   386→              <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+   387→                <KeyRound className="h-3.5 w-3.5" /> CUSTOMER PORTAL ACCESS (OPTIONAL)
+   388→              </p>
+   389→              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+   390→                <div>
+   391→                  <Label htmlFor="cus-portal-email">Portal email</Label>
+   392→                  <Input id="cus-portal-email" type="email" value={draft.value.portalEmail} onChange={(e) => draft.setValue({ portalEmail: e.target.value })} placeholder="portal@company.my" />
+   393→                  <FieldError msg={fieldErrors.portalEmail} />
+   394→                </div>
+   395→                <div>
+   396→                  <Label htmlFor="cus-portal-pw">Portal password</Label>
+   397→                  <Input id="cus-portal-pw" type="text" autoComplete="off" value={portalPassword} onChange={(e) => setPortalPassword(e.target.value)} placeholder="Min 8 chars, letters + numbers" />
+   398→                  <FieldError msg={fieldErrors.portalPassword} />
+   399→                </div>
+   400→              </div>
+   401→            </div>
+   402→          </div>
+   403→
+   404→          <DialogFooter>
+   405→            <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
+   406→            <Button onClick={submitCreate} disabled={saving}>{saving ? "Creating…" : "Create customer"}</Button>
+   407→          </DialogFooter>
+   408→        </DialogContent>
+   409→      </Dialog>
+   410→
+   411→      {/* Edit dialog */}
+   412→      <Dialog open={!!editRow} onOpenChange={(o) => !o && setEditRow(null)}>
+   413→        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+   414→          <DialogHeader>
+   415→            <DialogTitle>Edit {editRow?.companyName}</DialogTitle>
+   416→            <DialogDescription>Code {editRow?.code} · status and portal accounts are managed from the list.</DialogDescription>
+   417→          </DialogHeader>
+   418→          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+   419→            <div className="sm:col-span-2">
+   420→              <Label htmlFor="cus-e-name">Company name</Label>
+   421→              <Input id="cus-e-name" value={editForm.companyName} onChange={(e) => setEditForm((f) => ({ ...f, companyName: e.target.value }))} />
+   422→              <FieldError msg={fieldErrors.companyName} />
+   423→            </div>
+   424→            <div>
+   425→              <Label htmlFor="cus-e-contact">Contact person</Label>
+   426→              <Input id="cus-e-contact" value={editForm.contactPerson} onChange={(e) => setEditForm((f) => ({ ...f, contactPerson: e.target.value }))} />
+   427→              <FieldError msg={fieldErrors.contactPerson} />
+   428→            </div>
+   429→            <div>
+   430→              <Label htmlFor="cus-e-phone">Phone</Label>
+   431→              <Input id="cus-e-phone" value={editForm.phone} onChange={(e) => setEditForm((f) => ({ ...f, phone: e.target.value }))} />
+   432→              <FieldError msg={fieldErrors.phone} />
+   433→            </div>
+   434→            <div>
+   435→              <Label htmlFor="cus-e-email">Email</Label>
+   436→              <Input id="cus-e-email" type="email" value={editForm.email} onChange={(e) => setEditForm((f) => ({ ...f, email: e.target.value }))} />
+   437→              <FieldError msg={fieldErrors.email} />
+   438→            </div>
+   439→            <div>
+   440→              <Label htmlFor="cus-e-city">City</Label>
+   441→              <Input id="cus-e-city" value={editForm.city} onChange={(e) => setEditForm((f) => ({ ...f, city: e.target.value }))} />
+   442→            </div>
+   443→            <div className="sm:col-span-2">
+   444→              <Label htmlFor="cus-e-address">Address</Label>
+   445→              <Input id="cus-e-address" value={editForm.address} onChange={(e) => setEditForm((f) => ({ ...f, address: e.target.value }))} />
+   446→            </div>
+   447→            <div className="sm:col-span-2">
+   448→              <Label htmlFor="cus-e-notes">Notes</Label>
+   449→              <Textarea id="cus-e-notes" rows={2} value={editForm.notes} onChange={(e) => setEditForm((f) => ({ ...f, notes: e.target.value }))} />
+   450→            </div>
+   451→          </div>
+   452→          <DialogFooter>
+   453→            <Button variant="outline" onClick={() => setEditRow(null)}>Cancel</Button>
+   454→            <Button onClick={submitEdit} disabled={saving}>{saving ? "Saving…" : "Save changes"}</Button>
+   455→          </DialogFooter>
+   456→        </DialogContent>
+   457→      </Dialog>
+   458→
+   459→      {/* Detail dialog */}
+   460→      <Dialog open={!!detailId} onOpenChange={(o) => !o && setDetailId(null)}>
+   461→        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+   462→          <DialogHeader>
+   463→            <DialogTitle className="flex items-center gap-2">
+   464→              {detailLoading ? "Loading…" : detail?.companyName}
+   465→              {detail ? <StatusBadge status={detail.status} /> : null}
+   466→            </DialogTitle>
+   467→            <DialogDescription>
+   468→              {detail ? `${detail.code} · ${detail.contactPerson} · ${detail.email} · ${detail.phone}` : ""}
+   469→            </DialogDescription>
+   470→          </DialogHeader>
+   471→          {detail ? (
+   472→            <div className="space-y-5">
+   473→              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+   474→                <StatCard title="Equipment" value={detail._count.equipment} />
+   475→                <StatCard title="Complaints" value={detail._count.complaints} />
+   476→                <StatCard title="Work orders" value={detail._count.workOrders} />
+   477→              </div>
+   478→              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+   479→                <div className="space-y-1">
+   480→                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Address</p>
+   481→                  <p>{[detail.address, detail.city].filter(Boolean).join(", ") || "—"}</p>
+   482→                </div>
+   483→                <div className="space-y-1">
+   484→                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Portal account</p>
+   485→                  <p className="flex items-center gap-2">
+   486→                    {detail.portalUser ? (
+   487→                      <>
+   488→                        <StatusBadge status={detail.portalUser.status} />
+   489→                        <span className="truncate">{detail.portalUser.email}</span>
+   490→                      </>
+   491→                    ) : "No portal user"}
+   492→                  </p>
+   493→                </div>
+   494→                <div className="space-y-1">
+   495→                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Quotations / Invoices</p>
+   496→                  <p>{detail._count.quotations} / {detail._count.invoices}</p>
+   497→                </div>
+   498→                <div className="space-y-1">
+   499→                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Customer since</p>
+   500→                  <p>{fmtDate(detail.createdAt)}</p>
+   501→                </div>
+   502→              </div>
+   503→
+   504→              <div>
+   505→                <p className="text-sm font-medium mb-2">Recent complaints</p>
+   506→                {detail.complaints.length === 0 ? (
+   507→                  <p className="text-sm text-muted-foreground">No complaints logged.</p>
+   508→                ) : (
+   509→                  <div className="divide-y rounded-lg border">
+   510→                    {detail.complaints.map((c) => (
+   511→                      <div key={c.id} className="flex items-center gap-3 px-3 py-2">
+   512→                        <span className="font-mono text-xs text-muted-foreground w-24 shrink-0">{c.code}</span>
+   513→                        <span className="flex-1 min-w-0 truncate text-sm">{c.title}</span>
+   514→                        <StatusBadge status={c.priority} />
+   515→                        <StatusBadge status={c.status} />
+   516→                      </div>
+   517→                    ))}
+   518→                  </div>
+   519→                )}
+   520→              </div>
+   521→
+   522→              <div>
+   523→                <p className="text-sm font-medium mb-2">Recent invoices</p>
+   524→                {detail.invoices.length === 0 ? (
+   525→                  <p className="text-sm text-muted-foreground">No invoices issued.</p>
+   526→                ) : (
+   527→                  <div className="divide-y rounded-lg border">
+   528→                    {detail.invoices.map((inv) => (
+   529→                      <div key={inv.id} className="flex items-center gap-3 px-3 py-2">
+   530→                        <span className="font-mono text-xs text-muted-foreground w-24 shrink-0">{inv.code}</span>
+   531→                        <span className="flex-1 text-sm">{money(inv.totalCents)} <span className="text-muted-foreground">({money(inv.paidCents)} paid)</span></span>
+   532→                        <StatusBadge status={inv.status} />
+   533→                      </div>
+   534→                    ))}
+   535→                  </div>
+   536→                )}
+   537→              </div>
+   538→            </div>
+   539→          ) : (
+   540→            <LoadingState label="Loading customer…" rows={2} />
+   541→          )}
+   542→        </DialogContent>
+   543→      </Dialog>
+   544→
+   545→      {/* Delete confirm */}
+   546→      <AlertDialog open={!!deleteRow} onOpenChange={(o) => !o && setDeleteRow(null)}>
+   547→        <AlertDialogContent>
+   548→          <AlertDialogHeader>
+   549→            <AlertDialogTitle>Delete {deleteRow?.companyName}?</AlertDialogTitle>
+   550→            <AlertDialogDescription>
+   551→              If this customer has equipment, complaints or invoices it will be deactivated (status INACTIVE) instead of removed, keeping history intact.
+   552→            </AlertDialogDescription>
+   553→          </AlertDialogHeader>
+   554→          <AlertDialogFooter>
+   555→            <AlertDialogCancel>Cancel</AlertDialogCancel>
+   556→            <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" disabled={deleting} onClick={(e) => { e.preventDefault(); submitDelete(); }}>
+   557→              {deleting ? "Working…" : "Delete customer"}
+   558→            </AlertDialogAction>
+   559→          </AlertDialogFooter>
+   560→        </AlertDialogContent>
+   561→      </AlertDialog>
+   562→    </div>
+   563→  );
+   564→}
+   565→

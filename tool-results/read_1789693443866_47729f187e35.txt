@@ -1,0 +1,874 @@
+     1→"use client";
+     2→
+     3→// MOHD.HMS ENTERPRISE — Work Orders module.
+     4→// PENDING → ACCEPTED → IN_PROGRESS → COMPLETED (+ ON_HOLD, CANCELLED).
+     5→// Checklist execution, materials with live totals, labour cost capture,
+     6→// role-gated transitions. Draft-protected creation form.
+     7→
+     8→import { useCallback, useEffect, useMemo, useState } from "react";
+     9→import { api, qs } from "@/lib/hms/api-client";
+    10→import { hasPerm, useSession } from "@/components/hms/session";
+    11→import { useToast } from "@/hooks/use-toast";
+    12→import { useDraft } from "@/hooks/use-draft";
+    13→import { DataTable, type Column } from "@/components/hms/shared/data-table";
+    14→import {
+    15→  PageHeader, StatCard, StatusBadge, PriorityBadge, LoadingState, EmptyState, ErrorState,
+    16→} from "@/components/hms/shared/ui-bits";
+    17→import { PERMISSIONS, PRIORITIES, humanize } from "@/lib/hms/constants";
+    18→import { money, fmtDate, fmtDateTime, toCents } from "@/lib/hms/format";
+    19→import { Button } from "@/components/ui/button";
+    20→import { Input } from "@/components/ui/input";
+    21→import { Label } from "@/components/ui/label";
+    22→import { Textarea } from "@/components/ui/textarea";
+    23→import { Badge } from "@/components/ui/badge";
+    24→import { Checkbox } from "@/components/ui/checkbox";
+    25→import { Separator } from "@/components/ui/separator";
+    26→import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+    27→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+    28→import {
+    29→  CircleDollarSign, ClipboardList, Hammer, PauseCircle, PlayCircle, Plus, Trash2, Wrench,
+    30→} from "lucide-react";
+    31→import { cn } from "@/lib/utils";
+    32→
+    33→// ── Types ──
+    34→
+    35→type WORow = {
+    36→  id: string;
+    37→  code: string;
+    38→  title: string;
+    39→  status: string;
+    40→  priority: string;
+    41→  scheduledDate: string | null;
+    42→  totalCents: number;
+    43→  createdAt: string;
+    44→  customer?: { id: string; companyName: string } | null;
+    45→  equipment?: { id: string; name: string; assetTag: string } | null;
+    46→  technician?: { id: string; user?: { id: string; name: string } | null } | null;
+    47→  complaint?: { id: string; code: string } | null;
+    48→};
+    49→
+    50→type ChecklistItem = { id: string; label: string; done: boolean; doneAt: string | null; sortOrder: number };
+    51→type MaterialRow = {
+    52→  id: string; name: string; quantity: number; unit: string; unitCostCents: number; totalCents: number;
+    53→  inventoryItemId: string | null; inventoryItem?: { id: string; name: string; unit: string } | null;
+    54→};
+    55→
+    56→type WODetail = WORow & {
+    57→  description: string;
+    58→  notes: string;
+    59→  customerId: string;
+    60→  startedAt: string | null;
+    61→  completedAt: string | null;
+    62→  labourHours: number;
+    63→  labourRateCents: number;
+    64→  labourTotalCents: number;
+    65→  materialsTotalCents: number;
+    66→  checklist: ChecklistItem[];
+    67→  materials: MaterialRow[];
+    68→};
+    69→
+    70→type TechOpt = { id: string; employeeNo?: string; specialty?: string; user?: { name?: string } | null };
+    71→type CustomerOpt = { id: string; companyName?: string; name?: string };
+    72→type EquipmentOpt = { id: string; name?: string; assetTag?: string };
+    73→type ComplaintOpt = { id: string; code: string; title: string; customer?: { id: string; companyName?: string } | null };
+    74→
+    75→type WOMaterialForm = { name: string; qty: string; cost: string };
+    76→type WOCreateForm = {
+    77→  title: string;
+    78→  description: string;
+    79→  customerId: string;
+    80→  equipmentId: string;
+    81→  complaintId: string;
+    82→  technicianId: string;
+    83→  priority: string;
+    84→  scheduledDate: string;
+    85→  checklistText: string;
+    86→  materials: WOMaterialForm[];
+    87→};
+    88→
+    89→const EMPTY_CREATE: WOCreateForm = {
+    90→  title: "", description: "", customerId: "", equipmentId: "", complaintId: "",
+    91→  technicianId: "", priority: "MEDIUM", scheduledDate: "", checklistText: "", materials: [],
+    92→};
+    93→
+    94→const PENDING_STATUSES = ["PENDING", "ACCEPTED"];
+    95→
+    96→const STATUS_TABS: { key: string; label: string; match: (s: string) => boolean }[] = [
+    97→  { key: "ALL", label: "All", match: () => true },
+    98→  { key: "PENDING", label: "Pending", match: (s) => PENDING_STATUSES.includes(s) },
+    99→  { key: "IN_PROGRESS", label: "In Progress", match: (s) => s === "IN_PROGRESS" },
+   100→  { key: "ON_HOLD", label: "On Hold", match: (s) => s === "ON_HOLD" },
+   101→  { key: "COMPLETED", label: "Completed", match: (s) => s === "COMPLETED" },
+   102→  { key: "CANCELLED", label: "Cancelled", match: (s) => s === "CANCELLED" },
+   103→];
+   104→
+   105→export function WorkOrdersModule() {
+   106→  const { user } = useSession();
+   107→  const { toast } = useToast();
+   108→
+   109→  const canCreate = hasPerm(user, PERMISSIONS.work_orders_create);
+   110→  const canAssign = hasPerm(user, PERMISSIONS.work_orders_assign);
+   111→  const canUpdate = hasPerm(user, PERMISSIONS.work_orders_update);
+   112→  const canComplete = hasPerm(user, PERMISSIONS.work_orders_complete);
+   113→  const isStaffUser = !!user && user.role !== "CUSTOMER";
+   114→
+   115→  // ── List ──
+   116→  const [rows, setRows] = useState<WORow[] | null>(null);
+   117→  const [loadError, setLoadError] = useState<string | null>(null);
+   118→  const [loading, setLoading] = useState(true);
+   119→  const [tab, setTab] = useState("ALL");
+   120→  const [reloadKey, setReloadKey] = useState(0);
+   121→
+   122→  const load = useCallback(async () => {
+   123→    setLoading(true);
+   124→    setLoadError(null);
+   125→    try {
+   126→      const res = await api.get<WORow[]>(`/api/v1/work-orders${qs({ pageSize: 200 })}`);
+   127→      setRows(res.data);
+   128→    } catch (e) {
+   129→      setLoadError(e instanceof Error ? e.message : "Failed to load work orders.");
+   130→    } finally {
+   131→      setLoading(false);
+   132→    }
+   133→  }, []);
+   134→
+   135→  useEffect(() => { load(); }, [load, reloadKey]);
+   136→
+   137→  // ── Detail ──
+   138→  const [detail, setDetail] = useState<WODetail | null>(null);
+   139→  const [detailOpen, setDetailOpen] = useState(false);
+   140→  const [detailLoading, setDetailLoading] = useState(false);
+   141→  const [busy, setBusy] = useState(false);
+   142→  const [completeNote, setCompleteNote] = useState("");
+   143→  const [newItem, setNewItem] = useState("");
+   144→  const [matForm, setMatForm] = useState<WOMaterialForm>({ name: "", qty: "1", cost: "0" });
+   145→  const [labourHours, setLabourHours] = useState("0");
+   146→  const [labourRate, setLabourRate] = useState("0");
+   147→
+   148→  const openDetail = useCallback(async (id: string) => {
+   149→    setDetailOpen(true);
+   150→    setDetailLoading(true);
+   151→    setDetail(null);
+   152→    setCompleteNote("");
+   153→    setNewItem("");
+   154→    setMatForm({ name: "", qty: "1", cost: "0" });
+   155→    try {
+   156→      const res = await api.get<WODetail>(`/api/v1/work-orders/${id}`);
+   157→      setDetail(res.data);
+   158→      setLabourHours(String(res.data.labourHours ?? 0));
+   159→      setLabourRate(((res.data.labourRateCents ?? 0) / 100).toFixed(2));
+   160→    } catch (e) {
+   161→      toast({ title: "Could not load work order", description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+   162→      setDetailOpen(false);
+   163→    } finally {
+   164→      setDetailLoading(false);
+   165→    }
+   166→  }, [toast]);
+   167→
+   168→  const refreshDetail = useCallback(async (id: string) => {
+   169→    try {
+   170→      const res = await api.get<WODetail>(`/api/v1/work-orders/${id}`);
+   171→      setDetail(res.data);
+   172→    } catch { /* detail refresh is best-effort */ }
+   173→  }, []);
+   174→
+   175→  const afterMutation = useCallback(async () => {
+   176→    setReloadKey((k) => k + 1);
+   177→    if (detail) await refreshDetail(detail.id);
+   178→  }, [detail, refreshDetail]);
+   179→
+   180→  const runTransition = useCallback(async (action: string, extra?: Record<string, unknown>) => {
+   181→    if (!detail) return;
+   182→    setBusy(true);
+   183→    try {
+   184→      await api.post<WODetail>(`/api/v1/work-orders/${detail.id}/transition`, { action, ...extra });
+   185→      toast({ title: "Success", description: `Work order ${detail.code} — ${humanize(action)} done.` });
+   186→      if (action === "complete" || action === "cancel") {
+   187→        setDetailOpen(false);
+   188→        setDetail(null);
+   189→      } else {
+   190→        await refreshDetail(detail.id);
+   191→      }
+   192→      setReloadKey((k) => k + 1);
+   193→    } catch (e) {
+   194→      toast({ title: "Action failed", description: e instanceof Error ? e.message : "Please try again.", variant: "destructive" });
+   195→    } finally {
+   196→      setBusy(false);
+   197→    }
+   198→  }, [detail, refreshDetail, toast]);
+   199→
+   200→  // ── Detail derived state ──
+   201→  const isAssignedTech = !!detail && !!user && detail.technician?.user?.id === user.id;
+   202→  const canOperate = !!detail && (isAssignedTech || canUpdate);
+   203→  const canExecute = !!detail && (isAssignedTech || canComplete);
+   204→  const woStatus = detail?.status;
+   205→  const woEditable = !!woStatus && !["COMPLETED", "CANCELLED"].includes(woStatus);
+   206→  const canEditLabour = woStatus === "IN_PROGRESS" && canOperate;
+   207→  const checklistDone = (detail?.checklist ?? []).filter((c) => c.done).length;
+   208→
+   209→  async function toggleChecklist(item: ChecklistItem, done: boolean) {
+   210→    if (!detail) return;
+   211→    setBusy(true);
+   212→    try {
+   213→      await api.patch(`/api/v1/work-orders/${detail.id}/checklist`, { itemId: item.id, done });
+   214→      await refreshDetail(detail.id);
+   215→    } catch (e) {
+   216→      toast({ title: "Could not update checklist", description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+   217→    } finally {
+   218→      setBusy(false);
+   219→    }
+   220→  }
+   221→
+   222→  async function addChecklistItem() {
+   223→    if (!detail || !newItem.trim()) return;
+   224→    setBusy(true);
+   225→    try {
+   226→      await api.post(`/api/v1/work-orders/${detail.id}/checklist`, { label: newItem.trim() });
+   227→      setNewItem("");
+   228→      await refreshDetail(detail.id);
+   229→    } catch (e) {
+   230→      toast({ title: "Could not add item", description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+   231→    } finally {
+   232→      setBusy(false);
+   233→    }
+   234→  }
+   235→
+   236→  async function addMaterial() {
+   237→    if (!detail) return;
+   238→    if (!matForm.name.trim()) {
+   239→      toast({ title: "Material name required", variant: "destructive" });
+   240→      return;
+   241→    }
+   242→    const qty = Number(matForm.qty);
+   243→    if (!isFinite(qty) || qty <= 0) {
+   244→      toast({ title: "Quantity must be greater than zero", variant: "destructive" });
+   245→      return;
+   246→    }
+   247→    setBusy(true);
+   248→    try {
+   249→      await api.post(`/api/v1/work-orders/${detail.id}/materials`, {
+   250→        name: matForm.name.trim(),
+   251→        quantity: qty,
+   252→        unitCostCents: toCents(matForm.cost || "0"),
+   253→      });
+   254→      setMatForm({ name: "", qty: "1", cost: "0" });
+   255→      await afterMutation();
+   256→    } catch (e) {
+   257→      toast({ title: "Could not add material", description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+   258→    } finally {
+   259→      setBusy(false);
+   260→    }
+   261→  }
+   262→
+   263→  async function removeMaterial(materialId: string) {
+   264→    if (!detail) return;
+   265→    setBusy(true);
+   266→    try {
+   267→      await api.del(`/api/v1/work-orders/${detail.id}/materials${qs({ materialId })}`);
+   268→      await afterMutation();
+   269→    } catch (e) {
+   270→      toast({ title: "Could not remove material", description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+   271→    } finally {
+   272→      setBusy(false);
+   273→    }
+   274→  }
+   275→
+   276→  async function saveLabour() {
+   277→    if (!detail) return;
+   278→    const hours = Number(labourHours);
+   279→    if (!isFinite(hours) || hours < 0) {
+   280→      toast({ title: "Invalid hours", variant: "destructive" });
+   281→      return;
+   282→    }
+   283→    setBusy(true);
+   284→    try {
+   285→      await api.patch(`/api/v1/work-orders/${detail.id}`, { labourHours: hours, labourRateCents: toCents(labourRate || "0") });
+   286→      toast({ title: "Labour updated" });
+   287→      await afterMutation();
+   288→    } catch (e) {
+   289→      toast({ title: "Could not save labour", description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+   290→    } finally {
+   291→      setBusy(false);
+   292→    }
+   293→  }
+   294→
+   295→  // ── Create dialog ──
+   296→  const [createOpen, setCreateOpen] = useState(false);
+   297→  const [submitting, setSubmitting] = useState(false);
+   298→  const [customers, setCustomers] = useState<CustomerOpt[]>([]);
+   299→  const [equipment, setEquipment] = useState<EquipmentOpt[]>([]);
+   300→  const [techs, setTechs] = useState<TechOpt[]>([]);
+   301→  const [openComplaints, setOpenComplaints] = useState<ComplaintOpt[]>([]);
+   302→  const draft = useDraft<WOCreateForm>({ formKey: "workorder.create", initial: EMPTY_CREATE });
+   303→
+   304→  useEffect(() => {
+   305→    if (!createOpen || !canCreate) return;
+   306→    let alive = true;
+   307→    Promise.all([
+   308→      api.get<CustomerOpt[]>(`/api/v1/customers${qs({ pageSize: 200 })}`).catch(() => null),
+   309→      api.get<TechOpt[]>(`/api/v1/technicians${qs({ pageSize: 200 })}`).catch(() => null),
+   310→      api.get<ComplaintOpt[]>(`/api/v1/complaints${qs({ status: "IN_PROGRESS", pageSize: 200 })}`).catch(() => null),
+   311→    ]).then(([c, t, cmp]) => {
+   312→      if (!alive) return;
+   313→      setCustomers(c && Array.isArray(c.data) ? c.data : []);
+   314→      setTechs(t && Array.isArray(t.data) ? t.data : []);
+   315→      setOpenComplaints(cmp && Array.isArray(cmp.data) ? cmp.data : []);
+   316→    });
+   317→    return () => { alive = false; };
+   318→  }, [createOpen, canCreate]);
+   319→
+   320→  useEffect(() => {
+   321→    if (!createOpen || !draft.value.customerId) { setEquipment([]); return; }
+   322→    let alive = true;
+   323→    api.get<EquipmentOpt[]>(`/api/v1/equipment${qs({ customerId: draft.value.customerId, pageSize: 200 })}`)
+   324→      .then((r) => { if (alive) setEquipment(Array.isArray(r.data) ? r.data : []); })
+   325→      .catch(() => { if (alive) setEquipment([]); });
+   326→    return () => { alive = false; };
+   327→  }, [createOpen, draft.value.customerId]);
+   328→
+   329→  function updateMaterialRow(index: number, patch: Partial<WOMaterialForm>) {
+   330→    draft.setValue({
+   331→      materials: draft.value.materials.map((m, i) => (i === index ? { ...m, ...patch } : m)),
+   332→    });
+   333→  }
+   334→
+   335→  async function submitCreate() {
+   336→    const v = draft.value;
+   337→    if (v.title.trim().length < 3) {
+   338→      toast({ title: "Check the form", description: "Title needs at least 3 characters.", variant: "destructive" });
+   339→      return;
+   340→    }
+   341→    if (!v.customerId) {
+   342→      toast({ title: "Check the form", description: "Select a customer.", variant: "destructive" });
+   343→      return;
+   344→    }
+   345→    const materials = v.materials
+   346→      .filter((m) => m.name.trim() && Number(m.qty) > 0)
+   347→      .map((m) => ({ name: m.name.trim(), quantity: Number(m.qty), unitCostCents: toCents(m.cost || "0") }));
+   348→    const checklist = v.checklistText.split("\n").map((s) => s.trim()).filter(Boolean);
+   349→
+   350→    setSubmitting(true);
+   351→    try {
+   352→      const res = await api.post<WORow>("/api/v1/work-orders", {
+   353→        title: v.title.trim(),
+   354→        description: v.description.trim() || undefined,
+   355→        customerId: v.customerId,
+   356→        equipmentId: v.equipmentId || undefined,
+   357→        complaintId: v.complaintId || undefined,
+   358→        technicianId: v.technicianId || undefined,
+   359→        priority: v.priority,
+   360→        scheduledDate: v.scheduledDate || undefined,
+   361→        checklist,
+   362→        materials,
+   363→      });
+   364→      toast({ title: "Work order created", description: `${res.data.code} created successfully.` });
+   365→      draft.reset(EMPTY_CREATE);
+   366→      setCreateOpen(false);
+   367→      setReloadKey((k) => k + 1);
+   368→    } catch (e) {
+   369→      toast({ title: "Could not create work order", description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+   370→    } finally {
+   371→      setSubmitting(false);
+   372→    }
+   373→  }
+   374→
+   375→  // ── Derived views ──
+   376→  const stats = useMemo(() => {
+   377→    const list = rows ?? [];
+   378→    const count = (match: (r: WORow) => boolean) => list.filter(match).length;
+   379→    return {
+   380→      total: list.length,
+   381→      pending: count((r) => PENDING_STATUSES.includes(r.status)),
+   382→      inProgress: count((r) => r.status === "IN_PROGRESS"),
+   383→      onHold: count((r) => r.status === "ON_HOLD"),
+   384→      completed: count((r) => r.status === "COMPLETED"),
+   385→      valueCents: list.filter((r) => !["CANCELLED"].includes(r.status)).reduce((s, r) => s + (r.totalCents ?? 0), 0),
+   386→    };
+   387→  }, [rows]);
+   388→
+   389→  const visibleRows = useMemo(() => {
+   390→    const active = STATUS_TABS.find((t) => t.key === tab) ?? STATUS_TABS[0];
+   391→    return (rows ?? []).filter((r) => active.match(r.status));
+   392→  }, [rows, tab]);
+   393→
+   394→  const tabCount = (key: string) => {
+   395→    const active = STATUS_TABS.find((t) => t.key === key);
+   396→    if (!active) return 0;
+   397→    return (rows ?? []).filter((r) => active.match(r.status)).length;
+   398→  };
+   399→
+   400→  const columns: Column<WORow>[] = [
+   401→    { key: "code", header: "Code", value: (r) => r.code, className: "font-mono text-xs whitespace-nowrap" },
+   402→    { key: "title", header: "Title", value: (r) => r.title, className: "max-w-[240px] truncate" },
+   403→    { key: "status", header: "Status", render: (r) => <StatusBadge status={r.status} />, value: (r) => r.status },
+   404→    { key: "priority", header: "Priority", render: (r) => <PriorityBadge priority={r.priority} />, value: (r) => r.priority, hideOnMobile: true },
+   405→    { key: "customer", header: "Customer", value: (r) => r.customer?.companyName ?? "", hideOnMobile: true },
+   406→    { key: "technician", header: "Technician", value: (r) => r.technician?.user?.name ?? "", render: (r) => r.technician?.user?.name ?? "—" },
+   407→    { key: "scheduledDate", header: "Scheduled", value: (r) => r.scheduledDate ?? "", render: (r) => fmtDate(r.scheduledDate), hideOnMobile: true },
+   408→    { key: "totalCents", header: "Total", value: (r) => r.totalCents, render: (r) => money(r.totalCents), className: "tabular-nums whitespace-nowrap" },
+   409→  ];
+   410→
+   411→  const complaintOptions = openComplaints.filter(
+   412→    (c) => !draft.value.customerId || c.customer?.id === draft.value.customerId
+   413→  );
+   414→
+   415→  return (
+   416→    <div>
+   417→      <PageHeader
+   418→        title="Work Orders"
+   419→        subtitle="Execution cockpit: assignments, checklists, materials and costs."
+   420→        actions={canCreate ? (
+   421→          <Button onClick={() => setCreateOpen(true)}>
+   422→            <Plus className="h-4 w-4 mr-1.5" /> New Work Order
+   423→          </Button>
+   424→        ) : null}
+   425→      />
+   426→
+   427→      {/* Stats */}
+   428→      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 mb-5">
+   429→        <StatCard title="Total" value={stats.total} icon={<ClipboardList className="h-5 w-5" />} loading={!rows && loading} />
+   430→        <StatCard title="Pending" value={stats.pending} icon={<PlayCircle className="h-5 w-5" />} tone="warning" loading={!rows && loading} />
+   431→        <StatCard title="In Progress" value={stats.inProgress} icon={<Wrench className="h-5 w-5" />} tone="warning" loading={!rows && loading} />
+   432→        <StatCard title="On Hold" value={stats.onHold} icon={<PauseCircle className="h-5 w-5" />} tone="danger" loading={!rows && loading} />
+   433→        <StatCard title="Completed" value={stats.completed} icon={<Hammer className="h-5 w-5" />} tone="success" loading={!rows && loading} />
+   434→        <StatCard title="Total Value" value={money(stats.valueCents)} icon={<CircleDollarSign className="h-5 w-5" />} loading={!rows && loading} />
+   435→      </div>
+   436→
+   437→      {/* Status tabs */}
+   438→      <div className="flex flex-wrap gap-1.5 mb-4">
+   439→        {STATUS_TABS.map((t) => (
+   440→          <button
+   441→            key={t.key}
+   442→            onClick={() => setTab(t.key)}
+   443→            className={cn(
+   444→              "px-3 py-1.5 rounded-full text-xs font-medium border transition-colors",
+   445→              tab === t.key ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-muted text-muted-foreground"
+   446→            )}
+   447→          >
+   448→            {t.label} <span className="opacity-70 tabular-nums">({tabCount(t.key)})</span>
+   449→          </button>
+   450→        ))}
+   451→      </div>
+   452→
+   453→      {loading && !rows ? (
+   454→        <LoadingState label="Loading work orders…" rows={5} />
+   455→      ) : loadError ? (
+   456→        <ErrorState message={loadError} onRetry={load} />
+   457→      ) : visibleRows.length === 0 ? (
+   458→        <EmptyState
+   459→          title="No work orders in this view"
+   460→          hint={canCreate ? "Create a work order to dispatch a technician." : "Work orders will appear here when the team creates them."}
+   461→          action={canCreate ? <Button variant="outline" onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4 mr-1.5" /> New Work Order</Button> : undefined}
+   462→        />
+   463→      ) : (
+   464→        <DataTable
+   465→          columns={columns}
+   466→          rows={visibleRows}
+   467→          rowKey={(r) => r.id}
+   468→          onRowClick={(r) => openDetail(r.id)}
+   469→          searchPlaceholder="Search code or title…"
+   470→          filters={[{
+   471→            key: "priority",
+   472→            label: "Priorities",
+   473→            options: PRIORITIES.map((p) => ({ value: p, label: humanize(p) })),
+   474→            match: (row, value) => row.priority === value,
+   475→          }]}
+   476→          emptyTitle="No work orders match"
+   477→          exportName="work-orders"
+   478→        />
+   479→      )}
+   480→
+   481→      {/* ── Detail dialog ── */}
+   482→      <Dialog open={detailOpen} onOpenChange={(open) => { if (!open) { setDetailOpen(false); setDetail(null); } }}>
+   483→        <DialogContent className="max-w-3xl max-h-[88vh] overflow-y-auto hms-scroll">
+   484→          <DialogTitle className="sr-only">Work order details</DialogTitle>
+   485→          {detailLoading || !detail ? (
+   486→            <LoadingState label="Loading work order…" />
+   487→          ) : (
+   488→            <>
+   489→              <DialogHeader>
+   490→                <DialogTitle className="flex flex-wrap items-center gap-2">
+   491→                  <span className="font-mono text-sm text-muted-foreground">{detail.code}</span>
+   492→                  <span className="text-base">{detail.title}</span>
+   493→                  <StatusBadge status={detail.status} />
+   494→                  <PriorityBadge priority={detail.priority} />
+   495→                </DialogTitle>
+   496→                <DialogDescription>
+   497→                  {detail.customer?.companyName ?? "—"}
+   498→                  {detail.equipment ? ` · ${detail.equipment.name} (${detail.equipment.assetTag})` : ""}
+   499→                  {detail.complaint ? ` · Complaint ${detail.complaint.code}` : ""}
+   500→                  {` · Created ${fmtDateTime(detail.createdAt)}`}
+   501→                </DialogDescription>
+   502→              </DialogHeader>
+   503→
+   504→              <div className="grid gap-4 sm:grid-cols-3 text-sm">
+   505→                <div>
+   506→                  <p className="text-muted-foreground text-xs uppercase tracking-wide">Technician</p>
+   507→                  <p>{detail.technician?.user?.name ?? "Unassigned"}</p>
+   508→                </div>
+   509→                <div>
+   510→                  <p className="text-muted-foreground text-xs uppercase tracking-wide">Scheduled</p>
+   511→                  <p>{fmtDate(detail.scheduledDate)}</p>
+   512→                </div>
+   513→                <div>
+   514→                  <p className="text-muted-foreground text-xs uppercase tracking-wide">Started / Completed</p>
+   515→                  <p>{fmtDateTime(detail.startedAt)} → {fmtDateTime(detail.completedAt)}</p>
+   516→                </div>
+   517→              </div>
+   518→
+   519→              {detail.description ? (
+   520→                <p className="text-sm whitespace-pre-wrap rounded-lg bg-muted/40 p-3">{detail.description}</p>
+   521→              ) : null}
+   522→              {detail.notes ? (
+   523→                <p className="text-sm whitespace-pre-wrap rounded-lg border border-dashed p-3"><span className="text-muted-foreground text-xs uppercase tracking-wide block mb-1">Notes</span>{detail.notes}</p>
+   524→              ) : null}
+   525→
+   526→              {/* Totals */}
+   527→              <div className="grid grid-cols-3 gap-3">
+   528→                <div className="rounded-lg border p-3">
+   529→                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Labour</p>
+   530→                  <p className="font-semibold tabular-nums">{money(detail.labourTotalCents)}</p>
+   531→                  <p className="text-xs text-muted-foreground">{detail.labourHours}h × {money(detail.labourRateCents)}/h</p>
+   532→                </div>
+   533→                <div className="rounded-lg border p-3">
+   534→                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Materials</p>
+   535→                  <p className="font-semibold tabular-nums">{money(detail.materialsTotalCents)}</p>
+   536→                  <p className="text-xs text-muted-foreground">{detail.materials.length} item{detail.materials.length === 1 ? "" : "s"}</p>
+   537→                </div>
+   538→                <div className="rounded-lg border p-3 bg-primary/5">
+   539→                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Total</p>
+   540→                  <p className="font-semibold tabular-nums text-primary">{money(detail.totalCents)}</p>
+   541→                </div>
+   542→              </div>
+   543→
+   544→              {/* Checklist */}
+   545→              <div className="space-y-2">
+   546→                <div className="flex items-center justify-between">
+   547→                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Checklist ({checklistDone}/{detail.checklist.length} done)</p>
+   548→                  {canOperate && woEditable ? (
+   549→                    <Badge variant="outline" className="text-[10px]">You can edit</Badge>
+   550→                  ) : null}
+   551→                </div>
+   552→                {detail.checklist.length === 0 ? (
+   553→                  <p className="text-sm text-muted-foreground">No checklist items yet.</p>
+   554→                ) : (
+   555→                  <ul className="space-y-1.5">
+   556→                    {detail.checklist.map((item) => (
+   557→                      <li key={item.id} className="flex items-center gap-2.5 rounded-lg border p-2.5">
+   558→                        <Checkbox
+   559→                          checked={item.done}
+   560→                          disabled={busy || !canOperate || !woEditable}
+   561→                          onCheckedChange={(checked) => toggleChecklist(item, checked === true)}
+   562→                          aria-label={`Toggle ${item.label}`}
+   563→                        />
+   564→                        <span className={cn("text-sm flex-1", item.done && "line-through text-muted-foreground")}>{item.label}</span>
+   565→                        {item.doneAt ? <span className="text-[11px] text-muted-foreground whitespace-nowrap">{fmtDateTime(item.doneAt)}</span> : null}
+   566→                      </li>
+   567→                    ))}
+   568→                  </ul>
+   569→                )}
+   570→                {canOperate && woEditable ? (
+   571→                  <div className="flex gap-2">
+   572→                    <Input
+   573→                      value={newItem}
+   574→                      onChange={(e) => setNewItem(e.target.value)}
+   575→                      placeholder="Add checklist item…"
+   576→                      onKeyDown={(e) => { if (e.key === "Enter") addChecklistItem(); }}
+   577→                      maxLength={300}
+   578→                    />
+   579→                    <Button variant="outline" onClick={addChecklistItem} disabled={busy || !newItem.trim()}>
+   580→                      <Plus className="h-4 w-4 mr-1" /> Add
+   581→                    </Button>
+   582→                  </div>
+   583→                ) : null}
+   584→              </div>
+   585→
+   586→              <Separator />
+   587→
+   588→              {/* Materials */}
+   589→              <div className="space-y-2">
+   590→                <p className="text-xs uppercase tracking-wide text-muted-foreground">Materials used</p>
+   591→                {detail.materials.length === 0 ? (
+   592→                  <p className="text-sm text-muted-foreground">No materials recorded.</p>
+   593→                ) : (
+   594→                  <div className="rounded-lg border overflow-x-auto">
+   595→                    <table className="w-full text-sm">
+   596→                      <thead>
+   597→                        <tr className="border-b bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
+   598→                          <th className="px-3 py-2 font-medium">Item</th>
+   599→                          <th className="px-3 py-2 font-medium text-right">Qty</th>
+   600→                          <th className="px-3 py-2 font-medium text-right">Unit cost</th>
+   601→                          <th className="px-3 py-2 font-medium text-right">Total</th>
+   602→                          {canOperate && woEditable ? <th className="px-3 py-2" /> : null}
+   603→                        </tr>
+   604→                      </thead>
+   605→                      <tbody>
+   606→                        {detail.materials.map((m) => (
+   607→                          <tr key={m.id} className="border-b last:border-0">
+   608→                            <td className="px-3 py-2">
+   609→                              {m.name}
+   610→                              {m.inventoryItem ? <Badge variant="outline" className="ml-1.5 text-[10px]">stock</Badge> : null}
+   611→                            </td>
+   612→                            <td className="px-3 py-2 text-right tabular-nums">{m.quantity}</td>
+   613→                            <td className="px-3 py-2 text-right tabular-nums">{money(m.unitCostCents)}</td>
+   614→                            <td className="px-3 py-2 text-right tabular-nums font-medium">{money(m.totalCents)}</td>
+   615→                            {canOperate && woEditable ? (
+   616→                              <td className="px-3 py-2 text-right">
+   617→                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => removeMaterial(m.id)} disabled={busy} aria-label={`Remove ${m.name}`}>
+   618→                                  <Trash2 className="h-3.5 w-3.5 text-destructive" />
+   619→                                </Button>
+   620→                              </td>
+   621→                            ) : null}
+   622→                          </tr>
+   623→                        ))}
+   624→                      </tbody>
+   625→                    </table>
+   626→                  </div>
+   627→                )}
+   628→                {canOperate && woEditable ? (
+   629→                  <div className="grid grid-cols-2 sm:grid-cols-[1fr_90px_120px_auto] gap-2">
+   630→                    <Input value={matForm.name} onChange={(e) => setMatForm((f) => ({ ...f, name: e.target.value }))} placeholder="Material name" maxLength={200} />
+   631→                    <Input value={matForm.qty} onChange={(e) => setMatForm((f) => ({ ...f, qty: e.target.value }))} placeholder="Qty" inputMode="decimal" />
+   632→                    <Input value={matForm.cost} onChange={(e) => setMatForm((f) => ({ ...f, cost: e.target.value }))} placeholder="Cost RM" inputMode="decimal" />
+   633→                    <Button variant="outline" onClick={addMaterial} disabled={busy}><Plus className="h-4 w-4 mr-1" /> Add</Button>
+   634→                  </div>
+   635→                ) : null}
+   636→              </div>
+   637→
+   638→              <Separator />
+   639→
+   640→              {/* Labour editor */}
+   641→              {canEditLabour ? (
+   642→                <div className="space-y-2">
+   643→                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Labour (billable)</p>
+   644→                  <div className="grid grid-cols-2 sm:grid-cols-[120px_120px_auto] gap-2">
+   645→                    <div>
+   646→                      <Label htmlFor="wo-hours" className="text-xs">Hours</Label>
+   647→                      <Input id="wo-hours" value={labourHours} onChange={(e) => setLabourHours(e.target.value)} inputMode="decimal" />
+   648→                    </div>
+   649→                    <div>
+   650→                      <Label htmlFor="wo-rate" className="text-xs">Rate (RM/h)</Label>
+   651→                      <Input id="wo-rate" value={labourRate} onChange={(e) => setLabourRate(e.target.value)} inputMode="decimal" />
+   652→                    </div>
+   653→                    <div className="flex items-end">
+   654→                      <Button variant="outline" onClick={saveLabour} disabled={busy}>Save Labour</Button>
+   655→                    </div>
+   656→                  </div>
+   657→                </div>
+   658→              ) : null}
+   659→
+   660→              <Separator />
+   661→
+   662→              {/* Transitions */}
+   663→              <div className="space-y-3">
+   664→                <p className="text-xs uppercase tracking-wide text-muted-foreground">Workflow actions</p>
+   665→
+   666→                {woStatus === "PENDING" && (isAssignedTech || canUpdate) ? (
+   667→                  <Button disabled={busy} onClick={() => runTransition("accept")}>
+   668→                    <PlayCircle className="h-4 w-4 mr-1.5" /> Accept
+   669→                  </Button>
+   670→                ) : null}
+   671→
+   672→                {woStatus === "ACCEPTED" && (isAssignedTech || canUpdate) ? (
+   673→                  <div className="flex flex-wrap gap-2">
+   674→                    <Button disabled={busy} onClick={() => runTransition("start")}>
+   675→                      <Wrench className="h-4 w-4 mr-1.5" /> Start Work
+   676→                    </Button>
+   677→                    <Button variant="outline" disabled={busy} onClick={() => runTransition("hold")}>
+   678→                      <PauseCircle className="h-4 w-4 mr-1.5" /> Put On Hold
+   679→                    </Button>
+   680→                  </div>
+   681→                ) : null}
+   682→
+   683→                {woStatus === "IN_PROGRESS" && (isAssignedTech || canUpdate) ? (
+   684→                  <Button variant="outline" disabled={busy} onClick={() => runTransition("hold")}>
+   685→                    <PauseCircle className="h-4 w-4 mr-1.5" /> Put On Hold
+   686→                  </Button>
+   687→                ) : null}
+   688→
+   689→                {woStatus === "ON_HOLD" && (isAssignedTech || canUpdate) ? (
+   690→                  <Button disabled={busy} onClick={() => runTransition("resume")}>
+   691→                    <PlayCircle className="h-4 w-4 mr-1.5" /> Resume Work
+   692→                  </Button>
+   693→                ) : null}
+   694→
+   695→                {woStatus === "IN_PROGRESS" && (isAssignedTech || canComplete) ? (
+   696→                  <div className="rounded-lg border p-3 space-y-2">
+   697→                    <Label htmlFor="wo-complete-note" className="text-xs uppercase tracking-wide text-muted-foreground">Completion note</Label>
+   698→                    {checklistDone < detail.checklist.length ? (
+   699→                      <p className="text-xs text-amber-600">Heads-up: only {checklistDone}/{detail.checklist.length} checklist items are done.</p>
+   700→                    ) : null}
+   701→                    <Textarea id="wo-complete-note" value={completeNote} onChange={(e) => setCompleteNote(e.target.value)} placeholder="Summary of work performed…" rows={2} />
+   702→                    <Button disabled={busy} onClick={() => runTransition("complete", { note: completeNote || undefined })}>
+   703→                      <Hammer className="h-4 w-4 mr-1.5" /> Mark Completed
+   704→                    </Button>
+   705→                  </div>
+   706→                ) : null}
+   707→
+   708→                {woStatus && ["PENDING", "ACCEPTED", "ON_HOLD"].includes(woStatus) && (isAssignedTech || canAssign) ? (
+   709→                  <div className="rounded-lg border border-destructive/30 p-3">
+   710→                    <p className="text-sm mb-2 text-muted-foreground">Cancelling stops this work order permanently.</p>
+   711→                    <Button variant="destructive" disabled={busy} onClick={() => { if (window.confirm(`Cancel work order ${detail.code}? This cannot be undone.`)) runTransition("cancel"); }}>
+   712→                      Cancel Work Order
+   713→                    </Button>
+   714→                  </div>
+   715→                ) : null}
+   716→              </div>
+   717→            </>
+   718→          )}
+   719→        </DialogContent>
+   720→      </Dialog>
+   721→
+   722→      {/* ── Create dialog ── */}
+   723→      <Dialog open={createOpen} onOpenChange={(open) => { if (!open) setCreateOpen(false); }}>
+   724→        <DialogContent className="max-w-2xl max-h-[88vh] overflow-y-auto hms-scroll">
+   725→          <DialogHeader>
+   726→            <DialogTitle>New Work Order</DialogTitle>
+   727→            <DialogDescription>
+   728→              Dispatch a job to a technician. Checklist lines and materials can also be added later.
+   729→              {draft.draftExists ? " A draft was found — use Restore to recover it." : ""}
+   730→            </DialogDescription>
+   731→          </DialogHeader>
+   732→
+   733→          {draft.draftExists ? (
+   734→            <div className="flex items-center justify-between rounded-lg border border-dashed p-2.5 text-sm">
+   735→              <span className="text-muted-foreground">Unsubmitted draft saved {draft.lastSavedAt ? fmtDateTime(draft.lastSavedAt) : "earlier"}.</span>
+   736→              <Button size="sm" variant="outline" onClick={draft.restore}>Restore</Button>
+   737→            </div>
+   738→          ) : null}
+   739→
+   740→          <div className="space-y-4">
+   741→            <div className="space-y-1.5">
+   742→              <Label htmlFor="wo-title">Title *</Label>
+   743→              <Input id="wo-title" value={draft.value.title} onChange={(e) => draft.setValue({ title: e.target.value })} placeholder="What needs to be done" maxLength={200} />
+   744→            </div>
+   745→            <div className="space-y-1.5">
+   746→              <Label htmlFor="wo-desc">Description</Label>
+   747→              <Textarea id="wo-desc" value={draft.value.description} onChange={(e) => draft.setValue({ description: e.target.value })} placeholder="Scope, access notes, safety requirements…" rows={3} maxLength={5000} />
+   748→            </div>
+   749→            <div className="grid gap-4 sm:grid-cols-2">
+   750→              <div className="space-y-1.5">
+   751→                <Label>Customer *</Label>
+   752→                <Select value={draft.value.customerId} onValueChange={(v) => draft.setValue({ customerId: v, equipmentId: "", complaintId: "" })}>
+   753→                  <SelectTrigger aria-label="Customer"><SelectValue placeholder="Select customer…" /></SelectTrigger>
+   754→                  <SelectContent>
+   755→                    {customers.map((c) => <SelectItem key={c.id} value={c.id}>{c.companyName ?? c.name ?? c.id}</SelectItem>)}
+   756→                  </SelectContent>
+   757→                </Select>
+   758→              </div>
+   759→              <div className="space-y-1.5">
+   760→                <Label>Equipment</Label>
+   761→                <Select value={draft.value.equipmentId} onValueChange={(v) => draft.setValue({ equipmentId: v })}>
+   762→                  <SelectTrigger aria-label="Equipment">
+   763→                    <SelectValue placeholder={draft.value.customerId ? (equipment.length ? "Optional…" : "No equipment available") : "Select a customer first…"} />
+   764→                  </SelectTrigger>
+   765→                  <SelectContent>
+   766→                    {equipment.map((e) => <SelectItem key={e.id} value={e.id}>{e.name ?? e.id}{e.assetTag ? ` (${e.assetTag})` : ""}</SelectItem>)}
+   767→                  </SelectContent>
+   768→                </Select>
+   769→              </div>
+   770→            </div>
+   771→            <div className="grid gap-4 sm:grid-cols-2">
+   772→              <div className="space-y-1.5">
+   773→                <Label>Linked complaint</Label>
+   774→                <Select value={draft.value.complaintId} onValueChange={(v) => draft.setValue({ complaintId: v })}>
+   775→                  <SelectTrigger aria-label="Complaint">
+   776→                    <SelectValue placeholder={openComplaints.length ? "Optional — link an open complaint…" : "No in-progress complaints"} />
+   777→                  </SelectTrigger>
+   778→                  <SelectContent>
+   779→                    {complaintOptions.map((c) => (
+   780→                      <SelectItem key={c.id} value={c.id}>
+   781→                        {c.code} — {c.title}{c.customer?.companyName ? ` (${c.customer.companyName})` : ""}
+   782→                      </SelectItem>
+   783→                    ))}
+   784→                  </SelectContent>
+   785→                </Select>
+   786→              </div>
+   787→              <div className="space-y-1.5">
+   788→                <Label>Technician</Label>
+   789→                <Select value={draft.value.technicianId} onValueChange={(v) => draft.setValue({ technicianId: v })}>
+   790→                  <SelectTrigger aria-label="Technician">
+   791→                    <SelectValue placeholder={techs.length ? "Optional — assign now…" : "No technicians available"} />
+   792→                  </SelectTrigger>
+   793→                  <SelectContent>
+   794→                    {techs.map((t) => (
+   795→                      <SelectItem key={t.id} value={t.id}>
+   796→                        {t.user?.name ?? t.employeeNo ?? t.id}{t.specialty ? ` — ${humanize(t.specialty)}` : ""}
+   797→                      </SelectItem>
+   798→                    ))}
+   799→                  </SelectContent>
+   800→                </Select>
+   801→              </div>
+   802→            </div>
+   803→            <div className="grid gap-4 sm:grid-cols-2">
+   804→              <div className="space-y-1.5">
+   805→                <Label>Priority</Label>
+   806→                <Select value={draft.value.priority} onValueChange={(v) => draft.setValue({ priority: v })}>
+   807→                  <SelectTrigger aria-label="Priority"><SelectValue /></SelectTrigger>
+   808→                  <SelectContent>
+   809→                    {PRIORITIES.map((p) => <SelectItem key={p} value={p}>{humanize(p)}</SelectItem>)}
+   810→                  </SelectContent>
+   811→                </Select>
+   812→              </div>
+   813→              <div className="space-y-1.5">
+   814→                <Label htmlFor="wo-scheduled">Scheduled date</Label>
+   815→                <Input id="wo-scheduled" type="date" value={draft.value.scheduledDate} onChange={(e) => draft.setValue({ scheduledDate: e.target.value })} />
+   816→              </div>
+   817→            </div>
+   818→            <div className="space-y-1.5">
+   819→              <Label htmlFor="wo-checklist">Checklist — one item per line</Label>
+   820→              <Textarea
+   821→                id="wo-checklist"
+   822→                value={draft.value.checklistText}
+   823→                onChange={(e) => draft.setValue({ checklistText: e.target.value })}
+   824→                placeholder={"Isolate & secure work area\nDiagnose fault\nFunction test"}
+   825→                rows={3}
+   826→              />
+   827→            </div>
+   828→
+   829→            {/* Materials rows */}
+   830→            <div className="space-y-2">
+   831→              <div className="flex items-center justify-between">
+   832→                <Label>Materials</Label>
+   833→                <Button
+   834→                  type="button" size="sm" variant="outline"
+   835→                  onClick={() => draft.setValue({ materials: [...draft.value.materials, { name: "", qty: "1", cost: "0" }] })}
+   836→                >
+   837→                  <Plus className="h-3.5 w-3.5 mr-1" /> Add row
+   838→                </Button>
+   839→              </div>
+   840→              {draft.value.materials.length === 0 ? (
+   841→                <p className="text-xs text-muted-foreground">No materials yet — add rows for parts that will be consumed (cost in RM).</p>
+   842→              ) : (
+   843→                <div className="space-y-2">
+   844→                  {draft.value.materials.map((m, i) => (
+   845→                    <div key={i} className="grid grid-cols-[1fr_80px_110px_40px] gap-2 items-center">
+   846→                      <Input value={m.name} onChange={(e) => updateMaterialRow(i, { name: e.target.value })} placeholder="Material name" maxLength={200} aria-label="Material name" />
+   847→                      <Input value={m.qty} onChange={(e) => updateMaterialRow(i, { qty: e.target.value })} placeholder="Qty" inputMode="decimal" aria-label="Quantity" />
+   848→                      <Input value={m.cost} onChange={(e) => updateMaterialRow(i, { cost: e.target.value })} placeholder="RM" inputMode="decimal" aria-label="Unit cost in ringgit" />
+   849→                      <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => draft.setValue({ materials: draft.value.materials.filter((_, j) => j !== i) })} aria-label="Remove material row">
+   850→                        <Trash2 className="h-3.5 w-3.5 text-destructive" />
+   851→                      </Button>
+   852→                    </div>
+   853→                  ))}
+   854→                  <p className="text-xs text-muted-foreground">
+   855→                    Estimated materials total: <span className="tabular-nums">{money(draft.value.materials.reduce((s, m) => s + (Number(m.qty) > 0 ? Math.round(Number(m.qty) * toCents(m.cost || "0")) : 0), 0))}</span>
+   856→                  </p>
+   857→                </div>
+   858→              )}
+   859→            </div>
+   860→            {draft.dirty ? <p className="text-xs text-muted-foreground">Draft auto-saves as you type — safe to leave and restore later.</p> : null}
+   861→          </div>
+   862→
+   863→          <DialogFooter>
+   864→            <Button variant="outline" onClick={() => setCreateOpen(false)} disabled={submitting}>Cancel</Button>
+   865→            <Button onClick={submitCreate} disabled={submitting || draft.value.title.trim().length < 3 || !draft.value.customerId}>
+   866→              {submitting ? "Creating…" : "Create Work Order"}
+   867→            </Button>
+   868→          </DialogFooter>
+   869→        </DialogContent>
+   870→      </Dialog>
+   871→    </div>
+   872→  );
+   873→}
+   874→

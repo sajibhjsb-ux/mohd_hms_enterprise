@@ -1,36 +1,40 @@
 "use client";
 
 // Preventive Maintenance module — plan register + task execution.
-// Plans: create (draft-protected), activate/deactivate inline, generate tasks.
-// Tasks: lifecycle actions (start / complete with checklist / skip), overdue highlighting.
+// Plans: create (dedicated page), activate/deactivate inline, generate tasks.
+// Tasks: lifecycle actions (start inline / complete on a dedicated page /
+// skip with an AlertDialog confirmation), overdue highlighting.
+//
+// NAVIGATION ARCHITECTURE (hash router, ui-store pages["pm"]):
+//   []                    → this list page (Plans / Tasks tabs)
+//   ["new"]               → PmNewPage            (dedicated create-plan page)
+//   [taskId, "complete"]  → PmCompleteTaskPage   (dedicated complete-task page)
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  CalendarClock, CalendarCheck2, AlarmClock, CheckCircle2, Play, Flag, Zap,
+  CalendarClock, CalendarCheck2, AlarmClock, CheckCircle2, Play, Zap,
   ClipboardList, RotateCw, Plus, CircleOff,
 } from "lucide-react";
 import { api, qs } from "@/lib/hms/api-client";
 import { fmtDate } from "@/lib/hms/format";
-import { humanize, PERMISSIONS, PM_FREQUENCIES } from "@/lib/hms/constants";
+import { PERMISSIONS } from "@/lib/hms/constants";
 import { hasPerm, useSession } from "@/components/hms/session";
+import { useUi } from "@/lib/hms/ui-store";
+import { navigateTo, pageFromSeg } from "@/lib/hms/router";
 import { useToast } from "@/hooks/use-toast";
-import { useDraft } from "@/hooks/use-draft";
 import { DataTable, type Column } from "@/components/hms/shared/data-table";
 import {
   EmptyState, ErrorState, LoadingState, PageHeader, StatCard, StatusBadge,
 } from "@/components/hms/shared/ui-bits";
 import { Button } from "@/components/ui/button";
 import {
-  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Textarea } from "@/components/ui/textarea";
+import { PmNewPage } from "./new-page";
+import { PmCompleteTaskPage } from "./complete-task-page";
 
 // ── Types ──
 
@@ -65,18 +69,20 @@ type PmTask = {
   checklist?: ChecklistItem[];
 };
 
-type Option = { id: string; label: string };
-
-const emptyPlanForm = {
-  name: "",
-  equipmentId: "",
-  frequency: "MONTHLY",
-  assignedTechnicianId: "",
-  checklist: "",
-  nextDueDate: "",
-};
+// ── Module router ──
 
 export function PmModule() {
+  const seg = useUi((s) => s.pages["pm"]) ?? [];
+  const page = pageFromSeg(seg);
+
+  if (page.view === "new") return <PmNewPage />;
+  if (page.view === "complete" && page.id) return <PmCompleteTaskPage id={page.id} />;
+  return <PmList />;
+}
+
+// ── List page ──
+
+function PmList() {
   const { user } = useSession();
   const { toast } = useToast();
 
@@ -91,23 +97,13 @@ export function PmModule() {
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState("plans");
 
-  const [equipmentOptions, setEquipmentOptions] = useState<Option[] | null>(null);
-  const [technicianOptions, setTechnicianOptions] = useState<Option[] | null>(null);
-
   const [generatingPlanId, setGeneratingPlanId] = useState<string | null>(null);
   const [bulkGenerating, setBulkGenerating] = useState(false);
   const [busyTaskId, setBusyTaskId] = useState<string | null>(null);
 
-  // ── Create plan dialog (draft-protected) ──
-  const [createOpen, setCreateOpen] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const draft = useDraft({ formKey: "pm.plan.create", initial: emptyPlanForm });
-
-  // ── Complete dialog ──
-  const [completeTask, setCompleteTask] = useState<PmTask | null>(null);
-  const [completeItems, setCompleteItems] = useState<ChecklistItem[]>([]);
-  const [completeNotes, setCompleteNotes] = useState("");
-  const [completing, setCompleting] = useState(false);
+  // Skip confirmation (AlertDialog — replaces the old window.confirm)
+  const [skipTask, setSkipTask] = useState<PmTask | null>(null);
+  const [skipping, setSkipping] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -126,29 +122,6 @@ export function PmModule() {
       setLoading(false);
     }
   }, [canManage, isTechnicianRole]);
-
-  // Reference data (equipment + technicians) — degrade gracefully when unavailable
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await api.get<EquipmentRef[]>(`/api/v1/equipment${qs({ pageSize: "200" })}`);
-        setEquipmentOptions((res.data ?? []).map((e) => ({ id: e.id, label: `${e.name} (${e.assetTag})` })));
-      } catch {
-        setEquipmentOptions(null);
-      }
-    })();
-    (async () => {
-      try {
-        const res = await api.get<TechnicianRef[]>(`/api/v1/technicians${qs({ pageSize: "200" })}`);
-        setTechnicianOptions((res.data ?? []).map((t) => ({
-          id: t.id,
-          label: t.user?.name ? `${t.user.name} (${t.employeeNo})` : t.employeeNo,
-        })));
-      } catch {
-        setTechnicianOptions(null);
-      }
-    })();
-  }, []);
 
   useEffect(() => {
     load();
@@ -170,38 +143,7 @@ export function PmModule() {
     };
   }, [plans, tasks]);
 
-  // ── Plan actions ──
-  const createPlan = async () => {
-    if (!draft.value.name.trim()) {
-      toast({ title: "Plan name is required", variant: "destructive" });
-      return;
-    }
-    if (!draft.value.equipmentId) {
-      toast({ title: "Select equipment for this plan", variant: "destructive" });
-      return;
-    }
-    setSaving(true);
-    try {
-      const labels = draft.value.checklist.split("\n").map((l) => l.trim()).filter(Boolean);
-      const res = await api.post<PmPlan>("/api/v1/pm/plans", {
-        name: draft.value.name.trim(),
-        equipmentId: draft.value.equipmentId,
-        frequency: draft.value.frequency,
-        assignedTechnicianId: draft.value.assignedTechnicianId || null,
-        checklistTemplate: labels,
-        nextDueDate: draft.value.nextDueDate || null,
-      });
-      draft.reset(emptyPlanForm);
-      setCreateOpen(false);
-      toast({ title: "PM plan created", description: `${res.data.code} — ${res.data.name}.` });
-      await load();
-    } catch (e) {
-      toast({ title: "Could not create plan", description: e instanceof Error ? e.message : undefined, variant: "destructive" });
-    } finally {
-      setSaving(false);
-    }
-  };
-
+  // ── Plan actions (inline quick actions) ──
   const toggleActive = async (plan: PmPlan, active: boolean) => {
     try {
       await api.patch(`/api/v1/pm/plans/${plan.id}`, { active });
@@ -266,41 +208,12 @@ export function PmModule() {
     }
   };
 
-  const openComplete = async (task: PmTask) => {
-    setCompleteTask(task);
-    setCompleteItems([]);
-    setCompleteNotes("");
-    try {
-      const res = await api.get<PmTask>(`/api/v1/pm/tasks/${task.id}`);
-      setCompleteItems(res.data.checklist ?? []);
-      if (res.data.notes) setCompleteNotes(res.data.notes);
-    } catch {
-      setCompleteItems([]); // checklist failed to load — task can still be completed if no items
-    }
-  };
-
-  const submitComplete = async () => {
-    if (!completeTask) return;
-    const allDone = completeItems.length === 0 || completeItems.every((i) => i.done);
-    if (!allDone) {
-      toast({ title: "Checklist incomplete", description: "Tick off every checklist item before completing.", variant: "destructive" });
-      return;
-    }
-    setCompleting(true);
-    try {
-      await api.post(`/api/v1/pm/tasks/${completeTask.id}/transition`, {
-        action: "complete",
-        notes: completeNotes || undefined,
-        checklist: completeItems.map((i) => ({ id: i.id, done: i.done })),
-      });
-      toast({ title: "PM completed", description: `${completeTask.code} marked as completed.` });
-      setCompleteTask(null);
-      await load();
-    } catch (e) {
-      toast({ title: "Could not complete task", description: e instanceof Error ? e.message : undefined, variant: "destructive" });
-    } finally {
-      setCompleting(false);
-    }
+  const confirmSkip = async () => {
+    if (!skipTask) return;
+    setSkipping(true);
+    await transition(skipTask, "skip");
+    setSkipping(false);
+    setSkipTask(null);
   };
 
   const isOverdue = (t: PmTask) => ["SCHEDULED", "IN_PROGRESS", "OVERDUE"].includes(t.status) && new Date(t.dueDate) < new Date();
@@ -400,10 +313,11 @@ export function PmModule() {
                     <Play className="h-3.5 w-3.5 mr-1" /> Start
                   </Button>
                 ) : null}
+                {/* Complete → dedicated full page (#/pm/{taskId}/complete) */}
                 <Button
                   variant="outline" size="sm"
                   disabled={busyTaskId === t.id}
-                  onClick={() => void openComplete(t)}
+                  onClick={() => navigateTo("pm", [t.id, "complete"])}
                   aria-label={`Complete ${t.code}`}
                 >
                   <CheckCircle2 className="h-3.5 w-3.5 mr-1" /> Complete
@@ -412,9 +326,7 @@ export function PmModule() {
                   <Button
                     variant="ghost" size="sm"
                     disabled={busyTaskId === t.id}
-                    onClick={() => {
-                      if (window.confirm(`Skip ${t.code}? The task will be marked SKIPPED.`)) void transition(t, "skip");
-                    }}
+                    onClick={() => setSkipTask(t)}
                     aria-label={`Skip ${t.code}`}
                   >
                     <CircleOff className="h-3.5 w-3.5 mr-1" /> Skip
@@ -439,7 +351,7 @@ export function PmModule() {
               {bulkGenerating ? "Generating…" : "Generate due tasks"}
             </Button>
             {canManage ? (
-              <Button size="sm" onClick={() => setCreateOpen(true)}>
+              <Button size="sm" onClick={() => navigateTo("pm", ["new"])}>
                 <Plus className="h-4 w-4 mr-1.5" /> New Plan
               </Button>
             ) : null}
@@ -469,7 +381,7 @@ export function PmModule() {
             <EmptyState
               title="No PM plans yet"
               hint={canManage ? "Create a plan to schedule recurring maintenance for an equipment." : "No maintenance plans have been published yet."}
-              action={canManage ? <Button size="sm" onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4 mr-1.5" /> New Plan</Button> : undefined}
+              action={canManage ? <Button size="sm" onClick={() => navigateTo("pm", ["new"])}><Plus className="h-4 w-4 mr-1.5" /> New Plan</Button> : undefined}
             />
           ) : (
             <DataTable
@@ -506,171 +418,26 @@ export function PmModule() {
         </TabsContent>
       </Tabs>
 
-      {/* ── New Plan dialog ── */}
-      <Dialog open={createOpen} onOpenChange={(open) => { if (!open && draft.dirty) { /* draft persists for restore */ } setCreateOpen(open); }}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto hms-scroll">
-          <DialogHeader>
-            <DialogTitle>New PM Plan</DialogTitle>
-            <DialogDescription>
-              Schedule recurring maintenance. Your draft is auto-saved if you step away.
-              {draft.draftExists ? (
-                <button type="button" className="ml-1 underline underline-offset-2 text-primary" onClick={draft.restore}>
-                  Restore saved draft
-                </button>
-              ) : null}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 py-2">
-            <div className="space-y-1.5 sm:col-span-2">
-              <Label htmlFor="pm-plan-name">Plan Name *</Label>
-              <Input
-                id="pm-plan-name"
-                value={draft.value.name}
-                onChange={(e) => draft.setValue({ name: e.target.value })}
-                placeholder="Monthly HVAC filter service"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Equipment *</Label>
-              <Select value={draft.value.equipmentId || undefined} onValueChange={(v) => draft.setValue({ equipmentId: v })}>
-                <SelectTrigger aria-label="Equipment"><SelectValue placeholder={equipmentOptions === null ? "Equipment list unavailable" : "Select equipment"} /></SelectTrigger>
-                <SelectContent>
-                  {(equipmentOptions ?? []).map((e) => (
-                    <SelectItem key={e.id} value={e.id}>{e.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {equipmentOptions === null ? <p className="text-xs text-amber-600">Equipment list could not be loaded. Try refreshing the page.</p> : null}
-            </div>
-            <div className="space-y-1.5">
-              <Label>Frequency</Label>
-              <Select value={draft.value.frequency} onValueChange={(v) => draft.setValue({ frequency: v })}>
-                <SelectTrigger aria-label="Frequency"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {PM_FREQUENCIES.map((f) => (
-                    <SelectItem key={f} value={f}>{humanize(f)}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Assigned Technician</Label>
-              <Select
-                value={draft.value.assignedTechnicianId || "NONE"}
-                onValueChange={(v) => draft.setValue({ assignedTechnicianId: v === "NONE" ? "" : v })}
-                disabled={technicianOptions === null}
-              >
-                <SelectTrigger aria-label="Technician"><SelectValue placeholder={technicianOptions === null ? "Unavailable" : "Unassigned"} /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="NONE">Unassigned</SelectItem>
-                  {(technicianOptions ?? []).map((t) => (
-                    <SelectItem key={t.id} value={t.id}>{t.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="pm-plan-due">Next Due Date</Label>
-              <Input
-                id="pm-plan-due"
-                type="date"
-                value={draft.value.nextDueDate}
-                onChange={(e) => draft.setValue({ nextDueDate: e.target.value })}
-              />
-              <p className="text-xs text-muted-foreground">Defaults to one frequency cycle from today.</p>
-            </div>
-            <div className="space-y-1.5 sm:col-span-2">
-              <Label htmlFor="pm-plan-checklist">Checklist Labels (one per line)</Label>
-              <Textarea
-                id="pm-plan-checklist"
-                rows={5}
-                value={draft.value.checklist}
-                onChange={(e) => draft.setValue({ checklist: e.target.value })}
-                placeholder={"Inspect air filter\nCheck refrigerant pressure\nTest thermostat"}
-              />
-            </div>
-          </div>
-
-          <DialogFooter>
-            <div className="flex w-full items-center justify-between gap-2">
-              <span className="text-xs text-muted-foreground">
-                {draft.dirty ? "Draft auto-saved" : "All changes saved"}
-              </span>
-              <div className="flex gap-2">
-                <Button variant="outline" onClick={() => setCreateOpen(false)} disabled={saving}>Cancel</Button>
-                <Button onClick={() => void createPlan()} disabled={saving}>
-                  {saving ? "Creating…" : "Create Plan"}
-                </Button>
-              </div>
-            </div>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* ── Complete dialog (checklist) ── */}
-      <Dialog open={completeTask !== null} onOpenChange={(open) => { if (!open) setCompleteTask(null); }}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto hms-scroll">
-          <DialogHeader>
-            <DialogTitle>Complete {completeTask?.code}</DialogTitle>
-            <DialogDescription>
-              {completeTask?.plan?.name} — {completeTask?.equipment?.name}. Tick every checklist item, add notes, then complete.
-            </DialogDescription>
-          </DialogHeader>
-
-          {completeTask ? (
-            <div className="space-y-3 py-2">
-              <div className="text-sm text-muted-foreground">
-                Due <span className="font-medium text-foreground">{fmtDate(completeTask.dueDate)}</span>
-                {completeTask.status === "OVERDUE" ? <span className="text-red-600 font-medium"> · overdue</span> : null}
-              </div>
-
-              {completeItems.length > 0 ? (
-                <div className="space-y-2">
-                  <Label>Checklist ({completeItems.filter((i) => i.done).length}/{completeItems.length} done)</Label>
-                  {completeItems.map((item) => (
-                    <label
-                      key={item.id}
-                      className="flex items-center gap-3 rounded-lg border px-3 py-2.5 cursor-pointer hover:bg-muted/50"
-                    >
-                      <Switch
-                        checked={item.done}
-                        onCheckedChange={(v) => setCompleteItems((items) => items.map((i) => (i.id === item.id ? { ...i, done: v } : i)))}
-                        aria-label={item.label}
-                      />
-                      <span className={`text-sm ${item.done ? "line-through text-muted-foreground" : ""}`}>{item.label}</span>
-                    </label>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-sm text-muted-foreground">This task has no checklist items.</p>
-              )}
-
-              <div className="space-y-1.5">
-                <Label htmlFor="pm-complete-notes">Notes</Label>
-                <Textarea
-                  id="pm-complete-notes"
-                  rows={3}
-                  value={completeNotes}
-                  onChange={(e) => setCompleteNotes(e.target.value)}
-                  placeholder="Observations, parts replaced, follow-ups…"
-                />
-              </div>
-            </div>
-          ) : null}
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setCompleteTask(null)} disabled={completing}>Cancel</Button>
-            <Button
-              onClick={() => void submitComplete()}
-              disabled={completing || !(completeItems.length === 0 || completeItems.every((i) => i.done))}
-              title={completeItems.some((i) => !i.done) ? "Complete every checklist item first" : undefined}
+      {/* Skip confirmation — the only dialog left in this module */}
+      <AlertDialog open={skipTask !== null} onOpenChange={(open) => { if (!open && !skipping) setSkipTask(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Skip this task?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {skipTask ? `${skipTask.code}${skipTask.plan?.name ? ` — ${skipTask.plan.name}` : ""} will be marked SKIPPED. This cannot be undone; generate a new task from the plan if the work is still required.` : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={skipping}>Keep task</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={skipping}
+              onClick={(e) => { e.preventDefault(); void confirmSkip(); }}
             >
-              <Flag className="h-4 w-4 mr-1.5" /> {completing ? "Completing…" : "Complete Task"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+              {skipping ? "Skipping…" : "Skip task"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

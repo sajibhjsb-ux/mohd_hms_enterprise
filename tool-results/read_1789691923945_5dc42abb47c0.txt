@@ -1,0 +1,631 @@
+     1→"use client";
+     2→
+     3→// MOHD.HMS ENTERPRISE — Equipment module.
+     4→// Asset register with QR labels (scan-to-open deep link), maintenance history
+     5→// detail, draft-protected creation and retirement that keeps history intact.
+     6→
+     7→import { useCallback, useEffect, useState, type ReactNode } from "react";
+     8→import { Button } from "@/components/ui/button";
+     9→import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+    10→import {
+    11→  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+    12→  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+    13→} from "@/components/ui/alert-dialog";
+    14→import { Input } from "@/components/ui/input";
+    15→import { Label } from "@/components/ui/label";
+    16→import { Textarea } from "@/components/ui/textarea";
+    17→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+    18→import { DataTable, type Column } from "@/components/hms/shared/data-table";
+    19→import { PageHeader, StatCard, StatusBadge, LoadingState, ErrorState } from "@/components/hms/shared/ui-bits";
+    20→import { api, ClientApiError, qs } from "@/lib/hms/api-client";
+    21→import { useSession } from "@/components/hms/session";
+    22→import { useToast } from "@/hooks/use-toast";
+    23→import { useDraft } from "@/hooks/use-draft";
+    24→import type { Permission } from "@/lib/hms/constants";
+    25→import { fmtDate } from "@/lib/hms/format";
+    26→import { FileText, Package, Printer, QrCode, Download, Pencil, Plus, RotateCcw, Archive, Wrench, CalendarClock, SearchCheck } from "lucide-react";
+    27→
+    28→type EquipmentRow = {
+    29→  id: string; assetTag: string; name: string; serialNumber: string;
+    30→  manufacturer: string; model: string; category: string; status: string;
+    31→  installationDate: string | null; warrantyExpiry: string | null;
+    32→  pmFrequencyDays: number; qrToken: string; notes: string; createdAt: string;
+    33→  customerId: string | null;
+    34→  location: { id: string; name: string; code: string } | null;
+    35→  customer: { id: string; companyName: string; code: string } | null;
+    36→  _count: { complaints: number; workOrders: number; pmTasks: number };
+    37→};
+    38→
+    39→type EquipmentDetail = EquipmentRow & {
+    40→  history: {
+    41→    complaints: { id: string; code: string; title: string; status: string; priority: string; createdAt: string }[];
+    42→    workOrders: { id: string; code: string; title: string; status: string; priority: string; createdAt: string }[];
+    43→    pmTasks: { id: string; code: string; dueDate: string; status: string; completedAt: string | null }[];
+    44→    inspections: { id: string; code: string; title: string; type: string; status: string; overallCondition: string; inspectionDate: string }[];
+    45→  };
+    46→};
+    47→
+    48→type QrData = { equipmentId: string; assetTag: string; name: string; url: string; dataUrl: string };
+    49→
+    50→type CustomerOption = { id: string; companyName: string; code: string };
+    51→type LocationOption = { id: string; name: string; code: string };
+    52→
+    53→type FormState = {
+    54→  name: string; serialNumber: string; manufacturer: string; model: string; category: string;
+    55→  customerId: string; locationId: string; installationDate: string; warrantyExpiry: string;
+    56→  pmFrequencyDays: string; notes: string;
+    57→};
+    58→
+    59→const EMPTY_FORM: FormState = {
+    60→  name: "", serialNumber: "", manufacturer: "", model: "", category: "",
+    61→  customerId: "", locationId: "", installationDate: "", warrantyExpiry: "",
+    62→  pmFrequencyDays: "90", notes: "",
+    63→};
+    64→
+    65→const CATEGORIES = ["HVAC", "ELECTRICAL", "PLUMBING", "LIFT", "FIRE_SAFETY", "SECURITY", "GENERAL"];
+    66→
+    67→type FieldErrors = Record<string, string>;
+    68→function extractFieldErrors(e: unknown): FieldErrors {
+    69→  if (e instanceof ClientApiError && Array.isArray(e.details)) {
+    70→    const out: FieldErrors = {};
+    71→    for (const d of e.details as { path?: string; message?: string }[]) {
+    72→      if (d?.path && d?.message) out[d.path] = d.message;
+    73→    }
+    74→    return out;
+    75→  }
+    76→  return {};
+    77→}
+    78→
+    79→function FieldError({ msg }: { msg?: string }) {
+    80→  if (!msg) return null;
+    81→  return <p className="text-xs text-destructive mt-1">{msg}</p>;
+    82→}
+    83→
+    84→export function EquipmentModule() {
+    85→  const { user } = useSession();
+    86→  const { toast } = useToast();
+    87→  const can = (p: Permission) => !!user?.permissions.includes(p);
+    88→
+    89→  const [rows, setRows] = useState<EquipmentRow[]>([]);
+    90→  const [loading, setLoading] = useState(true);
+    91→  const [error, setError] = useState<string | null>(null);
+    92→
+    93→  const [customers, setCustomers] = useState<CustomerOption[]>([]);
+    94→  const [locations, setLocations] = useState<LocationOption[]>([]);
+    95→  const [locationsAvailable, setLocationsAvailable] = useState<boolean | null>(null);
+    96→
+    97→  // Create dialog + draft protection (mandatory)
+    98→  const [createOpen, setCreateOpen] = useState(false);
+    99→  const [saving, setSaving] = useState(false);
+   100→  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+   101→  const draft = useDraft<FormState>({ formKey: "equipment.create", initial: EMPTY_FORM });
+   102→
+   103→  // Edit dialog
+   104→  const [editRow, setEditRow] = useState<EquipmentRow | null>(null);
+   105→  const [editForm, setEditForm] = useState<FormState>(EMPTY_FORM);
+   106→  const [editStatus, setEditStatus] = useState("ACTIVE");
+   107→
+   108→  // Detail dialog
+   109→  const [detail, setDetail] = useState<EquipmentDetail | null>(null);
+   110→  const [detailLoading, setDetailLoading] = useState(false);
+   111→
+   112→  // QR dialog
+   113→  const [qr, setQr] = useState<QrData | null>(null);
+   114→  const [qrLoading, setQrLoading] = useState(false);
+   115→
+   116→  // Retire confirm
+   117→  const [retireRow, setRetireRow] = useState<EquipmentRow | null>(null);
+   118→
+   119→  const load = useCallback(async () => {
+   120→    setLoading(true);
+   121→    setError(null);
+   122→    try {
+   123→      const res = await api.get<EquipmentRow[]>(`/api/v1/equipment${qs({ pageSize: 200 })}`);
+   124→      setRows(res.data);
+   125→    } catch (e) {
+   126→      setError(e instanceof ClientApiError ? e.message : "Something went wrong. Please try again.");
+   127→    } finally {
+   128→      setLoading(false);
+   129→    }
+   130→  }, []);
+   131→
+   132→  const loadCustomers = useCallback(async () => {
+   133→    try {
+   134→      const res = await api.get<CustomerOption[]>(`/api/v1/customers${qs({ pageSize: 200, status: "ACTIVE" })}`);
+   135→      setCustomers(res.data);
+   136→    } catch {
+   137→      setCustomers([]); // will degrade to "—" in the select
+   138→    }
+   139→  }, []);
+   140→
+   141→  const loadLocations = useCallback(async () => {
+   142→    try {
+   143→      const res = await api.get<LocationOption[]>("/api/v1/locations");
+   144→      setLocations(res.data ?? []);
+   145→      setLocationsAvailable(true);
+   146→    } catch {
+   147→      setLocations([]);
+   148→      setLocationsAvailable(false);
+   149→    }
+   150→  }, []);
+   151→
+   152→  useEffect(() => { load(); }, [load]);
+   153→  useEffect(() => { loadCustomers(); }, [loadCustomers]);
+   154→  useEffect(() => { loadLocations(); }, [loadLocations]);
+   155→
+   156→  const openDetail = (row: EquipmentRow) => {
+   157→    setDetail(null);
+   158→    setDetailLoading(true);
+   159→    api.get<EquipmentDetail>(`/api/v1/equipment/${row.id}`)
+   160→      .then((res) => setDetail(res.data))
+   161→      .catch((e) => toast({ title: "Could not load equipment", description: e instanceof ClientApiError ? e.message : undefined, variant: "destructive" }))
+   162→      .finally(() => setDetailLoading(false));
+   163→  };
+   164→
+   165→  const openQr = (row: EquipmentRow) => {
+   166→    setQr(null);
+   167→    setQrLoading(true);
+   168→    api.get<QrData>(`/api/v1/equipment/${row.id}/qr`)
+   169→      .then((res) => setQr(res.data))
+   170→      .catch((e) => toast({ title: "Could not generate QR", description: e instanceof ClientApiError ? e.message : undefined, variant: "destructive" }))
+   171→      .finally(() => setQrLoading(false));
+   172→  };
+   173→
+   174→  const openEdit = (row: EquipmentRow) => {
+   175→    setFieldErrors({});
+   176→    setEditRow(row);
+   177→    setEditStatus(row.status);
+   178→    setEditForm({
+   179→      name: row.name, serialNumber: row.serialNumber, manufacturer: row.manufacturer,
+   180→      model: row.model, category: row.category, customerId: row.customerId ?? "",
+   181→      locationId: row.location?.id ?? "", installationDate: row.installationDate ? row.installationDate.slice(0, 10) : "",
+   182→      warrantyExpiry: row.warrantyExpiry ? row.warrantyExpiry.slice(0, 10) : "",
+   183→      pmFrequencyDays: String(row.pmFrequencyDays), notes: row.notes,
+   184→    });
+   185→  };
+   186→
+   187→  function payloadFor(f: FormState) {
+   188→    return {
+   189→      name: f.name,
+   190→      serialNumber: f.serialNumber || undefined,
+   191→      manufacturer: f.manufacturer || undefined,
+   192→      model: f.model || undefined,
+   193→      category: f.category || undefined,
+   194→      customerId: f.customerId || null,
+   195→      locationId: f.locationId || null,
+   196→      installationDate: f.installationDate || undefined,
+   197→      warrantyExpiry: f.warrantyExpiry || undefined,
+   198→      pmFrequencyDays: f.pmFrequencyDays === "" ? undefined : Number(f.pmFrequencyDays),
+   199→      notes: f.notes || undefined,
+   200→    };
+   201→  }
+   202→
+   203→  async function submitCreate() {
+   204→    setSaving(true);
+   205→    setFieldErrors({});
+   206→    try {
+   207→      const res = await api.post<EquipmentRow>("/api/v1/equipment", payloadFor(draft.value));
+   208→      toast({ title: "Equipment registered", description: `${res.data.name} (${res.data.assetTag}) — QR label ready.` });
+   209→      draft.reset(EMPTY_FORM);
+   210→      setCreateOpen(false);
+   211→      load();
+   212→    } catch (e) {
+   213→      setFieldErrors(extractFieldErrors(e));
+   214→      toast({ title: "Could not register equipment", description: e instanceof ClientApiError ? e.message : undefined, variant: "destructive" });
+   215→    } finally {
+   216→      setSaving(false);
+   217→    }
+   218→  }
+   219→
+   220→  async function submitEdit() {
+   221→    if (!editRow) return;
+   222→    setSaving(true);
+   223→    setFieldErrors({});
+   224→    try {
+   225→      await api.patch(`/api/v1/equipment/${editRow.id}`, { ...payloadFor(editForm), status: editStatus });
+   226→      toast({ title: "Equipment updated", description: `${editForm.name} saved.` });
+   227→      setEditRow(null);
+   228→      load();
+   229→    } catch (e) {
+   230→      setFieldErrors(extractFieldErrors(e));
+   231→      toast({ title: "Could not update equipment", description: e instanceof ClientApiError ? e.message : undefined, variant: "destructive" });
+   232→    } finally {
+   233→      setSaving(false);
+   234→    }
+   235→  }
+   236→
+   237→  async function submitRetire() {
+   238→    if (!retireRow) return;
+   239→    setSaving(true);
+   240→    try {
+   241→      await api.del(`/api/v1/equipment/${retireRow.id}`);
+   242→      toast({ title: "Equipment retired", description: `${retireRow.assetTag} is now RETIRED — its maintenance history is preserved.` });
+   243→      setRetireRow(null);
+   244→      load();
+   245→    } catch (e) {
+   246→      toast({ title: "Could not retire equipment", description: e instanceof ClientApiError ? e.message : undefined, variant: "destructive" });
+   247→    } finally {
+   248→      setSaving(false);
+   249→    }
+   250→  }
+   251→
+   252→  function downloadQr() {
+   253→    if (!qr) return;
+   254→    const a = document.createElement("a");
+   255→    a.href = qr.dataUrl;
+   256→    a.download = `qr-${qr.assetTag}.png`;
+   257→    a.click();
+   258→  }
+   259→
+   260→  const activeCount = rows.filter((r) => r.status === "ACTIVE").length;
+   261→  const maintenanceCount = rows.filter((r) => r.status === "UNDER_MAINTENANCE").length;
+   262→  const warrantySoon = rows.filter((r) => r.warrantyExpiry && new Date(r.warrantyExpiry).getTime() - Date.now() < 90 * 86400000 && new Date(r.warrantyExpiry).getTime() > Date.now()).length;
+   263→
+   264→  const columns: Column<EquipmentRow>[] = [
+   265→    { key: "assetTag", header: "Asset tag", value: (r) => r.assetTag, className: "font-mono text-xs whitespace-nowrap" },
+   266→    {
+   267→      key: "name", header: "Equipment", value: (r) => r.name,
+   268→      render: (r) => (
+   269→        <div className="min-w-[150px]">
+   270→          <div className="font-medium truncate">{r.name}</div>
+   271→          <div className="text-xs text-muted-foreground truncate">{[r.manufacturer, r.model].filter(Boolean).join(" ") || r.serialNumber || "—"}</div>
+   272→        </div>
+   273→      ),
+   274→    },
+   275→    { key: "category", header: "Category", value: (r) => r.category, render: (r) => <span className="text-xs">{r.category.replace(/_/g, " ")}</span>, hideOnMobile: true },
+   276→    {
+   277→      key: "customer", header: "Customer", value: (r) => r.customer?.companyName ?? "",
+   278→      render: (r) => <span className="text-sm truncate block max-w-[160px]">{r.customer?.companyName ?? "—"}</span>,
+   279→    },
+   280→    {
+   281→      key: "location", header: "Location", value: (r) => r.location?.name ?? "",
+   282→      render: (r) => r.location?.name ?? "—",
+   283→      hideOnMobile: true,
+   284→    },
+   285→    {
+   286→      key: "warrantyExpiry", header: "Warranty", value: (r) => r.warrantyExpiry ?? "",
+   287→      render: (r) => {
+   288→        if (!r.warrantyExpiry) return <span className="text-muted-foreground text-sm">—</span>;
+   289→        const expired = new Date(r.warrantyExpiry).getTime() < Date.now();
+   290→        return <span className={`text-xs whitespace-nowrap ${expired ? "text-red-600" : ""}`}>{fmtDate(r.warrantyExpiry)}</span>;
+   291→      },
+   292→      hideOnMobile: true,
+   293→    },
+   294→    { key: "status", header: "Status", value: (r) => r.status, render: (r) => <StatusBadge status={r.status} /> },
+   295→    {
+   296→      key: "actions", header: "", sortable: false,
+   297→      render: (r) => (
+   298→        <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+   299→          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openQr(r)} aria-label={`QR label for ${r.assetTag}`}>
+   300→            <QrCode className="h-4 w-4" />
+   301→          </Button>
+   302→          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openDetail(r)} aria-label={`History for ${r.assetTag}`}>
+   303→            <FileText className="h-4 w-4" />
+   304→          </Button>
+   305→          {can("equipment.update") && r.status !== "RETIRED" ? (
+   306→            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(r)} aria-label={`Edit ${r.assetTag}`}>
+   307→              <Pencil className="h-4 w-4" />
+   308→            </Button>
+   309→          ) : null}
+   310→          {can("equipment.delete") && r.status !== "RETIRED" ? (
+   311→            <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => setRetireRow(r)} aria-label={`Retire ${r.assetTag}`}>
+   312→              <Archive className="h-4 w-4" />
+   313→            </Button>
+   314→          ) : null}
+   315→        </div>
+   316→      ),
+   317→      className: "w-4",
+   318→    },
+   319→  ];
+   320→
+   321→  const formFields = (f: FormState, set: (patch: Partial<FormState>) => void, errs: FieldErrors, idp: string) => (
+   322→    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+   323→      <div className="sm:col-span-2">
+   324→        <Label htmlFor={`${idp}-name`}>Equipment name *</Label>
+   325→        <Input id={`${idp}-name`} value={f.name} onChange={(e) => set({ name: e.target.value })} placeholder="e.g. Chiller #1 — Level 3 Plant Room" />
+   326→        <FieldError msg={errs.name} />
+   327→      </div>
+   328→      <div>
+   329→        <Label htmlFor={`${idp}-serial`}>Serial number</Label>
+   330→        <Input id={`${idp}-serial`} value={f.serialNumber} onChange={(e) => set({ serialNumber: e.target.value })} />
+   331→      </div>
+   332→      <div>
+   333→        <Label htmlFor={`${idp}-category`}>Category</Label>
+   334→        <Select value={f.category || "GENERAL"} onValueChange={(v) => set({ category: v })}>
+   335→          <SelectTrigger id={`${idp}-category`}><SelectValue /></SelectTrigger>
+   336→          <SelectContent>
+   337→            {CATEGORIES.map((c) => <SelectItem key={c} value={c}>{c.replace(/_/g, " ")}</SelectItem>)}
+   338→          </SelectContent>
+   339→        </Select>
+   340→      </div>
+   341→      <div>
+   342→        <Label htmlFor={`${idp}-manu`}>Manufacturer</Label>
+   343→        <Input id={`${idp}-manu`} value={f.manufacturer} onChange={(e) => set({ manufacturer: e.target.value })} />
+   344→      </div>
+   345→      <div>
+   346→        <Label htmlFor={`${idp}-model`}>Model</Label>
+   347→        <Input id={`${idp}-model`} value={f.model} onChange={(e) => set({ model: e.target.value })} />
+   348→      </div>
+   349→      <div>
+   350→        <Label htmlFor={`${idp}-cust`}>Customer</Label>
+   351→        <Select value={f.customerId || "none"} onValueChange={(v) => set({ customerId: v === "none" ? "" : v })}>
+   352→          <SelectTrigger id={`${idp}-cust`}><SelectValue placeholder="Unassigned" /></SelectTrigger>
+   353→          <SelectContent>
+   354→            <SelectItem value="none">— Unassigned —</SelectItem>
+   355→            {customers.map((c) => <SelectItem key={c.id} value={c.id}>{c.companyName}</SelectItem>)}
+   356→          </SelectContent>
+   357→        </Select>
+   358→        <FieldError msg={errs.customerId} />
+   359→      </div>
+   360→      <div>
+   361→        <Label htmlFor={`${idp}-loc`}>Location</Label>
+   362→        {locationsAvailable === false ? (
+   363→          <p className="text-sm text-muted-foreground pt-2">Locations module not available yet.</p>
+   364→        ) : (
+   365→          <Select value={f.locationId || "none"} onValueChange={(v) => set({ locationId: v === "none" ? "" : v })}>
+   366→            <SelectTrigger id={`${idp}-loc`}><SelectValue placeholder="No location" /></SelectTrigger>
+   367→            <SelectContent>
+   368→              <SelectItem value="none">— No location —</SelectItem>
+   369→              {locations.map((l) => <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>)}
+   370→            </SelectContent>
+   371→          </Select>
+   372→        )}
+   373→        <FieldError msg={errs.locationId} />
+   374→      </div>
+   375→      <div>
+   376→        <Label htmlFor={`${idp}-inst`}>Installation date</Label>
+   377→        <Input id={`${idp}-inst`} type="date" value={f.installationDate} onChange={(e) => set({ installationDate: e.target.value })} />
+   378→        <FieldError msg={errs.installationDate} />
+   379→      </div>
+   380→      <div>
+   381→        <Label htmlFor={`${idp}-warr`}>Warranty expiry</Label>
+   382→        <Input id={`${idp}-warr`} type="date" value={f.warrantyExpiry} onChange={(e) => set({ warrantyExpiry: e.target.value })} />
+   383→        <FieldError msg={errs.warrantyExpiry} />
+   384→      </div>
+   385→      <div>
+   386→        <Label htmlFor={`${idp}-pm`}>PM cycle (days)</Label>
+   387→        <Input id={`${idp}-pm`} inputMode="numeric" value={f.pmFrequencyDays} onChange={(e) => set({ pmFrequencyDays: e.target.value.replace(/\D/g, "") })} />
+   388→        <FieldError msg={errs.pmFrequencyDays} />
+   389→      </div>
+   390→      <div className="sm:col-span-2">
+   391→        <Label htmlFor={`${idp}-notes`}>Notes</Label>
+   392→        <Textarea id={`${idp}-notes`} rows={2} value={f.notes} onChange={(e) => set({ notes: e.target.value })} placeholder="Capacity, access notes…" />
+   393→      </div>
+   394→    </div>
+   395→  );
+   396→
+   397→  return (
+   398→    <div>
+   399→      <PageHeader
+   400→        title="Equipment"
+   401→        subtitle="Asset register with QR scan-to-open labels"
+   402→        actions={
+   403→          can("equipment.create") ? (
+   404→            <Button onClick={() => { setFieldErrors({}); setCreateOpen(true); }}>
+   405→              <Plus className="h-4 w-4 mr-1.5" /> New Equipment
+   406→            </Button>
+   407→          ) : null
+   408→        }
+   409→      />
+   410→
+   411→      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+   412→        <StatCard title="Units" value={rows.length} icon={<Package className="h-5 w-5" />} loading={loading} />
+   413→        <StatCard title="Active" value={activeCount} tone="success" loading={loading} />
+   414→        <StatCard title="Under maintenance" value={maintenanceCount} tone={maintenanceCount ? "warning" : "success"} icon={<Wrench className="h-5 w-5" />} loading={loading} />
+   415→        <StatCard title="Warranty < 90 days" value={warrantySoon} tone={warrantySoon ? "warning" : "success"} icon={<CalendarClock className="h-5 w-5" />} loading={loading} />
+   416→      </div>
+   417→
+   418→      {error ? (
+   419→        <ErrorState message={error} onRetry={load} />
+   420→      ) : loading ? (
+   421→        <LoadingState label="Loading equipment…" />
+   422→      ) : (
+   423→        <DataTable
+   424→          columns={columns}
+   425→          rows={rows}
+   426→          rowKey={(r) => r.id}
+   427→          onRowClick={openDetail}
+   428→          searchPlaceholder="Search tag, name, serial, manufacturer…"
+   429→          filters={[
+   430→            {
+   431→              key: "status", label: "Status",
+   432→              options: [
+   433→                { value: "ACTIVE", label: "Active" },
+   434→                { value: "UNDER_MAINTENANCE", label: "Under maintenance" },
+   435→                { value: "RETIRED", label: "Retired" },
+   436→              ],
+   437→              match: (r, v) => r.status === v,
+   438→            },
+   439→            {
+   440→              key: "category", label: "Category",
+   441→              options: CATEGORIES.map((c) => ({ value: c, label: c.replace(/_/g, " ") })),
+   442→              match: (r, v) => r.category === v,
+   443→            },
+   444→          ]}
+   445→          emptyTitle="No equipment registered"
+   446→          emptyHint="Register your first asset to generate its QR label."
+   447→          exportName="equipment"
+   448→        />
+   449→      )}
+   450→
+   451→      {/* Create dialog (draft-protected) */}
+   452→      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+   453→        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+   454→          <DialogHeader>
+   455→            <DialogTitle>Register equipment</DialogTitle>
+   456→            <DialogDescription>Asset tag (EQ-…) and QR token are generated automatically.</DialogDescription>
+   457→          </DialogHeader>
+   458→
+   459→          {draft.draftExists ? (
+   460→            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm">
+   461→              <span className="flex-1 min-w-[140px]">You have an unsent draft from a previous session.</span>
+   462→              <Button size="sm" variant="outline" onClick={draft.restore}>
+   463→                <RotateCcw className="h-3.5 w-3.5 mr-1" /> Restore draft
+   464→              </Button>
+   465→              <Button size="sm" variant="ghost" onClick={draft.discard}>Discard</Button>
+   466→            </div>
+   467→          ) : draft.dirty && draft.lastSavedAt ? (
+   468→            <p className="text-xs text-muted-foreground">Draft saved automatically at {draft.lastSavedAt.toLocaleTimeString()} — restored automatically if you leave.</p>
+   469→          ) : null}
+   470→
+   471→          {formFields(draft.value, (patch) => draft.setValue(patch), fieldErrors, "eq")}
+   472→
+   473→          <DialogFooter>
+   474→            <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
+   475→            <Button onClick={submitCreate} disabled={saving}>{saving ? "Registering…" : "Register equipment"}</Button>
+   476→          </DialogFooter>
+   477→        </DialogContent>
+   478→      </Dialog>
+   479→
+   480→      {/* Edit dialog */}
+   481→      <Dialog open={!!editRow} onOpenChange={(o) => !o && setEditRow(null)}>
+   482→        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+   483→          <DialogHeader>
+   484→            <DialogTitle>Edit {editRow?.assetTag}</DialogTitle>
+   485→            <DialogDescription>Asset tag and QR token never change.</DialogDescription>
+   486→          </DialogHeader>
+   487→          {formFields(editForm, (patch) => setEditForm((f) => ({ ...f, ...patch })), fieldErrors, "eeq")}
+   488→          <div>
+   489→            <Label htmlFor="eeq-status">Status</Label>
+   490→            <Select value={editStatus} onValueChange={setEditStatus}>
+   491→              <SelectTrigger id="eeq-status" className="w-full sm:w-[240px]"><SelectValue /></SelectTrigger>
+   492→              <SelectContent>
+   493→                <SelectItem value="ACTIVE">Active</SelectItem>
+   494→                <SelectItem value="UNDER_MAINTENANCE">Under maintenance</SelectItem>
+   495→                <SelectItem value="RETIRED">Retired</SelectItem>
+   496→              </SelectContent>
+   497→            </Select>
+   498→          </div>
+   499→          <DialogFooter>
+   500→            <Button variant="outline" onClick={() => setEditRow(null)}>Cancel</Button>
+   501→            <Button onClick={submitEdit} disabled={saving}>{saving ? "Saving…" : "Save changes"}</Button>
+   502→          </DialogFooter>
+   503→        </DialogContent>
+   504→      </Dialog>
+   505→
+   506→      {/* QR dialog */}
+   507→      <Dialog open={!!qr || qrLoading} onOpenChange={(o) => { if (!o) { setQr(null); setQrLoading(false); } }}>
+   508→        <DialogContent className="sm:max-w-sm">
+   509→          <DialogHeader>
+   510→            <DialogTitle>QR label</DialogTitle>
+   511→            <DialogDescription>Scanning opens this asset in the app (staff) or its portal view.</DialogDescription>
+   512→          </DialogHeader>
+   513→          {qr ? (
+   514→            <div className="space-y-3">
+   515→              <div className="flex flex-col items-center gap-2">
+   516→                { }
+   517→                <img src={qr.dataUrl} alt={`QR code for ${qr.assetTag}`} className="rounded-lg border p-2 w-56 h-56" />
+   518→                <div className="text-center">
+   519→                  <p className="font-medium">{qr.name}</p>
+   520→                  <p className="text-xs text-muted-foreground font-mono">{qr.assetTag}</p>
+   521→                </div>
+   522→              </div>
+   523→              <p className="text-[11px] text-muted-foreground break-all text-center">{qr.url}</p>
+   524→              <div className="grid grid-cols-2 gap-2 no-print">
+   525→                <Button variant="outline" onClick={downloadQr}>
+   526→                  <Download className="h-4 w-4 mr-1.5" /> Download
+   527→                </Button>
+   528→                <Button variant="outline" onClick={() => window.print()}>
+   529→                  <Printer className="h-4 w-4 mr-1.5" /> Print
+   530→                </Button>
+   531→              </div>
+   532→            </div>
+   533→          ) : (
+   534→            <LoadingState label="Generating QR…" rows={2} />
+   535→          )}
+   536→        </DialogContent>
+   537→      </Dialog>
+   538→
+   539→      {/* Detail / history dialog */}
+   540→      <Dialog open={!!detail || detailLoading} onOpenChange={(o) => { if (!o) setDetail(null); }}>
+   541→        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+   542→          <DialogHeader>
+   543→            <DialogTitle className="flex items-center gap-2">
+   544→              {detailLoading ? "Loading…" : detail?.name}
+   545→              {detail ? <StatusBadge status={detail.status} /> : null}
+   546→            </DialogTitle>
+   547→            <DialogDescription>
+   548→              {detail ? `${detail.assetTag} · ${[detail.manufacturer, detail.model].filter(Boolean).join(" ") || "No model info"}` : ""}
+   549→            </DialogDescription>
+   550→          </DialogHeader>
+   551→          {detail ? (
+   552→            <div className="space-y-5">
+   553→              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
+   554→                <div><p className="text-xs text-muted-foreground">Customer</p><p className="truncate">{detail.customer?.companyName ?? "—"}</p></div>
+   555→                <div><p className="text-xs text-muted-foreground">Location</p><p className="truncate">{detail.location?.name ?? "—"}</p></div>
+   556→                <div><p className="text-xs text-muted-foreground">Installed</p><p>{fmtDate(detail.installationDate)}</p></div>
+   557→                <div><p className="text-xs text-muted-foreground">Warranty</p><p>{fmtDate(detail.warrantyExpiry)}</p></div>
+   558→                <div><p className="text-xs text-muted-foreground">Serial</p><p className="font-mono text-xs pt-0.5 truncate">{detail.serialNumber || "—"}</p></div>
+   559→                <div><p className="text-xs text-muted-foreground">Category</p><p>{detail.category.replace(/_/g, " ")}</p></div>
+   560→                <div><p className="text-xs text-muted-foreground">PM cycle</p><p>{detail.pmFrequencyDays} days</p></div>
+   561→                <div><p className="text-xs text-muted-foreground">QR token</p><p className="font-mono text-[10px] pt-1 truncate">{detail.qrToken}</p></div>
+   562→              </div>
+   563→
+   564→              <HistorySection icon={<FileText className="h-3.5 w-3.5" />} title="Complaints" empty="No complaints on this unit."
+   565→                items={detail.history.complaints.map((c) => ({ id: c.id, code: c.code, primary: c.title, badge: c.status, secondary: fmtDate(c.createdAt), badge2: c.priority }))} />
+   566→              <HistorySection icon={<Wrench className="h-3.5 w-3.5" />} title="Work orders" empty="No work orders yet."
+   567→                items={detail.history.workOrders.map((w) => ({ id: w.id, code: w.code, primary: w.title, badge: w.status, secondary: fmtDate(w.createdAt), badge2: w.priority }))} />
+   568→              <HistorySection icon={<CalendarClock className="h-3.5 w-3.5" />} title="PM tasks" empty="No preventive maintenance scheduled."
+   569→                items={detail.history.pmTasks.map((p) => ({ id: p.id, code: p.code, primary: `Due ${fmtDate(p.dueDate)}`, badge: p.status, secondary: p.completedAt ? `Done ${fmtDate(p.completedAt)}` : "Not completed" }))} />
+   570→              <HistorySection icon={<SearchCheck className="h-3.5 w-3.5" />} title="Inspections" empty="No inspection reports linked."
+   571→                items={detail.history.inspections.map((i) => ({ id: i.id, code: i.code, primary: i.title, badge: i.status, secondary: fmtDate(i.inspectionDate), badge2: i.overallCondition }))} />
+   572→
+   573→              {detail.notes ? (
+   574→                <div className="rounded-lg bg-muted/50 px-3 py-2 text-sm">
+   575→                  <p className="text-xs text-muted-foreground mb-1">Notes</p>
+   576→                  {detail.notes}
+   577→                </div>
+   578→              ) : null}
+   579→            </div>
+   580→          ) : (
+   581→            <LoadingState label="Loading equipment…" rows={3} />
+   582→          )}
+   583→        </DialogContent>
+   584→      </Dialog>
+   585→
+   586→      {/* Retire confirm */}
+   587→      <AlertDialog open={!!retireRow} onOpenChange={(o) => !o && setRetireRow(null)}>
+   588→        <AlertDialogContent>
+   589→          <AlertDialogHeader>
+   590→            <AlertDialogTitle>Retire {retireRow?.assetTag}?</AlertDialogTitle>
+   591→            <AlertDialogDescription>
+   592→              The unit is marked RETIRED, never deleted — complaints, work orders and PM history stay attached for audit and finance.
+   593→            </AlertDialogDescription>
+   594→          </AlertDialogHeader>
+   595→          <AlertDialogFooter>
+   596→            <AlertDialogCancel>Cancel</AlertDialogCancel>
+   597→            <AlertDialogAction disabled={saving} onClick={(e) => { e.preventDefault(); submitRetire(); }}>
+   598→              {saving ? "Working…" : "Retire equipment"}
+   599→            </AlertDialogAction>
+   600→          </AlertDialogFooter>
+   601→        </AlertDialogContent>
+   602→      </AlertDialog>
+   603→    </div>
+   604→  );
+   605→}
+   606→
+   607→type HistoryItem = { id: string; code: string; primary: string; badge: string; secondary: string; badge2?: string };
+   608→
+   609→function HistorySection({ icon, title, items, empty }: { icon: ReactNode; title: string; items: HistoryItem[]; empty: string }) {
+   610→  return (
+   611→    <div>
+   612→      <p className="text-sm font-medium mb-2 flex items-center gap-1.5">{icon} {title} <span className="text-muted-foreground font-normal">({items.length})</span></p>
+   613→      {items.length === 0 ? (
+   614→        <p className="text-xs text-muted-foreground">{empty}</p>
+   615→      ) : (
+   616→        <div className="divide-y rounded-lg border">
+   617→          {items.map((it) => (
+   618→            <div key={it.id} className="flex items-center gap-3 px-3 py-2">
+   619→              <span className="font-mono text-xs text-muted-foreground w-24 shrink-0">{it.code}</span>
+   620→              <span className="flex-1 min-w-0 truncate text-sm">{it.primary}</span>
+   621→              <span className="text-xs text-muted-foreground whitespace-nowrap hidden sm:block">{it.secondary}</span>
+   622→              {it.badge2 ? <StatusBadge status={it.badge2} /> : null}
+   623→              <StatusBadge status={it.badge} />
+   624→            </div>
+   625→          ))}
+   626→        </div>
+   627→      )}
+   628→    </div>
+   629→  );
+   630→}
+   631→

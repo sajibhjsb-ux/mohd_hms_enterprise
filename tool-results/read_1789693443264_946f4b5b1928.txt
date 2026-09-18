@@ -1,0 +1,767 @@
+     1→"use client";
+     2→
+     3→// HR module — workforce overview (headcount, attendance KPIs, 7-day trend),
+     4→// read-only employee register, attendance marking and leave approval workflow.
+     5→
+     6→import { useCallback, useEffect, useMemo, useState } from "react";
+     7→import {
+     8→  Users, UserCheck, CalendarOff, UserX, Clock, CalendarPlus, Plus, Check, X, Info,
+     9→} from "lucide-react";
+    10→import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+    11→import { api, qs } from "@/lib/hms/api-client";
+    12→import { fmtDate, toDateInput } from "@/lib/hms/format";
+    13→import { humanize, PERMISSIONS } from "@/lib/hms/constants";
+    14→import { hasPerm, useSession } from "@/components/hms/session";
+    15→import { useToast } from "@/hooks/use-toast";
+    16→import { DataTable, type Column } from "@/components/hms/shared/data-table";
+    17→import {
+    18→  EmptyState, ErrorState, LoadingState, PageHeader, StatCard, StatusBadge,
+    19→} from "@/components/hms/shared/ui-bits";
+    20→import { Button } from "@/components/ui/button";
+    21→import {
+    22→  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+    23→} from "@/components/ui/dialog";
+    24→import { Input } from "@/components/ui/input";
+    25→import { Label } from "@/components/ui/label";
+    26→import {
+    27→  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+    28→} from "@/components/ui/select";
+    29→import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+    30→import { Textarea } from "@/components/ui/textarea";
+    31→
+    32→// ── Types ──
+    33→
+    34→type Overview = {
+    35→  headcount: number;
+    36→  activeCount: number;
+    37→  onLeaveToday: number;
+    38→  presentToday: number;
+    39→  halfDayToday?: number;
+    40→  absentToday: number;
+    41→  pendingLeaves: number;
+    42→  departments: { id: string; name: string; description?: string; count: number }[];
+    43→  attendance7d: { date: string; present: number; absent: number; leave: number; half: number }[];
+    44→};
+    45→
+    46→type Employee = {
+    47→  id: string;
+    48→  employeeNo: string;
+    49→  firstName: string;
+    50→  lastName: string;
+    51→  position: string;
+    52→  email: string;
+    53→  phone: string;
+    54→  status: string;
+    55→  departmentId: string | null;
+    56→  department: { id: string; name: string } | null;
+    57→};
+    58→
+    59→type AttendanceRecord = {
+    60→  id: string;
+    61→  date: string;
+    62→  status: string;
+    63→  checkIn: string | null;
+    64→  checkOut: string | null;
+    65→  notes: string;
+    66→  employee: { id: string; firstName: string; lastName: string; employeeNo: string; position?: string };
+    67→};
+    68→
+    69→type LeaveRequest = {
+    70→  id: string;
+    71→  type: string;
+    72→  startDate: string;
+    73→  endDate: string;
+    74→  days: number;
+    75→  reason: string;
+    76→  status: string;
+    77→  approvedByName?: string | null;
+    78→  createdAt: string;
+    79→  employee: { id: string; firstName: string; lastName: string; employeeNo: string };
+    80→};
+    81→
+    82→type Option = { id: string; label: string };
+    83→
+    84→const LEAVE_TYPES = ["ANNUAL", "SICK", "UNPAID", "OTHER"];
+    85→const ATTENDANCE_STATUSES = ["PRESENT", "ABSENT", "LEAVE", "HALF_DAY"];
+    86→
+    87→const todayInput = () => toDateInput(new Date());
+    88→
+    89→export function HrModule() {
+    90→  const { user } = useSession();
+    91→  const { toast } = useToast();
+    92→
+    93→  const canManage = hasPerm(user, PERMISSIONS.hr_manage);
+    94→  const canReadEmployees = hasPerm(user, PERMISSIONS.employees_read) || canManage;
+    95→  const canFileForOthers = canManage || user?.role === "SUPER_ADMIN" || user?.role === "ADMIN";
+    96→
+    97→  // ── Overview ──
+    98→  const [overview, setOverview] = useState<Overview | null>(null);
+    99→  const [overviewError, setOverviewError] = useState<string | null>(null);
+   100→
+   101→  const [employees, setEmployees] = useState<Employee[] | null>(null);
+   102→  const [employeesError, setEmployeesError] = useState<string | null>(null);
+   103→
+   104→  const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
+   105→  const [attendanceDate, setAttendanceDate] = useState(todayInput());
+   106→  const [attendanceLoading, setAttendanceLoading] = useState(true);
+   107→
+   108→  const [leaves, setLeaves] = useState<LeaveRequest[]>([]);
+   109→  const [leaveStatus, setLeaveStatus] = useState("ALL");
+   110→  const [leaveLoading, setLeaveLoading] = useState(true);
+   111→
+   112→  const [tab, setTab] = useState("attendance");
+   113→
+   114→  // ── Dialogs ──
+   115→  const [markOpen, setMarkOpen] = useState(false);
+   116→  const [markSaving, setMarkSaving] = useState(false);
+   117→  const [markForm, setMarkForm] = useState({
+   118→    employeeId: "",
+   119→    date: todayInput(),
+   120→    status: "PRESENT",
+   121→    checkIn: "08:00",
+   122→    checkOut: "17:00",
+   123→    notes: "",
+   124→  });
+   125→
+   126→  const [leaveOpen, setLeaveOpen] = useState(false);
+   127→  const [leaveSaving, setLeaveSaving] = useState(false);
+   128→  const [leaveForm, setLeaveForm] = useState({
+   129→    employeeId: "",
+   130→    type: "ANNUAL",
+   131→    startDate: todayInput(),
+   132→    endDate: todayInput(),
+   133→    reason: "",
+   134→  });
+   135→
+   136→  const [deptOpen, setDeptOpen] = useState(false);
+   137→  const [deptSaving, setDeptSaving] = useState(false);
+   138→  const [deptForm, setDeptForm] = useState({ name: "", description: "" });
+   139→
+   140→  const [busyLeaveId, setBusyLeaveId] = useState<string | null>(null);
+   141→
+   142→  const loadOverview = useCallback(async () => {
+   143→    setOverviewError(null);
+   144→    try {
+   145→      const res = await api.get<Overview>("/api/v1/hr/overview");
+   146→      setOverview(res.data);
+   147→    } catch (e) {
+   148→      setOverviewError(e instanceof Error ? e.message : "Unable to load HR overview.");
+   149→    }
+   150→  }, []);
+   151→
+   152→  const loadEmployees = useCallback(async () => {
+   153→    if (!canReadEmployees) return;
+   154→    setEmployeesError(null);
+   155→    try {
+   156→      const res = await api.get<Employee[]>(`/api/v1/employees${qs({ pageSize: "200" })}`);
+   157→      setEmployees(res.data ?? []);
+   158→    } catch (e) {
+   159→      setEmployees(null);
+   160→      setEmployeesError(e instanceof Error ? e.message : "Employees register is unavailable.");
+   161→    }
+   162→  }, [canReadEmployees]);
+   163→
+   164→  const loadAttendance = useCallback(async () => {
+   165→    setAttendanceLoading(true);
+   166→    try {
+   167→      const res = await api.get<AttendanceRecord[]>(`/api/v1/hr/attendance${qs({ date: attendanceDate, pageSize: "200" })}`);
+   168→      setAttendance(res.data ?? []);
+   169→    } catch {
+   170→      setAttendance([]);
+   171→    } finally {
+   172→      setAttendanceLoading(false);
+   173→    }
+   174→  }, [attendanceDate]);
+   175→
+   176→  const loadLeaves = useCallback(async () => {
+   177→    setLeaveLoading(true);
+   178→    try {
+   179→      const res = await api.get<LeaveRequest[]>(`/api/v1/hr/leave${qs({ pageSize: "200", ...(leaveStatus !== "ALL" ? { status: leaveStatus } : {}) })}`);
+   180→      setLeaves(res.data ?? []);
+   181→    } catch {
+   182→      setLeaves([]);
+   183→    } finally {
+   184→      setLeaveLoading(false);
+   185→    }
+   186→  }, [leaveStatus]);
+   187→
+   188→  useEffect(() => {
+   189→    loadOverview();
+   190→    loadEmployees();
+   191→  }, [loadOverview, loadEmployees]);
+   192→
+   193→  useEffect(() => {
+   194→    loadAttendance();
+   195→  }, [loadAttendance]);
+   196→
+   197→  useEffect(() => {
+   198→    loadLeaves();
+   199→  }, [loadLeaves]);
+   200→
+   201→  const employeeOptions = useMemo<Option[]>(() => {
+   202→    if (employees === null) return [];
+   203→    return employees.map((e) => ({ id: e.id, label: `${e.firstName} ${e.lastName} (${e.employeeNo})` }));
+   204→  }, [employees]);
+   205→
+   206→  const chartData = useMemo(() => {
+   207→    if (!overview) return [];
+   208→    return overview.attendance7d.map((d) => ({
+   209→      date: d.date.slice(5), // MM-DD for compact axis
+   210→      Present: d.present,
+   211→      Half: d.half,
+   212→      Leave: d.leave,
+   213→      Absent: d.absent,
+   214→    }));
+   215→  }, [overview]);
+   216→
+   217→  // ── Attendance mark (upsert) ──
+   218→  const openMark = (record?: AttendanceRecord) => {
+   219→    setMarkForm({
+   220→      employeeId: record?.employee.id ?? "",
+   221→      date: record ? toDateInput(record.date) : attendanceDate,
+   222→      status: record?.status ?? "PRESENT",
+   223→      checkIn: record?.checkIn ? new Date(record.checkIn).toTimeString().slice(0, 5) : "08:00",
+   224→      checkOut: record?.checkOut ? new Date(record.checkOut).toTimeString().slice(0, 5) : "17:00",
+   225→      notes: record?.notes ?? "",
+   226→    });
+   227→    setMarkOpen(true);
+   228→  };
+   229→
+   230→  const saveMark = async () => {
+   231→    if (!markForm.employeeId) {
+   232→      toast({ title: "Select an employee", variant: "destructive" });
+   233→      return;
+   234→    }
+   235→    setMarkSaving(true);
+   236→    try {
+   237→      const existing = attendance.find((a) => a.employee.id === markForm.employeeId);
+   238→      await api.post("/api/v1/hr/attendance", {
+   239→        employeeId: markForm.employeeId,
+   240→        date: markForm.date,
+   241→        status: markForm.status,
+   242→        checkIn: ["PRESENT", "HALF_DAY"].includes(markForm.status) ? markForm.checkIn || null : null,
+   243→        checkOut: ["PRESENT", "HALF_DAY"].includes(markForm.status) ? markForm.checkOut || null : null,
+   244→        notes: markForm.notes || null,
+   245→      });
+   246→      toast({
+   247→        title: existing ? "Attendance updated" : "Attendance marked",
+   248→        description: `${humanize(markForm.status)} on ${markForm.date}.`,
+   249→      });
+   250→      setMarkOpen(false);
+   251→      await Promise.all([loadAttendance(), loadOverview()]);
+   252→    } catch (e) {
+   253→      toast({ title: "Could not mark attendance", description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+   254→    } finally {
+   255→      setMarkSaving(false);
+   256→    }
+   257→  };
+   258→
+   259→  // ── Leave actions ──
+   260→  const saveLeave = async () => {
+   261→    if (leaveForm.endDate < leaveForm.startDate) {
+   262→      toast({ title: "End date cannot be before start date", variant: "destructive" });
+   263→      return;
+   264→    }
+   265→    setLeaveSaving(true);
+   266→    try {
+   267→      await api.post("/api/v1/hr/leave", {
+   268→        employeeId: canFileForOthers && leaveForm.employeeId ? leaveForm.employeeId : undefined,
+   269→        type: leaveForm.type,
+   270→        startDate: leaveForm.startDate,
+   271→        endDate: leaveForm.endDate,
+   272→        reason: leaveForm.reason,
+   273→      });
+   274→      toast({ title: "Leave request submitted", description: "It is now pending approval." });
+   275→      setLeaveOpen(false);
+   276→      setLeaveForm({ employeeId: "", type: "ANNUAL", startDate: todayInput(), endDate: todayInput(), reason: "" });
+   277→      await Promise.all([loadLeaves(), loadOverview()]);
+   278→    } catch (e) {
+   279→      toast({ title: "Could not submit request", description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+   280→    } finally {
+   281→      setLeaveSaving(false);
+   282→    }
+   283→  };
+   284→
+   285→  const decideLeave = async (leave: LeaveRequest, action: "approve" | "reject") => {
+   286→    setBusyLeaveId(leave.id);
+   287→    try {
+   288→      await api.patch(`/api/v1/hr/leave/${leave.id}`, { action });
+   289→      toast({
+   290→        title: action === "approve" ? "Leave approved" : "Leave rejected",
+   291→        description: `${leave.employee.firstName} ${leave.employee.lastName} · ${leave.days} day(s).`,
+   292→      });
+   293→      await Promise.all([loadLeaves(), loadOverview()]);
+   294→    } catch (e) {
+   295→      toast({ title: "Decision failed", description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+   296→    } finally {
+   297→      setBusyLeaveId(null);
+   298→    }
+   299→  };
+   300→
+   301→  // ── Department create ──
+   302→  const saveDepartment = async () => {
+   303→    if (!deptForm.name.trim()) {
+   304→      toast({ title: "Department name is required", variant: "destructive" });
+   305→      return;
+   306→    }
+   307→    setDeptSaving(true);
+   308→    try {
+   309→      await api.post("/api/v1/hr/departments", { name: deptForm.name.trim(), description: deptForm.description.trim() });
+   310→      toast({ title: "Department created", description: deptForm.name.trim() });
+   311→      setDeptForm({ name: "", description: "" });
+   312→      setDeptOpen(false);
+   313→      await loadOverview();
+   314→    } catch (e) {
+   315→      toast({ title: "Could not create department", description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+   316→    } finally {
+   317→      setDeptSaving(false);
+   318→    }
+   319→  };
+   320→
+   321→  // ── Columns ──
+   322→  const employeeColumns: Column<Employee>[] = [
+   323→    { key: "employeeNo", header: "Employee No", value: (e) => e.employeeNo, className: "font-medium whitespace-nowrap" },
+   324→    {
+   325→      key: "name", header: "Name", value: (e) => `${e.firstName} ${e.lastName}`,
+   326→      render: (e) => <span>{e.firstName} {e.lastName}</span>,
+   327→    },
+   328→    { key: "position", header: "Position", value: (e) => e.position, hideOnMobile: true },
+   329→    { key: "department", header: "Department", value: (e) => e.department?.name ?? "", render: (e) => e.department?.name ?? "—" },
+   330→    { key: "email", header: "Email", value: (e) => e.email, hideOnMobile: true },
+   331→    { key: "phone", header: "Phone", value: (e) => e.phone, hideOnMobile: true },
+   332→    { key: "status", header: "Status", value: (e) => e.status, render: (e) => <StatusBadge status={e.status} /> },
+   333→  ];
+   334→
+   335→  const attendanceColumns: Column<AttendanceRecord>[] = [
+   336→    {
+   337→      key: "employee", header: "Employee", value: (a) => `${a.employee.firstName} ${a.employee.lastName}`,
+   338→      render: (a) => (
+   339→        <span>
+   340→          {a.employee.firstName} {a.employee.lastName}{" "}
+   341→          <span className="text-xs text-muted-foreground">({a.employee.employeeNo})</span>
+   342→        </span>
+   343→      ),
+   344→    },
+   345→    { key: "date", header: "Date", value: (a) => a.date, render: (a) => fmtDate(a.date), hideOnMobile: true },
+   346→    { key: "status", header: "Status", value: (a) => a.status, render: (a) => <StatusBadge status={a.status} /> },
+   347→    {
+   348→      key: "checkIn", header: "Check In", hideOnMobile: true, sortable: false, value: (a) => a.checkIn ?? "",
+   349→      render: (a) => (a.checkIn ? new Date(a.checkIn).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "—"),
+   350→    },
+   351→    {
+   352→      key: "checkOut", header: "Check Out", hideOnMobile: true, sortable: false, value: (a) => a.checkOut ?? "",
+   353→      render: (a) => (a.checkOut ? new Date(a.checkOut).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "—"),
+   354→    },
+   355→    { key: "notes", header: "Notes", value: (a) => a.notes, render: (a) => a.notes || <span className="text-muted-foreground">—</span>, hideOnMobile: true },
+   356→    ...(canManage
+   357→      ? [{
+   358→          key: "attActions", header: "", sortable: false,
+   359→          render: (a: AttendanceRecord) => (
+   360→            <Button variant="outline" size="sm" onClick={() => openMark(a)} aria-label={`Edit attendance for ${a.employee.employeeNo}`}>
+   361→              Edit
+   362→            </Button>
+   363→          ),
+   364→        } satisfies Column<AttendanceRecord>]
+   365→      : []),
+   366→  ];
+   367→
+   368→  const leaveColumns: Column<LeaveRequest>[] = [
+   369→    {
+   370→      key: "employee", header: "Employee", value: (l) => `${l.employee.firstName} ${l.employee.lastName}`,
+   371→      render: (l) => (
+   372→        <span>
+   373→          {l.employee.firstName} {l.employee.lastName}{" "}
+   374→          <span className="text-xs text-muted-foreground">({l.employee.employeeNo})</span>
+   375→        </span>
+   376→      ),
+   377→    },
+   378→    { key: "type", header: "Type", value: (l) => l.type, render: (l) => <StatusBadge status={l.type} /> },
+   379→    {
+   380→      key: "period", header: "Period", sortable: false, value: (l) => l.startDate,
+   381→      render: (l) => (
+   382→        <span className="whitespace-nowrap text-sm">{fmtDate(l.startDate)} → {fmtDate(l.endDate)}</span>
+   383→      ),
+   384→    },
+   385→    { key: "days", header: "Days", value: (l) => l.days, render: (l) => <span className="tabular-nums">{l.days}</span> },
+   386→    { key: "reason", header: "Reason", value: (l) => l.reason, render: (l) => l.reason || <span className="text-muted-foreground">—</span>, hideOnMobile: true },
+   387→    { key: "status", header: "Status", value: (l) => l.status, render: (l) => <StatusBadge status={l.status} /> },
+   388→    {
+   389→      key: "approvedByName", header: "Approved By", hideOnMobile: true, value: (l) => l.approvedByName ?? "",
+   390→      render: (l) => l.approvedByName ?? <span className="text-muted-foreground">—</span>,
+   391→    },
+   392→    ...(canManage
+   393→      ? [{
+   394→          key: "leaveActions", header: "Decision", sortable: false,
+   395→          render: (l: LeaveRequest) =>
+   396→            l.status === "PENDING" ? (
+   397→              <div className="flex items-center gap-1.5">
+   398→                <Button
+   399→                  variant="outline" size="sm"
+   400→                  disabled={busyLeaveId === l.id}
+   401→                  onClick={() => void decideLeave(l, "approve")}
+   402→                  aria-label={`Approve leave for ${l.employee.employeeNo}`}
+   403→                >
+   404→                  <Check className="h-3.5 w-3.5 text-emerald-600" /> Approve
+   405→                </Button>
+   406→                <Button
+   407→                  variant="ghost" size="sm"
+   408→                  disabled={busyLeaveId === l.id}
+   409→                  onClick={() => void decideLeave(l, "reject")}
+   410→                  aria-label={`Reject leave for ${l.employee.employeeNo}`}
+   411→                >
+   412→                  <X className="h-3.5 w-3.5 text-red-600" /> Reject
+   413→                </Button>
+   414→              </div>
+   415→            ) : (
+   416→              <span className="text-xs text-muted-foreground">—</span>
+   417→            ),
+   418→        } satisfies Column<LeaveRequest>]
+   419→      : []),
+   420→  ];
+   421→
+   422→  return (
+   423→    <div>
+   424→      <PageHeader
+   425→        title="Human Resources"
+   426→        subtitle="Headcount, attendance and leave management"
+   427→        actions={
+   428→          canManage ? (
+   429→            <>
+   430→              <Button variant="outline" size="sm" onClick={() => openMark()} disabled={employees === null && employeeOptions.length === 0}>
+   431→                <Clock className="h-4 w-4 mr-1.5" /> Mark Attendance
+   432→              </Button>
+   433→              <Button variant="outline" size="sm" onClick={() => setLeaveOpen(true)}>
+   434→                <CalendarPlus className="h-4 w-4 mr-1.5" /> New Leave Request
+   435→              </Button>
+   436→              <Button size="sm" onClick={() => setDeptOpen(true)}>
+   437→                <Plus className="h-4 w-4 mr-1.5" /> Department
+   438→              </Button>
+   439→            </>
+   440→          ) : (
+   441→            <Button variant="outline" size="sm" onClick={() => setLeaveOpen(true)}>
+   442→              <CalendarPlus className="h-4 w-4 mr-1.5" /> New Leave Request
+   443→            </Button>
+   444→          )
+   445→        }
+   446→      />
+   447→
+   448→      {/* ── Overview ── */}
+   449→      {overviewError ? (
+   450→        <ErrorState message={overviewError} onRetry={() => void loadOverview()} />
+   451→      ) : !overview ? (
+   452→        <LoadingState label="Loading HR overview…" rows={2} />
+   453→      ) : (
+   454→        <>
+   455→          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-5">
+   456→            <StatCard title="Headcount" value={overview.headcount} sub={`${overview.activeCount} active`} icon={<Users className="h-5 w-5" />} loading={!overview} />
+   457→            <StatCard title="Present Today" value={overview.presentToday} icon={<UserCheck className="h-5 w-5" />} tone="success" loading={!overview} />
+   458→            <StatCard title="Absent Today" value={overview.absentToday} icon={<UserX className="h-5 w-5" />} tone="danger" loading={!overview} />
+   459→            <StatCard title="On Leave Today" value={overview.onLeaveToday} icon={<CalendarOff className="h-5 w-5" />} tone="warning" loading={!overview} />
+   460→            <StatCard title="Pending Leaves" value={overview.pendingLeaves} icon={<Clock className="h-5 w-5" />} loading={!overview} />
+   461→          </div>
+   462→
+   463→          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+   464→            <div className="lg:col-span-2 rounded-xl border bg-card p-4">
+   465→              <div className="text-sm font-medium mb-3">Attendance — last 7 days</div>
+   466→              <div className="h-[220px]">
+   467→                <ResponsiveContainer width="100%" height="100%">
+   468→                  <BarChart data={chartData} margin={{ top: 4, right: 8, left: -22, bottom: 0 }}>
+   469→                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+   470→                    <XAxis dataKey="date" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
+   471→                    <YAxis allowDecimals={false} tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
+   472→                    <Tooltip />
+   473→                    <Legend wrapperStyle={{ fontSize: 11 }} />
+   474→                    <Bar dataKey="Present" stackId="a" fill="#10b981" radius={[0, 0, 0, 0]} />
+   475→                    <Bar dataKey="Half" stackId="a" fill="#f59e0b" />
+   476→                    <Bar dataKey="Leave" stackId="a" fill="#64748b" />
+   477→                    <Bar dataKey="Absent" stackId="a" fill="#ef4444" radius={[3, 3, 0, 0]} />
+   478→                  </BarChart>
+   479→                </ResponsiveContainer>
+   480→              </div>
+   481→            </div>
+   482→            <div className="rounded-xl border bg-card p-4">
+   483→              <div className="flex items-center justify-between mb-3">
+   484→                <div className="text-sm font-medium">Departments</div>
+   485→                {canManage ? (
+   486→                  <Button variant="ghost" size="sm" onClick={() => setDeptOpen(true)} aria-label="Add department">
+   487→                    <Plus className="h-4 w-4" />
+   488→                  </Button>
+   489→                ) : null}
+   490→              </div>
+   491→              {overview.departments.length === 0 ? (
+   492→                <p className="text-sm text-muted-foreground">No departments yet.</p>
+   493→              ) : (
+   494→                <ul className="space-y-2">
+   495→                  {overview.departments.map((d) => (
+   496→                    <li key={d.id} className="flex items-center justify-between text-sm">
+   497→                      <span className="truncate">
+   498→                        {d.name}
+   499→                        {d.description ? <span className="block text-xs text-muted-foreground truncate">{d.description}</span> : null}
+   500→                      </span>
+   501→                      <span className="ml-2 rounded-full bg-primary/10 text-primary text-xs font-medium px-2 py-0.5 tabular-nums shrink-0">
+   502→                        {d.count}
+   503→                      </span>
+   504→                    </li>
+   505→                  ))}
+   506→                </ul>
+   507→              )}
+   508→            </div>
+   509→          </div>
+   510→        </>
+   511→      )}
+   512→
+   513→      {/* ── Tabs ── */}
+   514→      <Tabs value={tab} onValueChange={setTab}>
+   515→        <TabsList className="mb-4">
+   516→          <TabsTrigger value="employees"><Users className="h-4 w-4 mr-1.5" /> Employees</TabsTrigger>
+   517→          <TabsTrigger value="attendance"><Clock className="h-4 w-4 mr-1.5" /> Attendance</TabsTrigger>
+   518→          <TabsTrigger value="leave"><CalendarPlus className="h-4 w-4 mr-1.5" /> Leave</TabsTrigger>
+   519→        </TabsList>
+   520→
+   521→        <TabsContent value="employees">
+   522→          {!canReadEmployees ? (
+   523→            <EmptyState
+   524→              title="Employees register is restricted"
+   525→              hint="You need the employees.read permission to view the register. Employee management lives in the Employees module."
+   526→            />
+   527→          ) : employeesError ? (
+   528→            <div className="space-y-3">
+   529→              <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+   530→                <Info className="h-4 w-4 mt-0.5 shrink-0" />
+   531→                <span>The employee register (Employees module) is not available right now. HR KPIs and attendance keep working from this module.</span>
+   532→              </div>
+   533→              <ErrorState message={employeesError} onRetry={() => void loadEmployees()} />
+   534→            </div>
+   535→          ) : employees === null ? (
+   536→            <LoadingState label="Loading employees…" />
+   537→          ) : employees.length === 0 ? (
+   538→            <EmptyState title="No employees" hint="Employee records are managed in the Employees module." />
+   539→          ) : (
+   540→            <DataTable
+   541→              columns={employeeColumns}
+   542→              rows={employees}
+   543→              rowKey={(e) => e.id}
+   544→              searchPlaceholder="Search name, number, position…"
+   545→              emptyTitle="No employees match"
+   546→              exportName="employees"
+   547→            />
+   548→          )}
+   549→        </TabsContent>
+   550→
+   551→        <TabsContent value="attendance">
+   552→          <div className="flex flex-col sm:flex-row sm:items-end gap-3 mb-4">
+   553→            <div className="space-y-1.5">
+   554→              <Label htmlFor="hr-att-date">Date</Label>
+   555→              <Input
+   556→                id="hr-att-date"
+   557→                type="date"
+   558→                value={attendanceDate}
+   559→                onChange={(e) => setAttendanceDate(e.target.value)}
+   560→                className="w-[180px]"
+   561→              />
+   562→            </div>
+   563→            {canManage ? (
+   564→              <Button variant="outline" size="sm" onClick={() => openMark()} disabled={employees === null && employeeOptions.length === 0}>
+   565→                <Plus className="h-4 w-4 mr-1.5" /> Mark Attendance
+   566→              </Button>
+   567→            ) : null}
+   568→          </div>
+   569→
+   570→          {attendanceLoading ? (
+   571→            <LoadingState label="Loading attendance…" />
+   572→          ) : attendance.length === 0 ? (
+   573→            <EmptyState
+   574→              title="No attendance records for this date"
+   575→              hint={canManage ? "Use Mark Attendance to record the register for this day." : "Nothing was recorded for this date."}
+   576→              action={canManage ? <Button size="sm" variant="outline" onClick={() => openMark()}><Plus className="h-4 w-4 mr-1.5" /> Mark Attendance</Button> : undefined}
+   577→            />
+   578→          ) : (
+   579→            <DataTable
+   580→              columns={attendanceColumns}
+   581→              rows={attendance}
+   582→              rowKey={(a) => a.id}
+   583→              searchPlaceholder="Search employee…"
+   584→              emptyTitle="No records match"
+   585→              exportName={`attendance-${attendanceDate}`}
+   586→            />
+   587→          )}
+   588→        </TabsContent>
+   589→
+   590→        <TabsContent value="leave">
+   591→          {leaveLoading ? (
+   592→            <LoadingState label="Loading leave requests…" />
+   593→          ) : leaves.length === 0 ? (
+   594→            <EmptyState
+   595→              title="No leave requests"
+   596→              hint="Requests submitted here appear in this list for approval."
+   597→              action={<Button size="sm" variant="outline" onClick={() => setLeaveOpen(true)}><CalendarPlus className="h-4 w-4 mr-1.5" /> New Leave Request</Button>}
+   598→            />
+   599→          ) : (
+   600→            <DataTable
+   601→              columns={leaveColumns}
+   602→              rows={leaves}
+   603→              rowKey={(l) => l.id}
+   604→              searchPlaceholder="Search employee, reason…"
+   605→              emptyTitle="No requests match"
+   606→              exportName="leave-requests"
+   607→            />
+   608→          )}
+   609→        </TabsContent>
+   610→      </Tabs>
+   611→
+   612→      {/* ── Mark attendance dialog ── */}
+   613→      <Dialog open={markOpen} onOpenChange={setMarkOpen}>
+   614→        <DialogContent className="max-w-lg">
+   615→          <DialogHeader>
+   616→            <DialogTitle>Mark Attendance</DialogTitle>
+   617→            <DialogDescription>Recording is idempotent — marking the same employee and day again updates the record.</DialogDescription>
+   618→          </DialogHeader>
+   619→          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 py-2">
+   620→            <div className="space-y-1.5 sm:col-span-2">
+   621→              <Label>Employee *</Label>
+   622→              <Select value={markForm.employeeId || undefined} onValueChange={(v) => setMarkForm((f) => ({ ...f, employeeId: v }))}>
+   623→                <SelectTrigger aria-label="Employee"><SelectValue placeholder={employeeOptions.length === 0 ? "Employee list unavailable" : "Select employee"} /></SelectTrigger>
+   624→                <SelectContent>
+   625→                  {employeeOptions.map((o) => (
+   626→                    <SelectItem key={o.id} value={o.id}>{o.label}</SelectItem>
+   627→                  ))}
+   628→                </SelectContent>
+   629→              </Select>
+   630→            </div>
+   631→            <div className="space-y-1.5">
+   632→              <Label htmlFor="mark-date">Date</Label>
+   633→              <Input id="mark-date" type="date" value={markForm.date} onChange={(e) => setMarkForm((f) => ({ ...f, date: e.target.value }))} />
+   634→            </div>
+   635→            <div className="space-y-1.5">
+   636→              <Label>Status</Label>
+   637→              <Select value={markForm.status} onValueChange={(v) => setMarkForm((f) => ({ ...f, status: v }))}>
+   638→                <SelectTrigger aria-label="Attendance status"><SelectValue /></SelectTrigger>
+   639→                <SelectContent>
+   640→                  {ATTENDANCE_STATUSES.map((s) => (
+   641→                    <SelectItem key={s} value={s}>{humanize(s)}</SelectItem>
+   642→                  ))}
+   643→                </SelectContent>
+   644→              </Select>
+   645→            </div>
+   646→            <div className="space-y-1.5">
+   647→              <Label htmlFor="mark-in">Check In</Label>
+   648→              <Input
+   649→                id="mark-in" type="time" value={markForm.checkIn}
+   650→                onChange={(e) => setMarkForm((f) => ({ ...f, checkIn: e.target.value }))}
+   651→                disabled={!["PRESENT", "HALF_DAY"].includes(markForm.status)}
+   652→              />
+   653→            </div>
+   654→            <div className="space-y-1.5">
+   655→              <Label htmlFor="mark-out">Check Out</Label>
+   656→              <Input
+   657→                id="mark-out" type="time" value={markForm.checkOut}
+   658→                onChange={(e) => setMarkForm((f) => ({ ...f, checkOut: e.target.value }))}
+   659→                disabled={!["PRESENT", "HALF_DAY"].includes(markForm.status)}
+   660→              />
+   661→            </div>
+   662→            <div className="space-y-1.5 sm:col-span-2">
+   663→              <Label htmlFor="mark-notes">Notes</Label>
+   664→              <Textarea id="mark-notes" rows={2} value={markForm.notes} onChange={(e) => setMarkForm((f) => ({ ...f, notes: e.target.value }))} placeholder="Optional remarks…" />
+   665→            </div>
+   666→          </div>
+   667→          <DialogFooter>
+   668→            <Button variant="outline" onClick={() => setMarkOpen(false)} disabled={markSaving}>Cancel</Button>
+   669→            <Button onClick={() => void saveMark()} disabled={markSaving}>
+   670→              {markSaving ? "Saving…" : "Save Attendance"}
+   671→            </Button>
+   672→          </DialogFooter>
+   673→        </DialogContent>
+   674→      </Dialog>
+   675→
+   676→      {/* ── New leave request dialog ── */}
+   677→      <Dialog open={leaveOpen} onOpenChange={setLeaveOpen}>
+   678→        <DialogContent className="max-w-lg">
+   679→          <DialogHeader>
+   680→            <DialogTitle>New Leave Request</DialogTitle>
+   681→            <DialogDescription>
+   682→              {canFileForOthers
+   683→                ? "File on behalf of any employee, or leave the employee blank to file for yourself."
+   684→                : "The request will be filed against your own employee record and sent for approval."}
+   685→            </DialogDescription>
+   686→          </DialogHeader>
+   687→          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 py-2">
+   688→            {canFileForOthers ? (
+   689→              <div className="space-y-1.5 sm:col-span-2">
+   690→                <Label>Employee</Label>
+   691→                <Select
+   692→                  value={leaveForm.employeeId || "SELF"}
+   693→                  onValueChange={(v) => setLeaveForm((f) => ({ ...f, employeeId: v === "SELF" ? "" : v }))}
+   694→                >
+   695→                  <SelectTrigger aria-label="Employee"><SelectValue /></SelectTrigger>
+   696→                  <SelectContent>
+   697→                    <SelectItem value="SELF">Myself</SelectItem>
+   698→                    {employeeOptions.map((o) => (
+   699→                      <SelectItem key={o.id} value={o.id}>{o.label}</SelectItem>
+   700→                    ))}
+   701→                  </SelectContent>
+   702→                </Select>
+   703→              </div>
+   704→            ) : null}
+   705→            <div className="space-y-1.5">
+   706→              <Label>Type</Label>
+   707→              <Select value={leaveForm.type} onValueChange={(v) => setLeaveForm((f) => ({ ...f, type: v }))}>
+   708→                <SelectTrigger aria-label="Leave type"><SelectValue /></SelectTrigger>
+   709→                <SelectContent>
+   710→                  {LEAVE_TYPES.map((t) => (
+   711→                    <SelectItem key={t} value={t}>{humanize(t)}</SelectItem>
+   712→                  ))}
+   713→                </SelectContent>
+   714→              </Select>
+   715→            </div>
+   716→            <div className="space-y-1.5">
+   717→              <Label htmlFor="leave-start">Start Date</Label>
+   718→              <Input id="leave-start" type="date" value={leaveForm.startDate} onChange={(e) => setLeaveForm((f) => ({ ...f, startDate: e.target.value }))} />
+   719→            </div>
+   720→            <div className="space-y-1.5">
+   721→              <Label htmlFor="leave-end">End Date</Label>
+   722→              <Input id="leave-end" type="date" value={leaveForm.endDate} onChange={(e) => setLeaveForm((f) => ({ ...f, endDate: e.target.value }))} />
+   723→              <p className="text-xs text-muted-foreground">Days are computed automatically (inclusive).</p>
+   724→            </div>
+   725→            <div className="space-y-1.5 sm:col-span-2">
+   726→              <Label htmlFor="leave-reason">Reason</Label>
+   727→              <Textarea id="leave-reason" rows={3} value={leaveForm.reason} onChange={(e) => setLeaveForm((f) => ({ ...f, reason: e.target.value }))} placeholder="Brief reason for the request…" />
+   728→            </div>
+   729→          </div>
+   730→          <DialogFooter>
+   731→            <Button variant="outline" onClick={() => setLeaveOpen(false)} disabled={leaveSaving}>Cancel</Button>
+   732→            <Button onClick={() => void saveLeave()} disabled={leaveSaving}>
+   733→              {leaveSaving ? "Submitting…" : "Submit Request"}
+   734→            </Button>
+   735→          </DialogFooter>
+   736→        </DialogContent>
+   737→      </Dialog>
+   738→
+   739→      {/* ── New department dialog ── */}
+   740→      <Dialog open={deptOpen} onOpenChange={setDeptOpen}>
+   741→        <DialogContent className="max-w-md">
+   742→          <DialogHeader>
+   743→            <DialogTitle>New Department</DialogTitle>
+   744→            <DialogDescription>Department names must be unique.</DialogDescription>
+   745→          </DialogHeader>
+   746→          <div className="space-y-4 py-2">
+   747→            <div className="space-y-1.5">
+   748→              <Label htmlFor="dept-name">Name *</Label>
+   749→              <Input id="dept-name" value={deptForm.name} onChange={(e) => setDeptForm((f) => ({ ...f, name: e.target.value }))} placeholder="Field Operations" />
+   750→            </div>
+   751→            <div className="space-y-1.5">
+   752→              <Label htmlFor="dept-desc">Description</Label>
+   753→              <Textarea id="dept-desc" rows={2} value={deptForm.description} onChange={(e) => setDeptForm((f) => ({ ...f, description: e.target.value }))} placeholder="What this team does…" />
+   754→            </div>
+   755→          </div>
+   756→          <DialogFooter>
+   757→            <Button variant="outline" onClick={() => setDeptOpen(false)} disabled={deptSaving}>Cancel</Button>
+   758→            <Button onClick={() => void saveDepartment()} disabled={deptSaving}>
+   759→              {deptSaving ? "Creating…" : "Create Department"}
+   760→            </Button>
+   761→          </DialogFooter>
+   762→        </DialogContent>
+   763→      </Dialog>
+   764→    </div>
+   765→  );
+   766→}
+   767→

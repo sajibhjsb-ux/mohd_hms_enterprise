@@ -1,0 +1,940 @@
+     1→"use client";
+     2→
+     3→// MOHD.HMS ENTERPRISE — Inventory module: items, stock ledger, suppliers.
+     4→// Data comes exclusively from /api/v1/inventory*, /api/v1/suppliers — no fake data.
+     5→
+     6→import { useCallback, useEffect, useState } from "react";
+     7→import { api, qs, ClientApiError } from "@/lib/hms/api-client";
+     8→import { DataTable, type Column } from "@/components/hms/shared/data-table";
+     9→import {
+    10→  EmptyState,
+    11→  ErrorState,
+    12→  LoadingState,
+    13→  PageHeader,
+    14→  StatCard,
+    15→  StatusBadge,
+    16→} from "@/components/hms/shared/ui-bits";
+    17→import { hasPerm, useSession } from "@/components/hms/session";
+    18→import { useDraft } from "@/hooks/use-draft";
+    19→import { useToast } from "@/hooks/use-toast";
+    20→import { fromCents, fmtDateTime, money, toCents } from "@/lib/hms/format";
+    21→import { PERMISSIONS, humanize, type Permission } from "@/lib/hms/constants";
+    22→import { cn } from "@/lib/utils";
+    23→import { Button } from "@/components/ui/button";
+    24→import { Input } from "@/components/ui/input";
+    25→import { Label } from "@/components/ui/label";
+    26→import { Textarea } from "@/components/ui/textarea";
+    27→import { Badge } from "@/components/ui/badge";
+    28→import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+    29→import {
+    30→  Dialog,
+    31→  DialogContent,
+    32→  DialogDescription,
+    33→  DialogFooter,
+    34→  DialogHeader,
+    35→  DialogTitle,
+    36→} from "@/components/ui/dialog";
+    37→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+    38→import {
+    39→  AlertDialog,
+    40→  AlertDialogAction,
+    41→  AlertDialogCancel,
+    42→  AlertDialogContent,
+    43→  AlertDialogDescription,
+    44→  AlertDialogFooter,
+    45→  AlertDialogHeader,
+    46→  AlertDialogTitle,
+    47→} from "@/components/ui/alert-dialog";
+    48→import { AlertTriangle, Boxes, History, PackagePlus, Pencil, Plus, Trash2, Truck, Wallet } from "lucide-react";
+    49→
+    50→// ───────────────────────────── types ─────────────────────────────
+    51→
+    52→type SupplierRow = {
+    53→  id: string;
+    54→  code: string;
+    55→  name: string;
+    56→  contactPerson: string;
+    57→  email: string;
+    58→  phone: string;
+    59→  address: string;
+    60→  status: string;
+    61→  _count?: { items: number; purchaseOrders: number };
+    62→};
+    63→
+    64→type ItemRow = {
+    65→  id: string;
+    66→  sku: string;
+    67→  name: string;
+    68→  category: string;
+    69→  unit: string;
+    70→  stockQty: number;
+    71→  minStockQty: number;
+    72→  unitCostCents: number;
+    73→  supplierId: string | null;
+    74→  supplier: { id: string; name: string } | null;
+    75→  status: string;
+    76→  low: boolean;
+    77→};
+    78→
+    79→type MovementRow = {
+    80→  id: string;
+    81→  itemId: string;
+    82→  type: string;
+    83→  quantity: number;
+    84→  balanceAfter: number;
+    85→  referenceType: string;
+    86→  note: string;
+    87→  createdAt: string;
+    88→  item: { sku: string; name: string; unit: string } | null;
+    89→};
+    90→
+    91→type InventoryStats = { total: number; lowStock: number; valueCents: number };
+    92→
+    93→const MOVEMENT_TYPES = ["RECEIVE", "ISSUE", "RETURN", "ADJUST"] as const;
+    94→
+    95→const MOVEMENT_TONE: Record<string, string> = {
+    96→  RECEIVE: "bg-emerald-100 text-emerald-800",
+    97→  ISSUE: "bg-red-100 text-red-700",
+    98→  RETURN: "bg-teal-100 text-teal-800",
+    99→  ADJUST: "bg-amber-100 text-amber-800",
+   100→};
+   101→
+   102→// ───────────────────────────── helpers ─────────────────────────────
+   103→
+   104→function errMessage(e: unknown): string {
+   105→  return e instanceof ClientApiError ? e.message : "Something went wrong. Please try again.";
+   106→}
+   107→
+   108→function Field({ label, children, className }: { label: string; children: React.ReactNode; className?: string }) {
+   109→  return (
+   110→    <div className={cn("space-y-1.5", className)}>
+   111→      <Label className="text-xs font-medium text-muted-foreground">{label}</Label>
+   112→      {children}
+   113→    </div>
+   114→  );
+   115→}
+   116→
+   117→function DraftBanner({
+   118→  draftExists,
+   119→  onRestore,
+   120→  onDiscard,
+   121→}: {
+   122→  draftExists: boolean;
+   123→  onRestore: () => void;
+   124→  onDiscard: () => void;
+   125→}) {
+   126→  if (!draftExists) return null;
+   127→  return (
+   128→    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+   129→      <span className="font-medium">Unsaved draft found.</span>
+   130→      <Button type="button" size="sm" variant="outline" className="h-7" onClick={onRestore}>
+   131→        Restore
+   132→      </Button>
+   133→      <Button type="button" size="sm" variant="ghost" className="h-7 text-amber-800" onClick={onDiscard}>
+   134→        Discard
+   135→      </Button>
+   136→    </div>
+   137→  );
+   138→}
+   139→
+   140→function num(value: string, fallback = 0): number {
+   141→  const n = parseFloat(value);
+   142→  return isFinite(n) ? n : fallback;
+   143→}
+   144→
+   145→// ───────────────────────────── module ─────────────────────────────
+   146→
+   147→type ItemDraft = {
+   148→  sku: string;
+   149→  name: string;
+   150→  category: string;
+   151→  unit: string;
+   152→  stockQty: string;
+   153→  minStockQty: string;
+   154→  unitCost: string;
+   155→  supplierId: string;
+   156→};
+   157→
+   158→const BLANK_ITEM_DRAFT: ItemDraft = {
+   159→  sku: "",
+   160→  name: "",
+   161→  category: "",
+   162→  unit: "pcs",
+   163→  stockQty: "",
+   164→  minStockQty: "",
+   165→  unitCost: "",
+   166→  supplierId: "",
+   167→};
+   168→
+   169→export function InventoryModule() {
+   170→  const { user } = useSession();
+   171→  const { toast } = useToast();
+   172→  const canManage = hasPerm(user, PERMISSIONS.inventory_manage satisfies Permission);
+   173→  const canSupplier = hasPerm(user, PERMISSIONS.purchases_manage satisfies Permission);
+   174→
+   175→  const [tab, setTab] = useState("items");
+   176→
+   177→  // Items
+   178→  const [items, setItems] = useState<ItemRow[] | null>(null);
+   179→  const [stats, setStats] = useState<InventoryStats | null>(null);
+   180→  const [itemsErr, setItemsErr] = useState("");
+   181→  const [itemsLoading, setItemsLoading] = useState(true);
+   182→
+   183→  // Movements
+   184→  const [movements, setMovements] = useState<MovementRow[] | null>(null);
+   185→  const [movErr, setMovErr] = useState("");
+   186→  const [movLoading, setMovLoading] = useState(false);
+   187→
+   188→  // Suppliers
+   189→  const [suppliers, setSuppliers] = useState<SupplierRow[] | null>(null);
+   190→  const [supErr, setSupErr] = useState("");
+   191→  const [supLoading, setSupLoading] = useState(false);
+   192→
+   193→  const loadItems = useCallback(async () => {
+   194→    setItemsLoading(true);
+   195→    setItemsErr("");
+   196→    try {
+   197→      const res = await api.get<ItemRow[]>(`/api/v1/inventory${qs({ pageSize: 200 })}`);
+   198→      setItems(res.data);
+   199→      const s = (res.meta as { stats?: InventoryStats } | undefined)?.stats;
+   200→      if (s) setStats(s);
+   201→    } catch (e) {
+   202→      setItemsErr(errMessage(e));
+   203→    } finally {
+   204→      setItemsLoading(false);
+   205→    }
+   206→  }, []);
+   207→
+   208→  const loadMovements = useCallback(async () => {
+   209→    setMovLoading(true);
+   210→    setMovErr("");
+   211→    try {
+   212→      const res = await api.get<MovementRow[]>(`/api/v1/inventory/movements${qs({ pageSize: 200 })}`);
+   213→      setMovements(res.data);
+   214→    } catch (e) {
+   215→      setMovErr(errMessage(e));
+   216→    } finally {
+   217→      setMovLoading(false);
+   218→    }
+   219→  }, []);
+   220→
+   221→  const loadSuppliers = useCallback(async () => {
+   222→    setSupLoading(true);
+   223→    setSupErr("");
+   224→    try {
+   225→      const res = await api.get<SupplierRow[]>(`/api/v1/suppliers${qs({ pageSize: 200 })}`);
+   226→      setSuppliers(res.data);
+   227→    } catch (e) {
+   228→      setSupErr(errMessage(e));
+   229→    } finally {
+   230→      setSupLoading(false);
+   231→    }
+   232→  }, []);
+   233→
+   234→  useEffect(() => {
+   235→    loadItems();
+   236→    loadSuppliers(); // needed for item create/edit supplier pickers
+   237→  }, [loadItems, loadSuppliers]);
+   238→
+   239→  function onTabChange(value: string) {
+   240→    setTab(value);
+   241→    if (value === "movements" && !movements && !movLoading) loadMovements();
+   242→    if (value === "suppliers" && !suppliers && !supLoading) loadSuppliers();
+   243→  }
+   244→
+   245→  // ── Add item dialog (draft-protected) ──
+   246→  const [addOpen, setAddOpen] = useState(false);
+   247→  const [saving, setSaving] = useState(false);
+   248→  const draft = useDraft<ItemDraft>({ formKey: "inventory.item.create", initial: BLANK_ITEM_DRAFT });
+   249→
+   250→  async function submitItem() {
+   251→    const v = draft.value;
+   252→    if (!v.name.trim()) {
+   253→      toast({ title: "Name is required", variant: "destructive" });
+   254→      return;
+   255→    }
+   256→    setSaving(true);
+   257→    try {
+   258→      await api.post<ItemRow>("/api/v1/inventory", {
+   259→        sku: v.sku.trim() || undefined,
+   260→        name: v.name.trim(),
+   261→        category: v.category.trim() || undefined,
+   262→        unit: v.unit.trim() || undefined,
+   263→        stockQty: num(v.stockQty),
+   264→        minStockQty: num(v.minStockQty),
+   265→        unitCost: toCents(v.unitCost || "0") / 100,
+   266→        supplierId: v.supplierId || undefined,
+   267→      });
+   268→      toast({ title: "Item created", description: `${v.name.trim()} added to inventory.` });
+   269→      draft.reset(BLANK_ITEM_DRAFT);
+   270→      setAddOpen(false);
+   271→      loadItems();
+   272→    } catch (e) {
+   273→      toast({ title: "Could not create item", description: errMessage(e), variant: "destructive" });
+   274→    } finally {
+   275→      setSaving(false);
+   276→    }
+   277→  }
+   278→
+   279→  // ── Edit item dialog ──
+   280→  const [editItem, setEditItem] = useState<ItemRow | null>(null);
+   281→  const [editForm, setEditForm] = useState({ name: "", category: "", unit: "", minStockQty: "", unitCost: "", supplierId: "", status: "ACTIVE" });
+   282→  const [editSaving, setEditSaving] = useState(false);
+   283→
+   284→  function openEdit(item: ItemRow) {
+   285→    setEditForm({
+   286→      name: item.name,
+   287→      category: item.category,
+   288→      unit: item.unit,
+   289→      minStockQty: String(item.minStockQty),
+   290→      unitCost: fromCents(item.unitCostCents),
+   291→      supplierId: item.supplierId ?? "NONE",
+   292→      status: item.status,
+   293→    });
+   294→    setEditItem(item);
+   295→  }
+   296→
+   297→  async function submitEdit() {
+   298→    if (!editItem) return;
+   299→    setEditSaving(true);
+   300→    try {
+   301→      await api.patch<ItemRow>(`/api/v1/inventory/${editItem.id}`, {
+   302→        name: editForm.name.trim(),
+   303→        category: editForm.category.trim(),
+   304→        unit: editForm.unit.trim(),
+   305→        minStockQty: num(editForm.minStockQty),
+   306→        unitCost: num(editForm.unitCost),
+   307→        supplierId: editForm.supplierId === "NONE" ? null : editForm.supplierId,
+   308→        status: editForm.status,
+   309→      });
+   310→      toast({ title: "Item updated", description: editItem.sku });
+   311→      setEditItem(null);
+   312→      loadItems();
+   313→    } catch (e) {
+   314→      toast({ title: "Could not update item", description: errMessage(e), variant: "destructive" });
+   315→    } finally {
+   316→      setEditSaving(false);
+   317→    }
+   318→  }
+   319→
+   320→  // ── Adjust stock dialog ──
+   321→  const [adjustItem, setAdjustItem] = useState<ItemRow | null>(null);
+   322→  const [adjustType, setAdjustType] = useState<(typeof MOVEMENT_TYPES)[number]>("RECEIVE");
+   323→  const [adjustQty, setAdjustQty] = useState("");
+   324→  const [adjustNote, setAdjustNote] = useState("");
+   325→  const [adjustSaving, setAdjustSaving] = useState(false);
+   326→
+   327→  function openAdjust(item: ItemRow) {
+   328→    setAdjustType("RECEIVE");
+   329→    setAdjustQty("");
+   330→    setAdjustNote("");
+   331→    setAdjustItem(item);
+   332→  }
+   333→
+   334→  async function submitAdjust() {
+   335→    if (!adjustItem) return;
+   336→    const qty = num(adjustQty, NaN);
+   337→    if (!isFinite(qty) || qty === 0 || (adjustType !== "ADJUST" && qty <= 0)) {
+   338→      toast({
+   339→        title: "Invalid quantity",
+   340→        description: adjustType === "ADJUST" ? "Enter a non-zero signed delta (e.g. -2 or 5)." : "Enter a positive quantity.",
+   341→        variant: "destructive",
+   342→      });
+   343→      return;
+   344→    }
+   345→    setAdjustSaving(true);
+   346→    try {
+   347→      const res = await api.post<{ item: ItemRow }>(`/api/v1/inventory/${adjustItem.id}/movement`, {
+   348→        type: adjustType,
+   349→        quantity: qty,
+   350→        note: adjustNote.trim() || undefined,
+   351→      });
+   352→      toast({
+   353→        title: "Stock updated",
+   354→        description: `${adjustItem.sku} — new balance ${res.data.item.stockQty} ${adjustItem.unit}.`,
+   355→      });
+   356→      setAdjustItem(null);
+   357→      loadItems();
+   358→      if (movements) loadMovements();
+   359→    } catch (e) {
+   360→      toast({ title: "Could not record movement", description: errMessage(e), variant: "destructive" });
+   361→    } finally {
+   362→      setAdjustSaving(false);
+   363→    }
+   364→  }
+   365→
+   366→  // ── Delete item ──
+   367→  const [deleteItem, setDeleteItem] = useState<ItemRow | null>(null);
+   368→  const [deleteSaving, setDeleteSaving] = useState(false);
+   369→
+   370→  async function submitDelete() {
+   371→    if (!deleteItem) return;
+   372→    setDeleteSaving(true);
+   373→    try {
+   374→      await api.del(`/api/v1/inventory/${deleteItem.id}`);
+   375→      toast({ title: "Item removed", description: `${deleteItem.sku} archived or deleted.` });
+   376→      setDeleteItem(null);
+   377→      loadItems();
+   378→    } catch (e) {
+   379→      toast({ title: "Could not remove item", description: errMessage(e), variant: "destructive" });
+   380→    } finally {
+   381→      setDeleteSaving(false);
+   382→    }
+   383→  }
+   384→
+   385→  // ── Supplier create/edit dialog ──
+   386→  const [supDialog, setSupDialog] = useState<{ open: boolean; supplier: SupplierRow | null }>({ open: false, supplier: null });
+   387→  const [supForm, setSupForm] = useState({ name: "", contactPerson: "", email: "", phone: "", address: "" });
+   388→  const [supSaving, setSupSaving] = useState(false);
+   389→  const [deleteSupplier, setDeleteSupplier] = useState<SupplierRow | null>(null);
+   390→
+   391→  function openSupplierDialog(supplier: SupplierRow | null) {
+   392→    setSupForm(
+   393→      supplier
+   394→        ? { name: supplier.name, contactPerson: supplier.contactPerson, email: supplier.email, phone: supplier.phone, address: supplier.address }
+   395→        : { name: "", contactPerson: "", email: "", phone: "", address: "" }
+   396→    );
+   397→    setSupDialog({ open: true, supplier });
+   398→  }
+   399→
+   400→  async function submitSupplier() {
+   401→    if (!supForm.name.trim()) {
+   402→      toast({ title: "Name is required", variant: "destructive" });
+   403→      return;
+   404→    }
+   405→    setSupSaving(true);
+   406→    try {
+   407→      if (supDialog.supplier) {
+   408→        await api.patch(`/api/v1/suppliers/${supDialog.supplier.id}`, supForm);
+   409→        toast({ title: "Supplier updated" });
+   410→      } else {
+   411→        await api.post("/api/v1/suppliers", supForm);
+   412→        toast({ title: "Supplier created" });
+   413→      }
+   414→      setSupDialog({ open: false, supplier: null });
+   415→      loadSuppliers();
+   416→    } catch (e) {
+   417→      toast({ title: "Could not save supplier", description: errMessage(e), variant: "destructive" });
+   418→    } finally {
+   419→      setSupSaving(false);
+   420→    }
+   421→  }
+   422→
+   423→  async function submitDeleteSupplier() {
+   424→    if (!deleteSupplier) return;
+   425→    try {
+   426→      await api.del(`/api/v1/suppliers/${deleteSupplier.id}`);
+   427→      toast({ title: "Supplier removed" });
+   428→      setDeleteSupplier(null);
+   429→      loadSuppliers();
+   430→      loadItems();
+   431→    } catch (e) {
+   432→      toast({ title: "Could not remove supplier", description: errMessage(e), variant: "destructive" });
+   433→    }
+   434→  }
+   435→
+   436→  // ── table columns ──
+   437→
+   438→  const itemColumns: Column<ItemRow>[] = [
+   439→    { key: "sku", header: "SKU", value: (r) => r.sku, render: (r) => <span className="font-mono text-xs">{r.sku}</span> },
+   440→    { key: "name", header: "Item", value: (r) => r.name, render: (r) => <span className="font-medium">{r.name}</span> },
+   441→    { key: "category", header: "Category", value: (r) => r.category, hideOnMobile: true },
+   442→    {
+   443→      key: "stockQty",
+   444→      header: "Stock",
+   445→      value: (r) => r.stockQty,
+   446→      render: (r) => (
+   447→        <span className={cn("tabular-nums font-medium", r.low && "text-red-600")}>
+   448→          {r.stockQty} {r.unit}
+   449→          {r.low ? " ⚠" : ""}
+   450→        </span>
+   451→      ),
+   452→    },
+   453→    { key: "minStockQty", header: "Min", value: (r) => r.minStockQty, className: "tabular-nums", hideOnMobile: true },
+   454→    { key: "unitCostCents", header: "Unit cost", value: (r) => r.unitCostCents / 100, render: (r) => money(r.unitCostCents), className: "tabular-nums", hideOnMobile: true },
+   455→    { key: "supplier", header: "Supplier", value: (r) => r.supplier?.name ?? "", render: (r) => r.supplier?.name ?? "—", hideOnMobile: true },
+   456→    { key: "status", header: "Status", value: (r) => r.status, render: (r) => <StatusBadge status={r.status} /> },
+   457→    ...(canManage
+   458→      ? [
+   459→          {
+   460→            key: "actions",
+   461→            header: "",
+   462→            sortable: false,
+   463→            className: "w-[110px] text-right",
+   464→            render: (r: ItemRow) => (
+   465→              <div className="flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+   466→                <Button size="icon" variant="ghost" className="h-8 w-8" aria-label={`Adjust stock for ${r.sku}`} onClick={() => openAdjust(r)}>
+   467→                  <PackagePlus className="h-4 w-4" />
+   468→                </Button>
+   469→                <Button size="icon" variant="ghost" className="h-8 w-8" aria-label={`Edit ${r.sku}`} onClick={() => openEdit(r)}>
+   470→                  <Pencil className="h-4 w-4" />
+   471→                </Button>
+   472→                <Button size="icon" variant="ghost" className="h-8 w-8 text-red-600 hover:text-red-700" aria-label={`Remove ${r.sku}`} onClick={() => setDeleteItem(r)}>
+   473→                  <Trash2 className="h-4 w-4" />
+   474→                </Button>
+   475→              </div>
+   476→            ),
+   477→          } satisfies Column<ItemRow>,
+   478→        ]
+   479→      : []),
+   480→  ];
+   481→
+   482→  const movementColumns: Column<MovementRow>[] = [
+   483→    { key: "createdAt", header: "Date", value: (r) => r.createdAt, render: (r) => fmtDateTime(r.createdAt), hideOnMobile: true },
+   484→    {
+   485→      key: "item",
+   486→      header: "Item",
+   487→      value: (r) => (r.item ? `${r.item.sku} ${r.item.name}` : r.itemId),
+   488→      render: (r) => (
+   489→        <div className="min-w-0">
+   490→          <div className="font-medium truncate">{r.item?.name ?? "—"}</div>
+   491→          <div className="font-mono text-xs text-muted-foreground">{r.item?.sku}</div>
+   492→        </div>
+   493→      ),
+   494→    },
+   495→    {
+   496→      key: "type",
+   497→      header: "Type",
+   498→      value: (r) => r.type,
+   499→      render: (r) => <Badge variant="outline" className={cn("border-transparent", MOVEMENT_TONE[r.type])}>{humanize(r.type)}</Badge>,
+   500→    },
+   501→    {
+   502→      key: "quantity",
+   503→      header: "Qty",
+   504→      value: (r) => r.quantity,
+   505→      render: (r) => (
+   506→        <span className={cn("tabular-nums font-medium", r.quantity >= 0 ? "text-emerald-600" : "text-red-600")}>
+   507→          {r.quantity >= 0 ? "+" : ""}
+   508→          {r.quantity}
+   509→        </span>
+   510→      ),
+   511→    },
+   512→    { key: "balanceAfter", header: "Balance", value: (r) => r.balanceAfter, className: "tabular-nums" },
+   513→    {
+   514→      key: "note",
+   515→      header: "Note",
+   516→      value: (r) => r.note,
+   517→      render: (r) => <span className="text-muted-foreground line-clamp-1 max-w-[220px]">{r.note || r.referenceType.toLowerCase()}</span>,
+   518→      hideOnMobile: true,
+   519→    },
+   520→  ];
+   521→
+   522→  const supplierColumns: Column<SupplierRow>[] = [
+   523→    { key: "code", header: "Code", value: (r) => r.code, render: (r) => <span className="font-mono text-xs">{r.code}</span> },
+   524→    { key: "name", header: "Supplier", value: (r) => r.name, render: (r) => <span className="font-medium">{r.name}</span> },
+   525→    { key: "contactPerson", header: "Contact", value: (r) => r.contactPerson, render: (r) => r.contactPerson || "—", hideOnMobile: true },
+   526→    { key: "phone", header: "Phone", value: (r) => r.phone, render: (r) => r.phone || "—", hideOnMobile: true },
+   527→    { key: "email", header: "Email", value: (r) => r.email, render: (r) => r.email || "—", hideOnMobile: true },
+   528→    { key: "items", header: "Items", value: (r) => r._count?.items ?? 0, className: "tabular-nums" },
+   529→    { key: "status", header: "Status", value: (r) => r.status, render: (r) => <StatusBadge status={r.status} /> },
+   530→    ...(canSupplier
+   531→      ? [
+   532→          {
+   533→            key: "actions",
+   534→            header: "",
+   535→            sortable: false,
+   536→            className: "w-[90px] text-right",
+   537→            render: (r: SupplierRow) => (
+   538→              <div className="flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+   539→                <Button size="icon" variant="ghost" className="h-8 w-8" aria-label={`Edit ${r.name}`} onClick={() => openSupplierDialog(r)}>
+   540→                  <Pencil className="h-4 w-4" />
+   541→                </Button>
+   542→                <Button size="icon" variant="ghost" className="h-8 w-8 text-red-600 hover:text-red-700" aria-label={`Remove ${r.name}`} onClick={() => setDeleteSupplier(r)}>
+   543→                  <Trash2 className="h-4 w-4" />
+   544→                </Button>
+   545→              </div>
+   546→            ),
+   547→          } satisfies Column<SupplierRow>,
+   548→        ]
+   549→      : []),
+   550→  ];
+   551→
+   552→  // ── render ──
+   553→
+   554→  return (
+   555→    <div>
+   556→      <PageHeader
+   557→        title="Inventory"
+   558→        subtitle="Stock items, movements and suppliers"
+   559→        actions={
+   560→          canManage ? (
+   561→            <Button onClick={() => setAddOpen(true)}>
+   562→              <Plus className="h-4 w-4 mr-1.5" /> Add item
+   563→            </Button>
+   564→          ) : null
+   565→        }
+   566→      />
+   567→
+   568→      <div className="grid gap-4 sm:grid-cols-3 mb-5">
+   569→        <StatCard title="Total items" value={stats ? stats.total : "—"} sub="Active items" icon={<Boxes className="h-5 w-5" />} loading={!stats} />
+   570→        <StatCard title="Low stock" value={stats ? stats.lowStock : "—"} sub="At or below minimum" icon={<AlertTriangle className="h-5 w-5" />} tone={stats && stats.lowStock > 0 ? "warning" : "default"} loading={!stats} />
+   571→        <StatCard title="Stock value" value={stats ? money(stats.valueCents) : "—"} sub="Σ qty × unit cost" icon={<Wallet className="h-5 w-5" />} tone="success" loading={!stats} />
+   572→      </div>
+   573→
+   574→      <Tabs value={tab} onValueChange={onTabChange}>
+   575→        <TabsList className="mb-4">
+   576→          <TabsTrigger value="items">Items</TabsTrigger>
+   577→          <TabsTrigger value="movements" className="gap-1.5">
+   578→            <History className="h-3.5 w-3.5" /> Movements
+   579→          </TabsTrigger>
+   580→          <TabsTrigger value="suppliers" className="gap-1.5">
+   581→            <Truck className="h-3.5 w-3.5" /> Suppliers
+   582→          </TabsTrigger>
+   583→        </TabsList>
+   584→
+   585→        <TabsContent value="items" className="mt-0">
+   586→          {itemsLoading && !items ? (
+   587→            <LoadingState label="Loading inventory…" />
+   588→          ) : itemsErr ? (
+   589→            <ErrorState message={itemsErr} onRetry={loadItems} />
+   590→          ) : (
+   591→            <DataTable
+   592→              columns={itemColumns}
+   593→              rows={items ?? []}
+   594→              rowKey={(r) => r.id}
+   595→              searchPlaceholder="Search SKU or name…"
+   596→              emptyTitle="No inventory items"
+   597→              emptyHint={canManage ? "Add your first item to start tracking stock." : undefined}
+   598→              exportName="inventory"
+   599→              filters={[
+   600→                {
+   601→                  key: "low",
+   602→                  label: "Stock level",
+   603→                  options: [{ value: "low", label: "Low stock only" }],
+   604→                  match: (r, v) => (v === "low" ? r.low : true),
+   605→                },
+   606→                {
+   607→                  key: "status",
+   608→                  label: "Status",
+   609→                  options: [
+   610→                    { value: "ACTIVE", label: "Active" },
+   611→                    { value: "INACTIVE", label: "Inactive" },
+   612→                  ],
+   613→                  match: (r, v) => r.status === v,
+   614→                },
+   615→              ]}
+   616→            />
+   617→          )}
+   618→        </TabsContent>
+   619→
+   620→        <TabsContent value="movements" className="mt-0">
+   621→          {movLoading && !movements ? (
+   622→            <LoadingState label="Loading stock movements…" />
+   623→          ) : movErr ? (
+   624→            <ErrorState message={movErr} onRetry={loadMovements} />
+   625→          ) : movements && movements.length === 0 ? (
+   626→            <EmptyState title="No stock movements yet" hint="Movements appear when stock is received, issued, returned or adjusted." />
+   627→          ) : (
+   628→            <DataTable
+   629→              columns={movementColumns}
+   630→              rows={movements ?? []}
+   631→              rowKey={(r) => r.id}
+   632→              searchPlaceholder="Search item, note…"
+   633→              emptyTitle="No stock movements"
+   634→              exportName="inventory-movements"
+   635→              filters={[
+   636→                {
+   637→                  key: "type",
+   638→                  label: "Movement type",
+   639→                  options: MOVEMENT_TYPES.map((t) => ({ value: t, label: humanize(t) })),
+   640→                  match: (r, v) => r.type === v,
+   641→                },
+   642→              ]}
+   643→            />
+   644→          )}
+   645→        </TabsContent>
+   646→
+   647→        <TabsContent value="suppliers" className="mt-0">
+   648→          <div className="mb-3 flex justify-end">
+   649→            {canSupplier ? (
+   650→              <Button variant="outline" onClick={() => openSupplierDialog(null)}>
+   651→                <Plus className="h-4 w-4 mr-1.5" /> Add supplier
+   652→              </Button>
+   653→            ) : null}
+   654→          </div>
+   655→          {supLoading && !suppliers ? (
+   656→            <LoadingState label="Loading suppliers…" />
+   657→          ) : supErr ? (
+   658→            <ErrorState message={supErr} onRetry={loadSuppliers} />
+   659→          ) : (
+   660→            <DataTable
+   661→              columns={supplierColumns}
+   662→              rows={suppliers ?? []}
+   663→              rowKey={(r) => r.id}
+   664→              searchPlaceholder="Search suppliers…"
+   665→              emptyTitle="No suppliers"
+   666→              emptyHint={canSupplier ? "Add a supplier to start raising purchase orders." : undefined}
+   667→              exportName="suppliers"
+   668→              filters={[
+   669→                {
+   670→                  key: "status",
+   671→                  label: "Status",
+   672→                  options: [
+   673→                    { value: "ACTIVE", label: "Active" },
+   674→                    { value: "INACTIVE", label: "Inactive" },
+   675→                  ],
+   676→                  match: (r, v) => r.status === v,
+   677→                },
+   678→              ]}
+   679→            />
+   680→          )}
+   681→        </TabsContent>
+   682→      </Tabs>
+   683→
+   684→      {/* Add item dialog */}
+   685→      <Dialog open={addOpen} onOpenChange={setAddOpen}>
+   686→        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+   687→          <DialogHeader>
+   688→            <DialogTitle>Add inventory item</DialogTitle>
+   689→            <DialogDescription>SKU is generated automatically when left blank.</DialogDescription>
+   690→          </DialogHeader>
+   691→          <DraftBanner draftExists={draft.draftExists} onRestore={draft.restore} onDiscard={draft.discard} />
+   692→          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+   693→            <Field label="SKU">
+   694→              <Input value={draft.value.sku} onChange={(e) => draft.setValue({ sku: e.target.value })} placeholder="Auto (ITM-…)" />
+   695→            </Field>
+   696→            <Field label="Item name *">
+   697→              <Input value={draft.value.name} onChange={(e) => draft.setValue({ name: e.target.value })} placeholder="e.g. Air filter 20x20" />
+   698→            </Field>
+   699→            <Field label="Category">
+   700→              <Input value={draft.value.category} onChange={(e) => draft.setValue({ category: e.target.value })} placeholder="e.g. FILTERS" />
+   701→            </Field>
+   702→            <Field label="Unit">
+   703→              <Input value={draft.value.unit} onChange={(e) => draft.setValue({ unit: e.target.value })} placeholder="pcs" />
+   704→            </Field>
+   705→            <Field label="Opening stock qty">
+   706→              <Input type="number" min="0" step="any" value={draft.value.stockQty} onChange={(e) => draft.setValue({ stockQty: e.target.value })} placeholder="0" />
+   707→            </Field>
+   708→            <Field label="Minimum stock qty">
+   709→              <Input type="number" min="0" step="any" value={draft.value.minStockQty} onChange={(e) => draft.setValue({ minStockQty: e.target.value })} placeholder="0" />
+   710→            </Field>
+   711→            <Field label="Unit cost (RM)">
+   712→              <Input type="number" min="0" step="0.01" value={draft.value.unitCost} onChange={(e) => draft.setValue({ unitCost: e.target.value })} placeholder="0.00" />
+   713→            </Field>
+   714→            <Field label="Supplier">
+   715→              <Select value={draft.value.supplierId || "NONE"} onValueChange={(v) => draft.setValue({ supplierId: v === "NONE" ? "" : v })}>
+   716→                <SelectTrigger>
+   717→                  <SelectValue placeholder="Select supplier" />
+   718→                </SelectTrigger>
+   719→                <SelectContent>
+   720→                  <SelectItem value="NONE">No supplier</SelectItem>
+   721→                  {(suppliers ?? []).filter((s) => s.status === "ACTIVE").map((s) => (
+   722→                    <SelectItem key={s.id} value={s.id}>
+   723→                      {s.name}
+   724→                    </SelectItem>
+   725→                  ))}
+   726→                </SelectContent>
+   727→              </Select>
+   728→            </Field>
+   729→          </div>
+   730→          {draft.dirty ? (
+   731→            <p className="text-xs text-muted-foreground">Draft auto-saves locally while you type.</p>
+   732→          ) : null}
+   733→          <DialogFooter>
+   734→            <Button variant="outline" onClick={() => setAddOpen(false)}>
+   735→              Cancel
+   736→            </Button>
+   737→            <Button onClick={submitItem} disabled={saving}>
+   738→              {saving ? "Saving…" : "Create item"}
+   739→            </Button>
+   740→          </DialogFooter>
+   741→        </DialogContent>
+   742→      </Dialog>
+   743→
+   744→      {/* Edit item dialog */}
+   745→      <Dialog open={!!editItem} onOpenChange={(o) => !o && setEditItem(null)}>
+   746→        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+   747→          <DialogHeader>
+   748→            <DialogTitle>Edit item {editItem?.sku}</DialogTitle>
+   749→            <DialogDescription>Stock quantity is changed via stock movements, not here.</DialogDescription>
+   750→          </DialogHeader>
+   751→          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+   752→            <Field label="Item name *" className="sm:col-span-2">
+   753→              <Input value={editForm.name} onChange={(e) => setEditForm((p) => ({ ...p, name: e.target.value }))} />
+   754→            </Field>
+   755→            <Field label="Category">
+   756→              <Input value={editForm.category} onChange={(e) => setEditForm((p) => ({ ...p, category: e.target.value }))} />
+   757→            </Field>
+   758→            <Field label="Unit">
+   759→              <Input value={editForm.unit} onChange={(e) => setEditForm((p) => ({ ...p, unit: e.target.value }))} />
+   760→            </Field>
+   761→            <Field label="Minimum stock qty">
+   762→              <Input type="number" min="0" step="any" value={editForm.minStockQty} onChange={(e) => setEditForm((p) => ({ ...p, minStockQty: e.target.value }))} />
+   763→            </Field>
+   764→            <Field label="Unit cost (RM)">
+   765→              <Input type="number" min="0" step="0.01" value={editForm.unitCost} onChange={(e) => setEditForm((p) => ({ ...p, unitCost: e.target.value }))} />
+   766→            </Field>
+   767→            <Field label="Supplier">
+   768→              <Select value={editForm.supplierId || "NONE"} onValueChange={(v) => setEditForm((p) => ({ ...p, supplierId: v === "NONE" ? "NONE" : v }))}>
+   769→                <SelectTrigger>
+   770→                  <SelectValue placeholder="Select supplier" />
+   771→                </SelectTrigger>
+   772→                <SelectContent>
+   773→                  <SelectItem value="NONE">No supplier</SelectItem>
+   774→                  {(suppliers ?? []).filter((s) => s.status === "ACTIVE").map((s) => (
+   775→                    <SelectItem key={s.id} value={s.id}>
+   776→                      {s.name}
+   777→                    </SelectItem>
+   778→                  ))}
+   779→                </SelectContent>
+   780→              </Select>
+   781→            </Field>
+   782→            <Field label="Status">
+   783→              <Select value={editForm.status} onValueChange={(v) => setEditForm((p) => ({ ...p, status: v }))}>
+   784→                <SelectTrigger>
+   785→                  <SelectValue />
+   786→                </SelectTrigger>
+   787→                <SelectContent>
+   788→                  <SelectItem value="ACTIVE">Active</SelectItem>
+   789→                  <SelectItem value="INACTIVE">Inactive</SelectItem>
+   790→                </SelectContent>
+   791→              </Select>
+   792→            </Field>
+   793→          </div>
+   794→          <DialogFooter>
+   795→            <Button variant="outline" onClick={() => setEditItem(null)}>
+   796→              Cancel
+   797→            </Button>
+   798→            <Button onClick={submitEdit} disabled={editSaving}>
+   799→              {editSaving ? "Saving…" : "Save changes"}
+   800→            </Button>
+   801→          </DialogFooter>
+   802→        </DialogContent>
+   803→      </Dialog>
+   804→
+   805→      {/* Adjust stock dialog */}
+   806→      <Dialog open={!!adjustItem} onOpenChange={(o) => !o && setAdjustItem(null)}>
+   807→        <DialogContent className="max-w-md">
+   808→          <DialogHeader>
+   809→            <DialogTitle>Adjust stock — {adjustItem?.sku}</DialogTitle>
+   810→            <DialogDescription>
+   811→              Current balance: {adjustItem ? `${adjustItem.stockQty} ${adjustItem.unit}` : "—"}
+   812→            </DialogDescription>
+   813→          </DialogHeader>
+   814→          <div className="space-y-4">
+   815→            <Field label="Movement type">
+   816→              <Select value={adjustType} onValueChange={(v) => setAdjustType(v as (typeof MOVEMENT_TYPES)[number])}>
+   817→                <SelectTrigger>
+   818→                  <SelectValue />
+   819→                </SelectTrigger>
+   820→                <SelectContent>
+   821→                  {MOVEMENT_TYPES.map((t) => (
+   822→                    <SelectItem key={t} value={t}>
+   823→                      {humanize(t)}
+   824→                      {t === "RECEIVE" ? " (+)" : t === "ISSUE" ? " (−)" : t === "RETURN" ? " (+)" : " (±)"}
+   825→                    </SelectItem>
+   826→                  ))}
+   827→                </SelectContent>
+   828→              </Select>
+   829→            </Field>
+   830→            <Field label={adjustType === "ADJUST" ? "Signed delta (e.g. -2 or 5)" : "Quantity"}>
+   831→              <Input
+   832→                type="number"
+   833→                step="any"
+   834→                value={adjustQty}
+   835→                onChange={(e) => setAdjustQty(e.target.value)}
+   836→                placeholder={adjustType === "ADJUST" ? "-2" : "1"}
+   837→              />
+   838→            </Field>
+   839→            <Field label="Note">
+   840→              <Textarea value={adjustNote} onChange={(e) => setAdjustNote(e.target.value)} placeholder="Reason / reference (optional)" rows={2} />
+   841→            </Field>
+   842→          </div>
+   843→          <DialogFooter>
+   844→            <Button variant="outline" onClick={() => setAdjustItem(null)}>
+   845→              Cancel
+   846→            </Button>
+   847→            <Button onClick={submitAdjust} disabled={adjustSaving}>
+   848→              {adjustSaving ? "Recording…" : "Record movement"}
+   849→            </Button>
+   850→          </DialogFooter>
+   851→        </DialogContent>
+   852→      </Dialog>
+   853→
+   854→      {/* Delete item confirm */}
+   855→      <AlertDialog open={!!deleteItem} onOpenChange={(o) => !o && setDeleteItem(null)}>
+   856→        <AlertDialogContent>
+   857→          <AlertDialogHeader>
+   858→            <AlertDialogTitle>Remove {deleteItem?.sku}?</AlertDialogTitle>
+   859→            <AlertDialogDescription>
+   860→              Items with stock history are archived (status Inactive) instead of deleted. This cannot be undone.
+   861→            </AlertDialogDescription>
+   862→          </AlertDialogHeader>
+   863→          <AlertDialogFooter>
+   864→            <AlertDialogCancel>Keep item</AlertDialogCancel>
+   865→            <AlertDialogAction
+   866→              className="bg-red-600 hover:bg-red-700 text-white"
+   867→              disabled={deleteSaving}
+   868→              onClick={(e) => {
+   869→                e.preventDefault();
+   870→                submitDelete();
+   871→              }}
+   872→            >
+   873→              {deleteSaving ? "Removing…" : "Remove"}
+   874→            </AlertDialogAction>
+   875→          </AlertDialogFooter>
+   876→        </AlertDialogContent>
+   877→      </AlertDialog>
+   878→
+   879→      {/* Supplier create/edit dialog */}
+   880→      <Dialog open={supDialog.open} onOpenChange={(o) => !o && setSupDialog({ open: false, supplier: null })}>
+   881→        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+   882→          <DialogHeader>
+   883→            <DialogTitle>{supDialog.supplier ? `Edit ${supDialog.supplier.name}` : "Add supplier"}</DialogTitle>
+   884→            <DialogDescription>Code is generated automatically for new suppliers.</DialogDescription>
+   885→          </DialogHeader>
+   886→          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+   887→            <Field label="Supplier name *" className="sm:col-span-2">
+   888→              <Input value={supForm.name} onChange={(e) => setSupForm((p) => ({ ...p, name: e.target.value }))} />
+   889→            </Field>
+   890→            <Field label="Contact person">
+   891→              <Input value={supForm.contactPerson} onChange={(e) => setSupForm((p) => ({ ...p, contactPerson: e.target.value }))} />
+   892→            </Field>
+   893→            <Field label="Phone">
+   894→              <Input value={supForm.phone} onChange={(e) => setSupForm((p) => ({ ...p, phone: e.target.value }))} />
+   895→            </Field>
+   896→            <Field label="Email">
+   897→              <Input type="email" value={supForm.email} onChange={(e) => setSupForm((p) => ({ ...p, email: e.target.value }))} />
+   898→            </Field>
+   899→            <Field label="Address" className="sm:col-span-2">
+   900→              <Textarea value={supForm.address} onChange={(e) => setSupForm((p) => ({ ...p, address: e.target.value }))} rows={2} />
+   901→            </Field>
+   902→          </div>
+   903→          <DialogFooter>
+   904→            <Button variant="outline" onClick={() => setSupDialog({ open: false, supplier: null })}>
+   905→              Cancel
+   906→            </Button>
+   907→            <Button onClick={submitSupplier} disabled={supSaving}>
+   908→              {supSaving ? "Saving…" : supDialog.supplier ? "Save changes" : "Create supplier"}
+   909→            </Button>
+   910→          </DialogFooter>
+   911→        </DialogContent>
+   912→      </Dialog>
+   913→
+   914→      {/* Delete supplier confirm */}
+   915→      <AlertDialog open={!!deleteSupplier} onOpenChange={(o) => !o && setDeleteSupplier(null)}>
+   916→        <AlertDialogContent>
+   917→          <AlertDialogHeader>
+   918→            <AlertDialogTitle>Remove {deleteSupplier?.name}?</AlertDialogTitle>
+   919→            <AlertDialogDescription>
+   920→              Suppliers linked to items, purchase orders or expenses are archived (status Inactive) instead of deleted.
+   921→            </AlertDialogDescription>
+   922→          </AlertDialogHeader>
+   923→          <AlertDialogFooter>
+   924→            <AlertDialogCancel>Keep supplier</AlertDialogCancel>
+   925→            <AlertDialogAction
+   926→              className="bg-red-600 hover:bg-red-700 text-white"
+   927→              onClick={(e) => {
+   928→                e.preventDefault();
+   929→                submitDeleteSupplier();
+   930→              }}
+   931→            >
+   932→              Remove
+   933→            </AlertDialogAction>
+   934→          </AlertDialogFooter>
+   935→        </AlertDialogContent>
+   936→      </AlertDialog>
+   937→    </div>
+   938→  );
+   939→}
+   940→

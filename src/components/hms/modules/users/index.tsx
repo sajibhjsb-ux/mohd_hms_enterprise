@@ -1,31 +1,40 @@
 "use client";
 
-// MOHD.HMS ENTERPRISE — Users module.
-// Staff account management: role badges, status toggle with confirm, password
-// reset dialog, create dialog (SUPER_ADMIN creation restricted to SUPER_ADMIN).
-// Customer portal users are hidden behind an "include portal users" toggle.
+// MOHD.HMS ENTERPRISE — Users module (list page).
+// Staff account management: role badges, portal-user toggle, disable confirm,
+// inline re-enable. Create / edit / password-reset live on DEDICATED PAGES.
+//
+// NAVIGATION ARCHITECTURE (no popup CRUD): user create / edit are DEDICATED
+// PAGES routed by the hash router (ui-store pages["users"]):
+//   []            → this list page
+//   ["new"]       → UserNewPage    (#/users/new)
+//   [id]          → UserEditPage   (#/users/{id})     — no separate detail
+//   [id, "edit"]  → UserEditPage   (#/users/{id}/edit) — profile + password
+// Only the disable confirmation remains an AlertDialog (confirm-only dialog).
 
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DataTable, type Column } from "@/components/hms/shared/data-table";
-import { PageHeader, StatusBadge, LoadingState, ErrorState } from "@/components/hms/shared/ui-bits";
+import { PageHeader, StatusBadge, LoadingState, EmptyState, ErrorState } from "@/components/hms/shared/ui-bits";
 import { api, ClientApiError, qs } from "@/lib/hms/api-client";
 import { useSession } from "@/components/hms/session";
+import { useUi } from "@/lib/hms/ui-store";
+import { navigateTo, pageFromSeg } from "@/lib/hms/router";
 import { useToast } from "@/hooks/use-toast";
 import type { Permission } from "@/lib/hms/constants";
 import { humanize } from "@/lib/hms/constants";
 import { fmtDateTime } from "@/lib/hms/format";
 import { EyeOff, Eye, KeyRound, Pencil, Plus, ShieldCheck, UserX } from "lucide-react";
+import { UserNewPage } from "./new-page";
+import { UserEditPage } from "./edit-page";
+
+// ── Types & constants ──
 
 type UserRow = {
   id: string; email: string; name: string; phone: string | null; role: string; status: string;
@@ -35,7 +44,6 @@ type UserRow = {
 };
 
 const ROLES = ["SUPER_ADMIN", "ADMIN", "SUPERVISOR", "TECHNICIAN", "CUSTOMER", "FINANCE", "HR"] as const;
-const ASSIGNABLE_ROLES = ROLES.filter((r) => r !== "CUSTOMER");
 
 const ROLE_TONE: Record<string, string> = {
   SUPER_ADMIN: "bg-purple-100 text-purple-800 border-purple-200",
@@ -55,60 +63,37 @@ function RoleBadge({ role }: { role: string }) {
   );
 }
 
-/** Mirrors the server-side password policy (min 8 chars, letters + numbers). */
-function passwordProblem(pw: string): string | null {
-  if (!pw || pw.length < 8) return "Password must be at least 8 characters long.";
-  if (!/[a-zA-Z]/.test(pw) || !/[0-9]/.test(pw)) return "Password must contain letters and numbers.";
-  return null;
-}
-
-type FormState = { name: string; email: string; password: string; phone: string; role: string };
-const EMPTY_FORM: FormState = { name: "", email: "", password: "", phone: "", role: "SUPERVISOR" };
-
-type FieldErrors = Record<string, string>;
-function extractFieldErrors(e: unknown): FieldErrors {
-  if (e instanceof ClientApiError && Array.isArray(e.details)) {
-    const out: FieldErrors = {};
-    for (const d of e.details as { path?: string; message?: string }[]) {
-      if (d?.path && d?.message) out[d.path] = d.message;
-    }
-    return out;
-  }
-  return {};
-}
-
-function FieldError({ msg }: { msg?: string }) {
-  if (!msg) return null;
-  return <p className="text-xs text-destructive mt-1">{msg}</p>;
-}
+// ── Module router ──
 
 export function UsersModule() {
+  const seg = useUi((s) => s.pages["users"]) ?? [];
+  const page = pageFromSeg(seg);
+
+  if (page.view === "new") return <UserNewPage />;
+  // No separate detail page — both [id] and [id, "edit"] open the edit page.
+  if ((page.view === "edit" || page.view === "detail") && page.id) return <UserEditPage id={page.id} />;
+  return <UsersList />;
+}
+
+// ── List page ──
+
+function UsersList() {
   const { user } = useSession();
   const { toast } = useToast();
   const can = (p: Permission) => !!user?.permissions.includes(p);
+  const canUpdate = can("users.update");
   const isSuperAdmin = user?.role === "SUPER_ADMIN";
+
+  // All page navigation flows through the hash router (URL + Back/Forward).
+  const openPage = useCallback((seg: string[]) => navigateTo("users", seg), []);
 
   const [rows, setRows] = useState<UserRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [includeCustomers, setIncludeCustomers] = useState(false);
-
-  // Create dialog
-  const [createOpen, setCreateOpen] = useState(false);
-  const [form, setForm] = useState<FormState>(EMPTY_FORM);
-  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [saving, setSaving] = useState(false);
 
-  // Edit dialog
-  const [editRow, setEditRow] = useState<UserRow | null>(null);
-  const [editForm, setEditForm] = useState<{ name: string; phone: string; role: string }>({ name: "", phone: "", role: "SUPERVISOR" });
-
-  // Reset password dialog
-  const [pwRow, setPwRow] = useState<UserRow | null>(null);
-  const [newPassword, setPassword] = useState("");
-  const [pwError, setPwError] = useState<string | null>(null);
-
-  // Disable confirm
+  // Disable confirm (the only remaining dialog in this module)
   const [disableRow, setDisableRow] = useState<UserRow | null>(null);
 
   const load = useCallback(async () => {
@@ -125,65 +110,6 @@ export function UsersModule() {
   }, [includeCustomers]);
 
   useEffect(() => { load(); }, [load]);
-
-  async function submitCreate() {
-    const pwErr = passwordProblem(form.password);
-    if (pwErr) {
-      setFieldErrors({ password: pwErr });
-      toast({ title: "Check the password", description: pwErr, variant: "destructive" });
-      return;
-    }
-    setSaving(true);
-    setFieldErrors({});
-    try {
-      const res = await api.post<UserRow>("/api/v1/users", {
-        name: form.name, email: form.email, password: form.password,
-        phone: form.phone || undefined, role: form.role,
-      });
-      toast({ title: "User created", description: `${res.data.name} can now sign in as ${humanize(res.data.role)}.` });
-      setForm(EMPTY_FORM);
-      setCreateOpen(false);
-      load();
-    } catch (e) {
-      setFieldErrors(extractFieldErrors(e));
-      toast({ title: "Could not create user", description: e instanceof ClientApiError ? e.message : undefined, variant: "destructive" });
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function submitEdit() {
-    if (!editRow) return;
-    setSaving(true);
-    try {
-      await api.patch(`/api/v1/users/${editRow.id}`, { name: editForm.name, phone: editForm.phone || null, role: editForm.role });
-      toast({ title: "User updated", description: `${editForm.name} saved.` });
-      setEditRow(null);
-      load();
-    } catch (e) {
-      toast({ title: "Could not update user", description: e instanceof ClientApiError ? e.message : undefined, variant: "destructive" });
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function submitResetPassword() {
-    if (!pwRow) return;
-    const pwErr = passwordProblem(newPassword);
-    if (pwErr) { setPwError(pwErr); return; }
-    setSaving(true);
-    setPwError(null);
-    try {
-      await api.patch(`/api/v1/users/${pwRow.id}`, { action: "reset_password", newPassword });
-      toast({ title: "Password reset", description: `${pwRow.name} must sign in with the new password.` });
-      setPwRow(null);
-      setPassword("");
-    } catch (e) {
-      toast({ title: "Could not reset password", description: e instanceof ClientApiError ? e.message : undefined, variant: "destructive" });
-    } finally {
-      setSaving(false);
-    }
-  }
 
   async function submitDisable() {
     if (!disableRow) return;
@@ -210,7 +136,8 @@ export function UsersModule() {
     }
   }
 
-  const roleOptions = ASSIGNABLE_ROLES.filter((r) => r !== "SUPER_ADMIN" || isSuperAdmin);
+  /** Row click opens the edit page — but only where editing is actually possible. */
+  const rowClickable = (r: UserRow) => canUpdate && !(r.role === "SUPER_ADMIN" && !isSuperAdmin);
 
   const columns: Column<UserRow>[] = [
     {
@@ -250,12 +177,12 @@ export function UsersModule() {
         const guarded = r.role === "SUPER_ADMIN" && !isSuperAdmin;
         return (
           <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-            {can("users.update") && !guarded ? (
+            {canUpdate && !guarded ? (
               <>
-                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { setEditRow(r); setEditForm({ name: r.name, phone: r.phone ?? "", role: r.role }); }} aria-label={`Edit ${r.name}`}>
+                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openPage([r.id, "edit"])} aria-label={`Edit ${r.name}`}>
                   <Pencil className="h-4 w-4" />
                 </Button>
-                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { setPwRow(r); setPassword(""); setPwError(null); }} aria-label={`Reset password for ${r.name}`}>
+                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openPage([r.id, "edit"])} aria-label={`Reset password for ${r.name}`}>
                   <KeyRound className="h-4 w-4" />
                 </Button>
                 {r.status === "ACTIVE" ? (
@@ -288,7 +215,7 @@ export function UsersModule() {
               <span className="hidden sm:inline flex items-center gap-1">{includeCustomers ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />} Portal users</span>
             </label>
             {can("users.create") ? (
-              <Button onClick={() => { setForm({ ...EMPTY_FORM, role: roleOptions[0] ?? "SUPERVISOR" }); setFieldErrors({}); setCreateOpen(true); }}>
+              <Button onClick={() => openPage(["new"])}>
                 <Plus className="h-4 w-4 mr-1.5" /> New User
               </Button>
             ) : null}
@@ -300,11 +227,17 @@ export function UsersModule() {
         <ErrorState message={error} onRetry={load} />
       ) : loading ? (
         <LoadingState label="Loading users…" />
+      ) : rows.length === 0 ? (
+        <EmptyState
+          title="No users found"
+          hint={includeCustomers ? "Try clearing the search or filters." : "Toggle “Portal users” to include customer logins."}
+        />
       ) : (
         <DataTable
           columns={columns}
           rows={rows}
           rowKey={(r) => r.id}
+          onRowClick={(r) => { if (rowClickable(r)) openPage([r.id, "edit"]); }}
           searchPlaceholder="Search name or email…"
           filters={[
             {
@@ -318,126 +251,13 @@ export function UsersModule() {
               match: (r, v) => r.status === v,
             },
           ]}
-          emptyTitle="No users found"
-          emptyHint={includeCustomers ? "Try clearing the search or filters." : "Toggle “Portal users” to include customer logins."}
+          emptyTitle="No users match"
+          emptyHint="Try clearing the search or filters."
           exportName="users"
         />
       )}
 
-      {/* Create dialog */}
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Create user account</DialogTitle>
-            <DialogDescription>The user signs in with this email and password immediately.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label htmlFor="u-name">Full name *</Label>
-              <Input id="u-name" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="e.g. Sarah Lim" />
-              <FieldError msg={fieldErrors.name} />
-            </div>
-            <div>
-              <Label htmlFor="u-email">Email *</Label>
-              <Input id="u-email" type="email" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} placeholder="name@mohdhms.com" />
-              <FieldError msg={fieldErrors.email} />
-            </div>
-            <div>
-              <Label htmlFor="u-pw">Password *</Label>
-              <Input id="u-pw" type="text" autoComplete="off" value={form.password} onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))} placeholder="Min 8 chars, letters + numbers" />
-              <FieldError msg={fieldErrors.password} />
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="u-phone">Phone</Label>
-                <Input id="u-phone" value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} placeholder="+60 12-…" />
-              </div>
-              <div>
-                <Label>Role</Label>
-                <Select value={form.role} onValueChange={(v) => setForm((f) => ({ ...f, role: v }))}>
-                  <SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger>
-                  <SelectContent>
-                    {roleOptions.map((r) => <SelectItem key={r} value={r}>{humanize(r)}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                {!isSuperAdmin ? <p className="text-xs text-muted-foreground mt-1">SUPER_ADMIN accounts can only be created by a SUPER_ADMIN.</p> : null}
-              </div>
-            </div>
-            {form.role === "TECHNICIAN" ? (
-              <p className="text-xs rounded-md bg-muted px-3 py-2 text-muted-foreground">
-                A technician profile with an employee number is provisioned automatically.
-              </p>
-            ) : null}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
-            <Button onClick={submitCreate} disabled={saving}>{saving ? "Creating…" : "Create user"}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Edit dialog */}
-      <Dialog open={!!editRow} onOpenChange={(o) => !o && setEditRow(null)}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Edit {editRow?.name}</DialogTitle>
-            <DialogDescription>{editRow?.email}{editRow?.technicianProfile ? ` · ${editRow.technicianProfile.employeeNo}` : ""}</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label htmlFor="ue-name">Full name</Label>
-              <Input id="ue-name" value={editForm.name} onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))} />
-            </div>
-            <div>
-              <Label htmlFor="ue-phone">Phone</Label>
-              <Input id="ue-phone" value={editForm.phone} onChange={(e) => setEditForm((f) => ({ ...f, phone: e.target.value }))} />
-            </div>
-            <div>
-              <Label>Role</Label>
-              <Select value={editForm.role} onValueChange={(v) => setEditForm((f) => ({ ...f, role: v }))} disabled={editRow?.id === user?.id}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {roleOptions.map((r) => <SelectItem key={r} value={r}>{humanize(r)}</SelectItem>)}
-                </SelectContent>
-              </Select>
-              {editRow?.id === user?.id ? <p className="text-xs text-muted-foreground mt-1">You cannot change your own role.</p> : null}
-            </div>
-            <div className="flex items-center justify-between rounded-lg border px-3 py-2.5">
-              <div>
-                <p className="text-sm font-medium">Status</p>
-                <p className="text-xs text-muted-foreground">{editRow?.status === "ACTIVE" ? "Active — can sign in" : "Disabled — sign-in blocked"}</p>
-              </div>
-              <StatusBadge status={editRow?.status} />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditRow(null)}>Cancel</Button>
-            <Button onClick={submitEdit} disabled={saving}>{saving ? "Saving…" : "Save changes"}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Reset password dialog */}
-      <Dialog open={!!pwRow} onOpenChange={(o) => !o && setPwRow(null)}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Reset password — {pwRow?.name}</DialogTitle>
-            <DialogDescription>All active sessions for this user will be signed out.</DialogDescription>
-          </DialogHeader>
-          <div>
-            <Label htmlFor="up-new">New password *</Label>
-            <Input id="up-new" type="text" autoComplete="off" value={newPassword} onChange={(e) => { setPassword(e.target.value); setPwError(passwordProblem(e.target.value)); }} placeholder="Min 8 chars, letters + numbers" />
-            {newPassword && !pwError ? <p className="text-xs text-emerald-600 mt-1">Password meets the policy.</p> : null}
-            <FieldError msg={pwError ?? undefined} />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setPwRow(null)}>Cancel</Button>
-            <Button onClick={submitResetPassword} disabled={saving || !!pwError || !newPassword}>{saving ? "Resetting…" : "Reset password"}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Disable confirm */}
+      {/* Disable confirm — the only dialog kept in this module (confirm-only). */}
       <AlertDialog open={!!disableRow} onOpenChange={(o) => !o && setDisableRow(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
