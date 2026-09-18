@@ -6,6 +6,7 @@
 // screen with ?googleError=<code> which the UI maps to a friendly message.
 
 import { NextRequest, NextResponse } from "next/server";
+import { randomBytes } from "crypto";
 import { db } from "@/lib/db";
 import { createSession, SESSION_COOKIE } from "@/lib/hms/auth";
 import { clientIp, rateLimit } from "@/lib/hms/rate-limit";
@@ -29,7 +30,7 @@ export async function GET(req: NextRequest) {
 
   // OAuth cookies are single-use: every response discards them.
   const clearOAuth = (res: NextResponse): NextResponse => {
-    const base = { httpOnly: true, sameSite: "lax" as const, path: "/api/v1/auth/google", maxAge: 0 };
+    const base = { httpOnly: true, sameSite: "lax" as const, path: "/", maxAge: 0 };
     res.cookies.set(OAUTH_STATE_COOKIE, "", base);
     res.cookies.set(OAUTH_VERIFIER_COOKIE, "", base);
     return res;
@@ -79,9 +80,34 @@ export async function GET(req: NextRequest) {
   if (!profile) return fail("profile_failed");
   if (!profile.emailVerified) return fail("email_unverified", { email: profile.email });
 
-  // Existing-account linking: by googleId first, then by verified email.
+  // Link existing account by googleId then by verified email; otherwise the
+  // FIRST Google sign-in auto-provisions a customer/client account (no prior
+  // password — login is Google-only for that account).
+  let provisioned = false;
   let user = await db.user.findUnique({ where: { googleId: profile.sub } });
   if (!user) user = await db.user.findUnique({ where: { email: profile.email } });
+
+  if (!user) {
+    provisioned = true;
+    try {
+      user = await db.user.create({
+        data: {
+          email: profile.email,
+          passwordHash: randomBytes(32).toString("hex"),
+          name: profile.name?.trim() || profile.email.split("@")[0],
+          role: "CUSTOMER",
+          status: "ACTIVE",
+          emailVerified: new Date(),
+          googleId: profile.sub,
+          avatarUrl: profile.picture ?? undefined,
+          lastLoginAt: new Date(),
+        },
+      });
+    } catch {
+      user = await db.user.findUnique({ where: { googleId: profile.sub } });
+      if (!user) user = await db.user.findUnique({ where: { email: profile.email } });
+    }
+  }
 
   if (!user) return fail("no_account", { email: profile.email });
   if (user.status !== "ACTIVE") return fail("account_disabled", { email: profile.email });
@@ -97,7 +123,14 @@ export async function GET(req: NextRequest) {
   });
 
   const { token, expiresAt } = await createSession(user.id, ip, req.headers.get("user-agent") ?? undefined);
-  await audit({ actorId: user.id, actorEmail: user.email, action: "LOGIN_GOOGLE", resourceType: "AUTH", ip });
+  await audit({
+    actorId: user.id,
+    actorEmail: user.email,
+    action: "LOGIN_GOOGLE",
+    resourceType: "AUTH",
+    ip,
+    metadata: provisioned ? { provisioned: true } : undefined,
+  });
 
   const res = NextResponse.redirect(new URL("/dashboard", externalOrigin(req)));
   res.cookies.set(SESSION_COOKIE, token, {

@@ -60,7 +60,7 @@ export function LoginScreen() {
       // User cancelled on Google's consent screen — not an error worth a banner.
     } else if (code === "not_configured") {
       setOauthError(
-        `${GOOGLE_ERROR_MESSAGES.not_configured} Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to the server environment, then register this callback URL in Google Cloud Console: ${window.location.origin}/api/v1/auth/google/callback`
+        `${GOOGLE_ERROR_MESSAGES.not_configured} Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to the server environment, then register this callback URL in Google Cloud Console: ${window.location.origin}/api/auth/callback/google`
       );
     } else {
       setOauthError(GOOGLE_ERROR_MESSAGES[code] ?? "Google sign-in failed. Please try again.");

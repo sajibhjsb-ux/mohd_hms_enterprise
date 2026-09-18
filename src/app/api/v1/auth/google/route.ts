@@ -42,7 +42,7 @@ export async function GET(req: NextRequest) {
     httpOnly: true,
     sameSite: "lax" as const,
     secure: process.env.NODE_ENV === "production",
-    path: "/api/v1/auth/google",
+    path: "/",
     maxAge: OAUTH_COOKIE_MAX_AGE,
   };
   res.cookies.set(OAUTH_STATE_COOKIE, state, cookieBase);
