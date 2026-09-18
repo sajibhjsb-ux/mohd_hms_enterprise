@@ -94,6 +94,24 @@ async function workOrderCtx(woId: string): Promise<WoCtx> {
   return wo ? { customerId: wo.customerId, technicianUserId: wo.technician?.userId ?? null } : null;
 }
 
+/** Inspection report audience context: owning customer (via project) + inspector user. */
+type IrmsCtx = { customerId: string | null; inspectorUserId: string | null } | null;
+
+async function inspectionCtx(reportId: string): Promise<IrmsCtx> {
+  if (!reportId) return null;
+  const r = await db.inspectionReport.findUnique({
+    where: { id: reportId },
+    select: {
+      customerVisible: true,
+      project: { select: { customerId: true } },
+      inspector: { select: { userId: true } },
+    },
+  });
+  return r
+    ? { customerId: r.customerVisible ? r.project.customerId : null, inspectorUserId: r.inspector?.userId ?? null }
+    : null;
+}
+
 /**
  * Map an outbox event to the rooms that should receive it.
  * Unknown event types default to `staff` (fail-closed: never broadcast business
@@ -201,11 +219,23 @@ export async function resolveRooms(event: RealtimeEventRow): Promise<Room[]> {
     case EVENT_TYPES.PM_TASK_UPDATED:
       return mgmt();
 
-    // ── IRMS (STEP 16): staff only — customers never receive internal IRMS events.
+    // ── IRMS: staff management + the assigned inspector; customers receive
+    //    only APPROVED events for reports explicitly marked customer-visible.
     case EVENT_TYPES.IRMS_PROJECT_UPDATED:
     case EVENT_TYPES.IRMS_REPORT_UPDATED:
-    case EVENT_TYPES.INSPECTION_COMPLETED:
-      return mgmt();
+    case EVENT_TYPES.IRMS_PHOTOS_UPDATED:
+    case EVENT_TYPES.INSPECTION_SUBMITTED:
+    case EVENT_TYPES.INSPECTION_REVIEWED:
+    case EVENT_TYPES.INSPECTION_REJECTED:
+    case EVENT_TYPES.INSPECTION_ARCHIVED:
+    case EVENT_TYPES.INSPECTION_COMPLETED: {
+      const ctx = await inspectionCtx(event.resourceId);
+      return [...mgmt(), ...user(ctx?.inspectorUserId)];
+    }
+    case EVENT_TYPES.INSPECTION_APPROVED: {
+      const ctx = await inspectionCtx(event.resourceId);
+      return [...mgmt(), ...user(ctx?.inspectorUserId), ...customer(ctx?.customerId)];
+    }
 
     // ── HR / users / vehicles (STEP 10-18 matrix): staff only.
     case EVENT_TYPES.HR_LEAVE_UPDATED:

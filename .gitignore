@@ -60,3 +60,6 @@ server.log
 tool-results/
 upload/
 dev.log
+
+# IRMS media storage (filesystem; originals never in git)
+/uploads

@@ -120,4 +120,5 @@ export const RESOURCE_ROUTES: Record<string, { module: string; seg: (id: string)
   QUOTATION: { module: "quotations", seg: (id) => [id] },
   PURCHASE_ORDER: { module: "purchases", seg: (id) => [id] },
   INVENTORY_ITEM: { module: "inventory", seg: (id) => [id] },
+  INSPECTION_REPORT: { module: "irms", seg: (id) => ["reports", id] },
 };

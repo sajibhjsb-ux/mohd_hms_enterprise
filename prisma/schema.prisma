@@ -306,6 +306,7 @@ model WorkOrder {
 
   checklist WorkOrderChecklistItem[]
   materials WorkOrderMaterial[]
+  irmsReports InspectionReport[] @relation("irmsWorkOrders")
 
   @@index([status])
   @@index([customerId])
@@ -409,19 +410,57 @@ model InspectionReport {
   project          IrmsProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
   equipmentId      String?
   equipment        Equipment? @relation(fields: [equipmentId], references: [id], onDelete: SetNull)
+  workOrderId      String?
+  workOrder        WorkOrder? @relation("irmsWorkOrders", fields: [workOrderId], references: [id], onDelete: SetNull)
   title            String
   type             String    @default("ROUTINE") // ROUTINE | SAFETY | EQUIPMENT | PROJECT | OTHER
+  priority         String    @default("MEDIUM") // LOW | MEDIUM | HIGH | URGENT
   inspectionDate   DateTime
   inspectorId      String?
   inspector        TechnicianProfile? @relation("inspectorReports", fields: [inspectorId], references: [id], onDelete: SetNull)
-  status           String    @default("DRAFT") // DRAFT | SUBMITTED | APPROVED
+  status           String    @default("DRAFT") // DRAFT | SUBMITTED | IN_REVIEW | MANAGER_APPROVAL | CLIENT_REVIEW | APPROVED | REJECTED | ARCHIVED
   summary          String    @default("")
   overallCondition String    @default("GOOD") // EXCELLENT | GOOD | FAIR | POOR | CRITICAL
   recommendations  String    @default("")
+  // ── Work details (report builder tab 2) ──
+  jobOrderNo       String    @default("")
+  building         String    @default("")
+  floor            String    @default("")
+  room             String    @default("")
+  taskDescription  String    @default("")
+  scope            String    @default("")
+  notes            String    @default("")
+  correctiveActions String   @default("")
+  rootCause        String    @default("")
+  safetyNotes      String    @default("")
+  materials        String    @default("")
+  labourHours      Float     @default(0)
+  completionPercent Int      @default(0)
+  // ── Workflow / portal ──
+  customerVisible  Boolean   @default(false) // shared to the customer portal once APPROVED
+  revision         Int       @default(0)
+  clientComment    String    @default("")
+  submittedAt      DateTime?
+  submittedById    String?
+  reviewedAt       DateTime?
+  reviewedById     String?
+  approvedAt       DateTime?
+  approvedById     String?
+  rejectedAt       DateTime?
+  rejectedById     String?
+  archivedAt       DateTime?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
-  findings InspectionFinding[]
+  findings   InspectionFinding[]
+  photos     InspectionPhoto[]
+  signatures InspectionSignature[]
+  approvals  InspectionApproval[]
+  revisions  InspectionRevision[]
+
+  @@index([status])
+  @@index([projectId])
+  @@index([inspectionDate])
 }
 
 model InspectionFinding {
@@ -431,6 +470,83 @@ model InspectionFinding {
   finding        String
   severity       String           @default("MEDIUM") // LOW | MEDIUM | HIGH | CRITICAL
   recommendation String           @default("")
+}
+
+// ── IRMS photo management (non-destructive; originals never modified) ──
+model InspectionPhoto {
+  id           String           @id @default(cuid())
+  reportId     String
+  report       InspectionReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  category     String           @default("BEFORE") // BEFORE | AFTER | PROGRESS | DURING | INSPECTION | COMPLETION | DEFECT | EVIDENCE
+  photoNo      String           @default("") // B001 / A001 / P001 / D001 / I001 / C001 / F001 / E001
+  sortOrder    Int              @default(0)
+  caption      String           @default("")
+  swRef        String           @default("")
+  room         String           @default("")
+  building     String           @default("")
+  storagePath  String @default("") // original file (relative to uploads/irms/)
+  displayPath  String @default("") // processed display image (max 1600px, EXIF-rotated)
+  thumbPath    String @default("") // 320px thumbnail
+  width        Int              @default(0)
+  height       Int              @default(0)
+  sizeBytes    Int              @default(0)
+  mimeType     String           @default("image/jpeg")
+  cameraModel  String           @default("")
+  takenAt      DateTime?
+  exif         String           @default("") // sanitized EXIF JSON — never exposed to customers
+  annotation   String           @default("[]") // non-destructive annotation JSON (arrows/shapes/text)
+  rotation     Int              @default(0) // user rotation applied at render time (0|90|180|270), original preserved
+  uploadedById String?
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  @@index([reportId, category, sortOrder])
+}
+
+// ── IRMS wet-signatures (mouse / touch / stylus) ──
+model InspectionSignature {
+  id          String           @id @default(cuid())
+  reportId    String
+  report      InspectionReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  role        String // INSPECTOR | SUPERVISOR | MANAGER | CLIENT
+  name        String
+  signedById  String?
+  signedAt    DateTime         @default(now())
+  storagePath String
+  revision    Int              @default(0) // revision the signature belongs to (history is never overwritten)
+
+  @@index([reportId, revision])
+}
+
+// ── IRMS approval audit trail (every workflow transition) ──
+model InspectionApproval {
+  id          String           @id @default(cuid())
+  reportId    String
+  report      InspectionReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  step        String // SUBMIT | REVIEW | MANAGER_APPROVAL | CLIENT_REQUEST | CLIENT_APPROVE | APPROVE | REJECT | ARCHIVE | REOPEN
+  fromStatus  String
+  toStatus    String
+  comment     String           @default("")
+  userId      String?
+  userName    String           @default("")
+  createdAt   DateTime         @default(now())
+
+  @@index([reportId, createdAt])
+}
+
+// ── IRMS versioned revisions (approved records are never silently overwritten) ──
+model InspectionRevision {
+  id            String           @id @default(cuid())
+  reportId      String
+  report        InspectionReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  version       Int
+  snapshot      String // full report JSON snapshot
+  note          String           @default("")
+  createdById   String?
+  createdByName String           @default("")
+  createdAt     DateTime         @default(now())
+
+  @@index([reportId, version])
 }
 
 // ─────────────────────────── INVENTORY / SUPPLIERS / PURCHASES ───────────────────────────

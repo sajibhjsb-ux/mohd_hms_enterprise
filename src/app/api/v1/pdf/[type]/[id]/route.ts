@@ -32,12 +32,22 @@ export const GET = handler(
     const def = findDocumentType(type);
     if (!def || !id) throw Errors.notFound("Unknown document type.");
 
-    // §21 — every document enforces its module's read permission.
-    if (!roleCan(user.role, def.permission)) throw Errors.forbidden();
+    // §21 — every document enforces its module's read permission. Documents may
+    // declare extraPermissions (e.g. customers with irms.portal may download
+    // their own shared/approved inspection reports — the loader still scopes).
+    const permitted =
+      roleCan(user.role, def.permission) ||
+      (def.extraPermissions ?? []).some((p) => roleCan(user.role, p));
+    if (!permitted) throw Errors.forbidden();
 
     const started = Date.now();
     try {
-      const doc = await buildDocument(def, id, user);
+      // Forward the request origin (x-forwarded-proto/host) so IRMS documents
+      // can embed the same absolute QR URL as the QR endpoint (contract §17).
+      const proto = req.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
+      const host = req.headers.get("x-forwarded-host")?.split(",")[0]?.trim() || req.headers.get("host")?.trim();
+      const origin = host ? `${proto || "http"}://${host}` : undefined;
+      const doc = await buildDocument(def, id, user, undefined, origin);
       const durationMs = Date.now() - started;
 
       // §35 — structured generation log (no sensitive data).

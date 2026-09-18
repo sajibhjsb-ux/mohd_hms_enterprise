@@ -19,7 +19,7 @@ import { navigateTo, RESOURCE_ROUTES } from "@/lib/hms/router";
 import { humanize, PERMISSIONS } from "@/lib/hms/constants";
 import { initials } from "@/lib/hms/format";
 import { cn } from "@/lib/utils";
-import { onRealtimeState } from "@/lib/hms/realtime/bus";
+import { onRealtimeState, type RealtimeState } from "@/lib/hms/realtime/bus";
 import { useRealtimeEvent } from "@/lib/hms/realtime/hooks";
 import { RT } from "@/lib/hms/realtime/matrix";
 import { useToast } from "@/hooks/use-toast";
@@ -81,7 +81,6 @@ export function TopHeader({ onOpenSearch, onOpenQr, onSelectModule, onOpenChange
     const message = typeof ev.data?.message === "string" ? ev.data.message : undefined;
     const isError = ev.data?.type === "ERROR";
     toast({
-      id: `rt-notif-${toastSeq.current}`,
       title,
       description: message,
       variant: isError ? "destructive" : "default",

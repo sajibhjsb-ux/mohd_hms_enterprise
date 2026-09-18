@@ -396,6 +396,142 @@ export class PdfDoc {
     this.y -= 6;
   }
 
+  // ── IRMS photo-grid / QR / signature-image extensions (contract §17) ──────
+
+  private async embed(bytes: Buffer | Uint8Array): Promise<PDFImage | null> {
+    try {
+      return await this.pdf.embedPng(bytes);
+    } catch {
+      try {
+        return await this.pdf.embedJpg(bytes);
+      } catch {
+        return null;
+      }
+    }
+  }
+
+  /**
+   * 3×3 photo grid pages. Each inner array is ONE pre-chunked page of ≤9 cells
+   * (the renderer guarantees categories are never mixed on a page). Images are
+   * contain-fit (never distorted) with number + caption under each cell; a
+   * missing file renders a placeholder cell instead.
+   */
+  async photoGrid(pages: { caption: string; number: string; bytes: Buffer | Uint8Array | null }[][]): Promise<void> {
+    const usableTop = HEADER_RULE_Y - 24;
+    for (const cells of pages) {
+      if (!cells || cells.length === 0) continue;
+      // Continue on the current page only when it is still effectively fresh
+      // (a section heading was just drawn); otherwise start a dedicated page.
+      if (this.y < usableTop - 60) this.addPage();
+      const gridTop = this.y;
+      const gridBottom = MARGIN + 30;
+      const cellW = this.contentW / 3;
+      const cellH = (gridTop - gridBottom) / 3;
+      const imgH = cellH - 34;
+      const imgW = cellW - 12;
+
+      for (let i = 0; i < Math.min(9, cells.length); i++) {
+        const cell = cells[i];
+        const col = i % 3;
+        const row = Math.floor(i / 3);
+        const x = MARGIN + col * cellW;
+        const yTop = gridTop - row * cellH;
+
+        this.page.drawRectangle({
+          x: x + 1,
+          y: yTop - cellH + 2,
+          width: cellW - 2,
+          height: cellH - 4,
+          borderColor: LINE,
+          borderWidth: 0.7,
+        });
+
+        let drew = false;
+        if (cell.bytes && cell.bytes.length > 0) {
+          const img = await this.embed(cell.bytes);
+          if (img) {
+            const dim = img.scaleToFit(imgW, imgH);
+            const ix = x + (cellW - dim.width) / 2;
+            const iy = yTop - 8 - imgH + (imgH - dim.height) / 2;
+            this.page.drawImage(img, { x: ix, y: iy, width: dim.width, height: dim.height });
+            drew = true;
+          }
+        }
+        if (!drew) {
+          this.page.drawRectangle({ x: x + 7, y: yTop - 8 - imgH, width: cellW - 14, height: imgH, color: ZEBRA });
+          const t = "Photo file unavailable";
+          const tw = this.font.widthOfTextAtSize(t, 8);
+          this.page.drawText(t, { x: x + (cellW - tw) / 2, y: yTop - 8 - imgH / 2 + 3, size: 8, font: this.font, color: FAINT });
+        }
+
+        // Number (bold) + caption in the strip under the cell.
+        const capY = yTop - cellH + 14;
+        this.page.drawText(pdfText(cell.number).slice(0, 12), { x: x + 6, y: capY, size: 8, font: this.bold, color: GREEN_INK });
+        const numW = this.bold.widthOfTextAtSize(pdfText(cell.number).slice(0, 12), 8) + 6;
+        const caption = pdfText(cell.caption || "—");
+        const maxCw = cellW - numW - 14;
+        let line = caption.slice(0, 60);
+        while (line.length > 1 && this.font.widthOfTextAtSize(line, 7.5) > maxCw) line = line.slice(0, -1);
+        if (caption.length > line.length) line = line.slice(0, -1) + "…";
+        this.page.drawText(line, { x: x + 6 + numW, y: capY, size: 7.5, font: this.font, color: MUTED });
+      }
+      this.y = gridTop - 3 * cellH - 6;
+    }
+  }
+
+  /** Embed a QR PNG at the footer area of the FIRST page (contract §17). */
+  async qr(png: Buffer | Uint8Array, opts?: { caption?: string }): Promise<void> {
+    if (!png || png.length === 0) return;
+    const img = await this.embed(png);
+    if (!img) return;
+    const size = 54;
+    const page = this.pages[0];
+    const x = A4W - MARGIN - size;
+    const y = 50;
+    page.drawRectangle({ x: x - 3, y: y - 3, width: size + 6, height: size + 6, color: WHITE, borderColor: LINE, borderWidth: 0.6 });
+    page.drawImage(img, { x, y, width: size, height: size });
+    if (opts?.caption) {
+      const caption = pdfText(opts.caption).slice(0, 44);
+      const tw = this.font.widthOfTextAtSize(caption, 7);
+      page.drawText(caption, { x: x - 8 - tw, y: y + 22, size: 7, font: this.font, color: FAINT });
+    }
+  }
+
+  /** Signature lines with embedded signature PNG when present (contract §17). */
+  async signatureImage(items: { caption: string; name?: string; img?: Buffer | Uint8Array }[]): Promise<void> {
+    if (items.length === 0) return;
+    const shown = items.slice(0, 3);
+    const slotW = this.contentW / Math.min(3, Math.max(1, shown.length));
+    const lineW = Math.min(170, slotW - 30);
+    const imgs: (PDFImage | null)[] = [];
+    for (const s of shown) {
+      imgs.push(s.img && s.img.length > 0 ? await this.embed(s.img) : null);
+    }
+    const imgH = 34;
+    this.ensure(imgH + 84);
+    this.y -= imgH + 46;
+    shown.forEach((s, i) => {
+      const x = MARGIN + i * slotW + 8;
+      const img = imgs[i];
+      const lineY = this.y;
+      if (img) {
+        const dim = img.scaleToFit(lineW - 6, imgH);
+        this.page.drawImage(img, { x: x + (lineW - dim.width) / 2, y: lineY + 6, width: dim.width, height: dim.height });
+        if (s.name) {
+          this.page.drawText(pdfText(s.name).slice(0, 40), { x, y: lineY - 11, size: 8.5, font: this.bold, color: INK });
+        }
+        this.page.drawText(pdfText(s.caption).slice(0, 44), { x, y: lineY - 20, size: 7.5, font: this.font, color: MUTED });
+      } else {
+        if (s.name) {
+          this.page.drawText(pdfText(s.name).slice(0, 40), { x, y: lineY + 5, size: 8.5, font: this.bold, color: INK });
+        }
+        this.page.drawText(pdfText(s.caption).slice(0, 44), { x, y: lineY - 11, size: 7.5, font: this.font, color: MUTED });
+      }
+      this.page.drawLine({ start: { x, y: lineY }, end: { x: x + lineW, y: lineY }, thickness: 0.9, color: MUTED });
+    });
+    this.y -= 20;
+  }
+
   private wrap(text: string, font: PDFFont, size: number, maxWidth: number): string[] {
     const src = (text ?? "").replace(/\r\n?/g, "\n").trim();
     if (!src) return [];

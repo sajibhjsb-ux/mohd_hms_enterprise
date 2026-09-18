@@ -63,6 +63,12 @@ export const KPI_NAV: Record<string, KpiNavTarget> = {
   collected: { module: "invoices", query: { status: "PAID" }, permission: PERMISSIONS.invoices_read },
   outstanding: { module: "invoices", query: { status: "outstanding" }, permission: PERMISSIONS.invoices_read },
   expenses: { module: "finance", seg: ["expenses"], permission: PERMISSIONS.finance_read },
+  // ── IRMS inspection KPIs (destination: #/irms/reports?status=…) ──
+  irmsCompleted: { module: "irms", seg: ["reports"], query: { status: "APPROVED" }, permission: PERMISSIONS.irms_read },
+  irmsPending: { module: "irms", seg: ["reports"], query: { status: "SUBMITTED,IN_REVIEW,MANAGER_APPROVAL,CLIENT_REVIEW" }, permission: PERMISSIONS.irms_read },
+  irmsDrafts: { module: "irms", seg: ["reports"], query: { status: "DRAFT,REJECTED" }, permission: PERMISSIONS.irms_read },
+  irmsProjects: { module: "irms", seg: ["projects"], permission: PERMISSIONS.irms_read },
+  irmsOverdue: { module: "irms", seg: ["reports"], query: { overdue: "1" }, permission: PERMISSIONS.irms_read },
 };
 
 /** Resolved hash href for a KPI, or undefined when the user lacks permission. */

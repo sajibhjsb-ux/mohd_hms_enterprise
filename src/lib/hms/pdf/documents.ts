@@ -12,10 +12,12 @@ import "server-only";
 import { db } from "@/lib/db";
 import { Errors } from "@/lib/hms/api";
 import { isStaff } from "@/lib/hms/rbac";
-import { PERMISSIONS, humanize, type Permission } from "@/lib/hms/constants";
+import { PERMISSIONS, IRMS_PHOTO_CATEGORIES, IRMS_SIGNATURE_ROLES, humanize, type Permission } from "@/lib/hms/constants";
 import { fmtDate, fmtDateTime, money } from "@/lib/hms/format";
 import { PdfDoc, safeFilename, type DocHeaderInfo, type TableCol, type TableCell } from "./engine";
+import { canonicalPhotoOrder, readVariantFile } from "@/lib/hms/irms/storage";
 import type { Branding } from "./branding";
+import QRCode from "qrcode";
 
 export type PdfRequestUser = { id: string; role: string; customerId: string | null };
 
@@ -29,8 +31,12 @@ export type DocumentDef = {
   type: string; // URL segment: /api/v1/pdf/{type}/{id}
   docTitle: string;
   permission: Permission;
+  /** Additional permissions that ALSO grant access (e.g. irms.portal lets a
+   *  customer download their own shared/approved inspection reports — the
+   *  loader still enforces customer scoping, so this never widens visibility). */
+  extraPermissions?: Permission[];
   filenameLabel: string; // §23 filename middle segment
-  load: (id: string, user: PdfRequestUser, branding: Branding) => Promise<Loaded>;
+  load: (id: string, user: PdfRequestUser, branding: Branding, origin?: string) => Promise<Loaded>;
 };
 
 export type BuiltDoc = {
@@ -260,18 +266,60 @@ const inspectionReport: DocumentDef = {
   type: "inspection-report",
   docTitle: "Inspection Report",
   permission: PERMISSIONS.irms_read,
+  extraPermissions: [PERMISSIONS.irms_portal],
   filenameLabel: "Inspection-Report",
-  async load(id, user, branding) {
+  async load(id, user, branding, origin) {
     const r = await db.inspectionReport.findUnique({
       where: { id },
       include: {
-        project: { select: { code: true, name: true, siteLocation: true, customer: { select: { companyName: true } } } },
+        project: { select: { id: true, code: true, name: true, siteLocation: true, customerId: true, customer: { select: { companyName: true } } } },
         equipment: { select: { name: true, assetTag: true } },
+        workOrder: { select: { code: true, title: true } },
         inspector: { select: { employeeNo: true, user: { select: { name: true } } } },
         findings: { orderBy: { id: "asc" } },
+        photos: { orderBy: [{ sortOrder: "asc" as const }, { createdAt: "asc" as const }] },
+        signatures: { orderBy: { signedAt: "desc" as const } },
+        approvals: { orderBy: { createdAt: "asc" as const } },
       },
     });
     if (!r) throw Errors.notFound("Inspection report not found.");
+
+    // Customer scoping (contract §14): customers see only their own customer's
+    // report, when customerVisible AND status APPROVED|ARCHIVED — others 404.
+    if (!isStaff(user.role)) {
+      const own =
+        r.project.customerId === user.customerId &&
+        r.customerVisible &&
+        (r.status === "APPROVED" || r.status === "ARCHIVED");
+      if (!own) throw Errors.notFound("Inspection report not found.");
+    }
+
+    // Photo grid pages are built during render — canonical category order,
+    // sortOrder within category, chunked into ≤9-cell pages; DISPLAY variant
+    // bytes read from disk sequentially (§52); missing file → placeholder cell.
+    const orderedPhotos = canonicalPhotoOrder(r.photos);
+    type GridCell = { caption: string; number: string; bytes: Buffer | Uint8Array | null };
+
+    // Latest signature per role, PNG read from disk.
+    const signatureItems: { caption: string; name?: string; img?: Buffer | Uint8Array }[] = [];
+    for (const role of IRMS_SIGNATURE_ROLES) {
+      const s = r.signatures.find((sig) => sig.role === role);
+      if (!s) continue;
+      const file = await readVariantFile(s.storagePath);
+      signatureItems.push({ caption: `${humanize(role)} signature`, name: s.name, img: file?.buffer });
+    }
+    if (signatureItems.length === 0) {
+      signatureItems.push({ caption: "Inspector signature", name: r.inspector?.user.name }, { caption: "Approved by" });
+    }
+
+    // QR — same absolute URL as the QR endpoint (§16).
+    const qrUrl = `${origin || "http://localhost:3000"}/#/irms/reports/${id}`;
+    let qrPng: Buffer | null = null;
+    try {
+      qrPng = await QRCode.toBuffer(qrUrl, { width: 256, margin: 1, errorCorrectionLevel: "M" });
+    } catch {
+      qrPng = null; // QR must never fail the document
+    }
 
     return {
       header: {
@@ -280,23 +328,31 @@ const inspectionReport: DocumentDef = {
         docTitle: "Inspection Report",
         docNumber: r.code,
         docDateLabel: `Inspected ${fmtDate(r.inspectionDate)}`,
-        meta: [["Status", humanize(r.status)], ["Overall", humanize(r.overallCondition)]],
+        meta: [["Status", humanize(r.status)], ["Overall", humanize(r.overallCondition)], ["Revision", `Rev ${r.revision}`]],
       },
       filename: safeFilename(`MOHD-HMS-Inspection-Report-${r.code}.pdf`),
       render: (d) => {
+        // Job information (actual DB fields — §17).
         d.kvGrid([
+          ["Job Order No", r.jobOrderNo || "—"],
+          ["Work Order", r.workOrder ? `${r.workOrder.code} — ${r.workOrder.title}` : "—"],
+          ["Work Category", humanize(r.type)],
+          ["Start (Completed)", fmtDate(r.inspectionDate)],
+          ["Building / Unit", [r.building, r.floor, r.room].filter(Boolean).join(" / ") || "—"],
+          ["Site", r.project.siteLocation || "—"],
           ["Report", r.code],
           ["Project", `${r.project.code} — ${r.project.name}`],
           ["Client", r.project.customer?.companyName ?? "—"],
-          ["Site", r.project.siteLocation || "—"],
           ["Equipment", r.equipment ? `${r.equipment.name} (${r.equipment.assetTag})` : "—"],
-          ["Inspection Type", humanize(r.type)],
           ["Inspector", r.inspector ? `${r.inspector.user.name} (${r.inspector.employeeNo})` : "—"],
-          ["Inspection Date", fmtDate(r.inspectionDate)],
           ["Overall Condition", humanize(r.overallCondition)],
           ["Report Status", humanize(r.status)],
         ]);
         d.spacer(6);
+        if (r.taskDescription?.trim()) {
+          d.heading("Work Description");
+          d.para(r.taskDescription, { size: 9 });
+        }
         if (r.summary?.trim()) {
           d.heading("Summary");
           d.para(r.summary, { size: 9 });
@@ -312,8 +368,66 @@ const inspectionReport: DocumentDef = {
           r.findings.map((f, i) => [{ text: String(i + 1) }, f.finding, humanize(f.severity), f.recommendation || "—"]),
           { emptyHint: "No findings recorded." }
         );
+        // Work details block.
+        const workDetails: [string, string][] = [
+          ["Scope", r.scope],
+          ["Corrective Actions", r.correctiveActions],
+          ["Root Cause", r.rootCause],
+          ["Safety Notes", r.safetyNotes],
+          ["Materials", r.materials],
+          ["Notes", r.notes],
+        ].filter(([, v]) => (v ?? "").trim().length > 0) as [string, string][];
+        if (workDetails.length > 0 || r.labourHours > 0 || r.completionPercent > 0) {
+          d.heading("Work Details");
+          for (const [label, value] of workDetails) {
+            d.para(`${label}: ${value}`, { size: 8.8 });
+          }
+          d.kvGrid([
+            ["Labour Hours", `${r.labourHours} h`],
+            ["Completion", `${r.completionPercent}%`],
+          ]);
+        }
         if (r.recommendations?.trim()) d.notesBlock("Recommendations", r.recommendations);
-        d.signatures([{ caption: "Inspector signature", name: r.inspector?.user.name }, { caption: "Approved by" }]);
+
+        // Photo sections + signatures + approval history + QR (async embeds).
+        return (async () => {
+          for (const category of IRMS_PHOTO_CATEGORIES) {
+            const catPhotos = orderedPhotos.filter((p) => p.category === category);
+            if (catPhotos.length === 0) continue;
+            d.heading(`Photographs — ${humanize(category)}`);
+            const chunks: GridCell[][] = [];
+            for (let i = 0; i < catPhotos.length; i += 9) {
+              const chunk = catPhotos.slice(i, i + 9);
+              const cells: GridCell[] = [];
+              for (const p of chunk) {
+                const file = await readVariantFile(p.displayPath || p.storagePath);
+                cells.push({
+                  caption: p.caption || [p.room, p.building].filter(Boolean).join(" / "),
+                  number: p.photoNo || "—",
+                  bytes: file ? file.buffer : null,
+                });
+              }
+              chunks.push(cells);
+            }
+            await d.photoGrid(chunks);
+          }
+          d.heading("Signatures");
+          await d.signatureImage(signatureItems);
+          d.heading("Approval History");
+          d.table(
+            [
+              { header: "Step", width: 1.6 },
+              { header: "Transition", width: 2.4 },
+              { header: "By", width: 1.8 },
+              { header: "Comment", width: 2.2 },
+              { header: "Date", width: 1.6 },
+            ],
+            r.approvals.map((a) => [humanize(a.step), `${humanize(a.fromStatus)} → ${humanize(a.toStatus)}`, a.userName || "—", a.comment || "—", fmtDateTime(a.createdAt)]),
+            { emptyHint: "No approval history recorded yet." }
+          );
+          d.para(`Revision: Rev ${r.revision}${r.clientComment ? ` — Client comment: ${r.clientComment}` : ""}`, { size: 8.2, color: "muted" });
+          if (qrPng) await d.qr(qrPng, { caption: `Scan to open ${r.code}` });
+        })();
       },
     };
   },
@@ -788,11 +902,11 @@ export function findDocumentType(type: string): DocumentDef | undefined {
 }
 
 /** Load → render → validate (§7 steps 5–8, §20). Central pipeline for all docs. */
-export async function buildDocument(def: DocumentDef, id: string, user: PdfRequestUser): Promise<BuiltDoc> {
+export async function buildDocument(def: DocumentDef, id: string, user: PdfRequestUser, branding?: Branding, origin?: string): Promise<BuiltDoc> {
   const { getBranding } = await import("./branding");
-  const branding = await getBranding();
-  const loaded = await def.load(id, user, branding);
-  const doc = await PdfDoc.create(loaded.header, branding.logoBytes);
+  const brand = branding ?? (await getBranding());
+  const loaded = await def.load(id, user, brand, origin);
+  const doc = await PdfDoc.create(loaded.header, brand.logoBytes);
   await loaded.render(doc);
   const { bytes, pageCount } = await doc.build();
   return {

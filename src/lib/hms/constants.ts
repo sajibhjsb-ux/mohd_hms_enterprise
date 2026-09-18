@@ -85,7 +85,9 @@ export const PERMISSIONS = {
   finance_manage: "finance.manage",
   // IRMS
   irms_read: "irms.read",
+  irms_create: "irms.create",
   irms_manage: "irms.manage",
+  irms_portal: "irms.portal", // customer portal: view approved/shared inspection reports only
   // reports
   reports_read: "reports.read",
   reports_export: "reports.export",
@@ -114,7 +116,7 @@ const SUPERVISOR_PERMS: Permission[] = [
   PERMISSIONS.purchases_read,
   PERMISSIONS.quotations_read, PERMISSIONS.quotations_manage,
   PERMISSIONS.invoices_read,
-  PERMISSIONS.irms_read, PERMISSIONS.irms_manage,
+  PERMISSIONS.irms_read, PERMISSIONS.irms_create, PERMISSIONS.irms_manage,
   PERMISSIONS.reports_read, PERMISSIONS.reports_export,
   PERMISSIONS.vehicles_read, PERMISSIONS.vehicles_manage,
 ];
@@ -125,7 +127,7 @@ const TECHNICIAN_PERMS: Permission[] = [
   PERMISSIONS.work_orders_read, PERMISSIONS.work_orders_update, PERMISSIONS.work_orders_complete,
   PERMISSIONS.pm_read, PERMISSIONS.pm_execute,
   PERMISSIONS.inventory_read,
-  PERMISSIONS.irms_read,
+  PERMISSIONS.irms_read, PERMISSIONS.irms_create,
 ];
 
 const CUSTOMER_PERMS: Permission[] = [
@@ -134,6 +136,7 @@ const CUSTOMER_PERMS: Permission[] = [
   PERMISSIONS.work_orders_read,
   PERMISSIONS.invoices_read,
   PERMISSIONS.quotations_read,
+  PERMISSIONS.irms_portal,
 ];
 
 const FINANCE_PERMS: Permission[] = [
@@ -177,6 +180,25 @@ export const COMPLAINT_TRANSITIONS: Record<string, string[]> = {
 };
 
 export const PRIORITIES = ["LOW", "MEDIUM", "HIGH", "URGENT"] as const;
+
+// ── IRMS inspection report workflow (spec §29) ──
+export const IRMS_STATUSES = ["DRAFT", "SUBMITTED", "IN_REVIEW", "MANAGER_APPROVAL", "CLIENT_REVIEW", "APPROVED", "REJECTED", "ARCHIVED"] as const;
+export type IrmsStatus = (typeof IRMS_STATUSES)[number];
+export const IRMS_TRANSITIONS: Record<string, string[]> = {
+  DRAFT: ["SUBMITTED"],
+  SUBMITTED: ["IN_REVIEW", "REJECTED"],
+  IN_REVIEW: ["MANAGER_APPROVAL", "REJECTED"],
+  MANAGER_APPROVAL: ["CLIENT_REVIEW", "APPROVED", "REJECTED"],
+  CLIENT_REVIEW: ["APPROVED", "REJECTED"],
+  APPROVED: ["ARCHIVED"],
+  REJECTED: ["DRAFT"],
+  ARCHIVED: [],
+};
+export const IRMS_PHOTO_CATEGORIES = ["BEFORE", "AFTER", "PROGRESS", "DURING", "INSPECTION", "COMPLETION", "DEFECT", "EVIDENCE"] as const;
+export const IRMS_PHOTO_PREFIX: Record<string, string> = {
+  BEFORE: "B", AFTER: "A", PROGRESS: "P", DURING: "D", INSPECTION: "I", COMPLETION: "C", DEFECT: "F", EVIDENCE: "E",
+};
+export const IRMS_SIGNATURE_ROLES = ["INSPECTOR", "SUPERVISOR", "MANAGER", "CLIENT"] as const;
 
 export const WO_STATUSES = ["PENDING", "ACCEPTED", "IN_PROGRESS", "ON_HOLD", "COMPLETED", "CANCELLED"] as const;
 export const WO_TRANSITIONS: Record<string, string[]> = {
