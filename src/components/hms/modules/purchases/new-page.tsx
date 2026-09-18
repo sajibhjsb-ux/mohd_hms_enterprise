@@ -318,8 +318,8 @@ export function PurchaseNewPage() {
                       type="number"
                       min="0"
                       step="0.01"
-                      placeholder="Unit cost RM"
-                      aria-label="Unit cost in RM"
+                      placeholder="Unit cost (BND)"
+                      aria-label="Unit cost in BND"
                       value={line.unitCost}
                       onChange={(e) => updateLine(idx, { unitCost: e.target.value })}
                     />

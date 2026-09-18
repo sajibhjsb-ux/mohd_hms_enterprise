@@ -2,6 +2,7 @@
 
 import { NextRequest } from "next/server";
 import { z } from "zod";
+import { toCents } from "@/lib/hms/format";
 import { db } from "@/lib/db";
 import { handler, ok, okList, parseBody, listQuery, pagedMeta, Errors } from "@/lib/hms/api";
 import { PERMISSIONS } from "@/lib/hms/constants";
@@ -35,7 +36,7 @@ type ComputedItem = {
 };
 
 function computeItem(input: ItemInput): ComputedItem {
-  const unitPriceCents = Math.round(input.unitPrice * 100);
+  const unitPriceCents = toCents(input.unitPrice);
   const discountPercent = input.discountPercent ?? 0;
   return {
     kind: input.kind,
@@ -53,8 +54,8 @@ function computeItem(input: ItemInput): ComputedItem {
 function computeDocTotals(items: ComputedItem[], discount: number, shipping: number) {
   const subtotalCents = items.reduce((s, it) => s + it.totalCents, 0);
   const taxCents = items.reduce((s, it) => s + Math.round((it.totalCents * it.taxPercent) / 100), 0);
-  const discountCents = Math.round(discount * 100);
-  const shippingCents = Math.round(shipping * 100);
+  const discountCents = toCents(discount);
+  const shippingCents = toCents(shipping);
   return {
     subtotalCents, taxCents, discountCents, shippingCents,
     totalCents: Math.max(0, subtotalCents - discountCents + taxCents + shippingCents),

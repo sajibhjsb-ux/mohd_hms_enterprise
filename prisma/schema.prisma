@@ -101,6 +101,7 @@ model Customer {
   phone         String
   address       String   @default("")
   city          String   @default("")
+  country       String   @default("Brunei Darussalam")
   status        String   @default("ACTIVE") // ACTIVE | INACTIVE
   notes         String   @default("")
   createdAt     DateTime @default(now())
@@ -139,6 +140,7 @@ model Employee {
   email      String    @default("")
   phone      String    @default("")
   address    String    @default("")
+  country    String    @default("Brunei Darussalam")
   joinDate   DateTime?
   salaryCents Int      @default(0)
   status     String    @default("ACTIVE") // ACTIVE | ON_LEAVE | TERMINATED
@@ -441,6 +443,7 @@ model Supplier {
   email         String   @default("")
   phone         String   @default("")
   address       String   @default("")
+  country       String   @default("Brunei Darussalam")
   status        String   @default("ACTIVE")
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt

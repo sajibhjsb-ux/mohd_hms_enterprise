@@ -3,6 +3,7 @@
 // tax = round(subtotal × 0.06), total = subtotal + tax. Money = integer cents.
 
 import { z } from "zod";
+import { toCents } from "@/lib/hms/format";
 import { db } from "@/lib/db";
 import { handler, ok, okList, parseBody, listQuery, pagedMeta, Errors } from "@/lib/hms/api";
 import { PERMISSIONS } from "@/lib/hms/constants";
@@ -93,7 +94,7 @@ export const POST = handler(
     }
 
     const lines = body.items.map((i) => {
-      const unitCostCents = Math.round(i.unitCost * 100);
+      const unitCostCents = toCents(i.unitCost);
       return {
         itemId: i.itemId || null,
         description: i.description,

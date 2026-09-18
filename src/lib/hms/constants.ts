@@ -1,5 +1,18 @@
 // MOHD.HMS ENTERPRISE — Domain constants (shared, client-safe)
 
+// ── Localization (§26 centralized application settings) ──
+// The business locale is fixed to Brunei Darussalam. Do not switch the
+// business currency based on browser location. BND is authoritative.
+export const LOCALIZATION = {
+  country: "Brunei Darussalam",
+  countryCode: "BN",
+  currencyCode: "BND",
+  currencySymbol: "B$",
+  locale: "en-BN",
+  timezone: "Asia/Brunei",
+  phoneCode: "+673",
+} as const;
+
 export const ROLES = {
   SUPER_ADMIN: "SUPER_ADMIN",
   ADMIN: "ADMIN",

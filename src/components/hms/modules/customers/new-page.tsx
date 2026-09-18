@@ -38,12 +38,12 @@ type CustomerCreated = {
 // kept in transient state outside the persisted draft.
 type FormState = {
   companyName: string; contactPerson: string; email: string; phone: string;
-  address: string; city: string; notes: string; portalEmail: string;
+  address: string; city: string; country: string; notes: string; portalEmail: string;
 };
 
 const EMPTY_FORM: FormState = {
   companyName: "", contactPerson: "", email: "", phone: "",
-  address: "", city: "", notes: "", portalEmail: "",
+  address: "", city: "", country: "Brunei Darussalam", notes: "", portalEmail: "",
 };
 
 type FieldErrors = Record<string, string>;
@@ -95,6 +95,7 @@ export function CustomerNewPage() {
         phone: draft.value.phone,
         address: draft.value.address || undefined,
         city: draft.value.city || undefined,
+        country: draft.value.country || undefined,
         notes: draft.value.notes || undefined,
         portalEmail: draft.value.portalEmail || undefined,
         portalPassword: portalPassword || undefined,
@@ -180,18 +181,23 @@ export function CustomerNewPage() {
             </div>
             <div>
               <Label htmlFor="cus-phone">Phone *</Label>
-              <Input id="cus-phone" value={draft.value.phone} onChange={(e) => draft.setValue({ phone: e.target.value })} placeholder="+60 3-…" />
+              <Input id="cus-phone" value={draft.value.phone} onChange={(e) => draft.setValue({ phone: e.target.value })} placeholder="+673 7123456" />
               <FieldError msg={fieldErrors.phone} />
             </div>
             <div>
               <Label htmlFor="cus-email">Email *</Label>
-              <Input id="cus-email" type="email" value={draft.value.email} onChange={(e) => draft.setValue({ email: e.target.value })} placeholder="contact@company.my" />
+              <Input id="cus-email" type="email" value={draft.value.email} onChange={(e) => draft.setValue({ email: e.target.value })} placeholder="contact@company.bn" />
               <FieldError msg={fieldErrors.email} />
             </div>
             <div>
               <Label htmlFor="cus-city">City</Label>
-              <Input id="cus-city" value={draft.value.city} onChange={(e) => draft.setValue({ city: e.target.value })} placeholder="Kuala Lumpur" />
+              <Input id="cus-city" value={draft.value.city} onChange={(e) => draft.setValue({ city: e.target.value })} placeholder="Bandar Seri Begawan" />
               <FieldError msg={fieldErrors.city} />
+            </div>
+            <div>
+              <Label htmlFor="cus-country">Country</Label>
+              <Input id="cus-country" value={draft.value.country} onChange={(e) => draft.setValue({ country: e.target.value })} placeholder="Brunei Darussalam" />
+              <FieldError msg={fieldErrors.country} />
             </div>
             <div className="sm:col-span-2">
               <Label htmlFor="cus-address">Address</Label>
@@ -211,7 +217,7 @@ export function CustomerNewPage() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <Label htmlFor="cus-portal-email">Portal email</Label>
-                  <Input id="cus-portal-email" type="email" value={draft.value.portalEmail} onChange={(e) => draft.setValue({ portalEmail: e.target.value })} placeholder="portal@company.my" />
+                  <Input id="cus-portal-email" type="email" value={draft.value.portalEmail} onChange={(e) => draft.setValue({ portalEmail: e.target.value })} placeholder="portal@company.bn" />
                   <FieldError msg={fieldErrors.portalEmail} />
                 </div>
                 <div>

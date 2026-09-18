@@ -2,7 +2,7 @@
 
 // MOHD.HMS ENTERPRISE — Employees module shared form pieces.
 // Used by the dedicated New Employee page (new-page.tsx) and Edit Employee
-// page (edit-page.tsx). Field ids, payload mapping (ringgit → cents) and
+// page (edit-page.tsx). Field ids, payload mapping (BND → cents) and
 // server field-error mapping are identical to the original dialogs.
 
 import { Input } from "@/components/ui/input";
@@ -57,7 +57,7 @@ export function payloadFor(f: FormState) {
     email: f.email || undefined,
     phone: f.phone || undefined,
     joinDate: f.joinDate || undefined,
-    salary: f.salary === "" ? undefined : toCents(f.salary), // ringgit → cents
+    salary: f.salary === "" ? undefined : toCents(f.salary), // BND → cents
     status: f.status as "ACTIVE" | "ON_LEAVE" | "TERMINATED",
   };
 }
@@ -80,7 +80,7 @@ export function FieldError({ msg }: { msg?: string }) {
   return <p className="text-xs text-destructive mt-1">{msg}</p>;
 }
 
-/** Salary helper: cents preview under the MYR input (kept from the dialogs). */
+/** Salary helper: cents preview under the BND input (kept from the dialogs). */
 export function SalaryField({
   id, label, value, onChange, errors,
 }: { id: string; label: string; value: string; onChange: (v: string) => void; errors?: FieldErrors }) {

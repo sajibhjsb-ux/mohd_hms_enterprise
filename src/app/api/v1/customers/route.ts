@@ -21,6 +21,7 @@ const CUSTOMER_SELECT = {
   phone: true,
   address: true,
   city: true,
+  country: true,
   status: true,
   notes: true,
   createdAt: true,
@@ -77,6 +78,7 @@ const createSchema = z.object({
   phone: z.string().min(1, "Phone is required.").max(40),
   address: z.string().max(500).optional(),
   city: z.string().max(120).optional(),
+  country: z.string().max(120).optional(),
   notes: z.string().max(2000).optional(),
   portalEmail: z.union([z.string().email("Enter a valid portal email address."), z.literal("")]).optional(),
   portalPassword: z.string().max(200).optional(),
@@ -108,6 +110,7 @@ export const POST = handler(
           phone: body.phone.trim(),
           address: body.address?.trim() ?? "",
           city: body.city?.trim() ?? "",
+          ...(body.country?.trim() ? { country: body.country.trim() } : {}),
           notes: body.notes?.trim() ?? "",
         },
       });

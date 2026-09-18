@@ -167,7 +167,7 @@ export function InvoicePaymentPage({ id }: { id: string }) {
           <p className="text-sm font-medium">Payment details</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-1.5">
-              <Label htmlFor="pay-amount">Amount (RM) *</Label>
+              <Label htmlFor="pay-amount">Amount (BND) *</Label>
               <Input
                 id="pay-amount"
                 inputMode="decimal"

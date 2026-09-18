@@ -160,6 +160,7 @@ export function ReportsModule() {
         <div className="text-sm">
           {activeReport?.label ?? "Report"} Report · {fmtDate(range.from)} — {fmtDate(range.to)}
         </div>
+        <div className="text-xs text-muted-foreground mt-1">Currency: BND (Brunei Darussalam)</div>
       </div>
 
       {/* Report type selector */}

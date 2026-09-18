@@ -2,6 +2,7 @@
 
 import { NextRequest } from "next/server";
 import { z } from "zod";
+import { toCents } from "@/lib/hms/format";
 import { db } from "@/lib/db";
 import { handler, ok, okList, parseBody, listQuery, pagedMeta, Errors } from "@/lib/hms/api";
 import { PERMISSIONS } from "@/lib/hms/constants";
@@ -63,7 +64,7 @@ export const POST = handler(async ({ req, user }) => {
       code,
       category: body.category,
       description: body.description,
-      amountCents: Math.round(body.amount * 100),
+      amountCents: toCents(body.amount),
       expenseDate: body.expenseDate ? new Date(body.expenseDate) : new Date(),
       supplierId: body.supplierId ?? null,
       receiptNo: body.receiptNo ?? "",

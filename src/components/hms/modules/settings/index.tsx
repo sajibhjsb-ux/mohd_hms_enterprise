@@ -4,9 +4,9 @@
 // (app/version, live health checks, database note, session info).
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CheckCircle2, Database, Info, Save, Server, ShieldCheck, XCircle } from "lucide-react";
+import { CheckCircle2, Database, Globe2, Info, Save, Server, ShieldCheck, XCircle } from "lucide-react";
 import { api } from "@/lib/hms/api-client";
-import { PERMISSIONS } from "@/lib/hms/constants";
+import { PERMISSIONS, LOCALIZATION } from "@/lib/hms/constants";
 import { hasPerm, useSession } from "@/components/hms/session";
 import { useToast } from "@/hooks/use-toast";
 import { ErrorState, LoadingState, PageHeader } from "@/components/hms/shared/ui-bits";
@@ -26,7 +26,8 @@ type FieldDef = { key: string; label: string; textarea?: boolean; type?: string;
 
 const COMPANY_FIELDS: FieldDef[] = [
   { key: "company_name", label: "Company Name", placeholder: "MOHD.HMS Enterprise" },
-  { key: "company_phone", label: "Phone", placeholder: "+60 3-8080 9000" },
+  { key: "company_country", label: "Country", placeholder: "Brunei Darussalam" },
+  { key: "company_phone", label: "Phone", placeholder: "+673 234-5678" },
   { key: "company_address", label: "Address", textarea: true },
   { key: "company_email_info", label: "Info Email", type: "email" },
   { key: "company_email_sales", label: "Sales Email", type: "email" },
@@ -36,7 +37,7 @@ const COMPANY_FIELDS: FieldDef[] = [
   { key: "company_email_procurement", label: "Procurement Email", type: "email" },
   { key: "company_email_inspection", label: "Inspection Email", type: "email" },
   { key: "tax_percent_default", label: "Default Tax (%)", placeholder: "6" },
-  { key: "currency", label: "Currency", placeholder: "MYR" },
+  { key: "currency", label: "Currency (BND)", placeholder: "BND" },
   { key: "public_url", label: "Public Website URL", placeholder: "https://www.mohdhms.com" },
   { key: "invoice_terms", label: "Invoice Terms", textarea: true },
   { key: "quotation_terms", label: "Quotation Terms", textarea: true },
@@ -142,6 +143,7 @@ export function SettingsModule() {
       <Tabs defaultValue="company">
         <TabsList className="mb-4">
           <TabsTrigger value="company">Company</TabsTrigger>
+          <TabsTrigger value="localization">Localization</TabsTrigger>
           <TabsTrigger value="automation">Automation</TabsTrigger>
           <TabsTrigger value="system">System</TabsTrigger>
         </TabsList>
@@ -208,6 +210,35 @@ export function SettingsModule() {
               </CardContent>
             </Card>
           )}
+        </TabsContent>
+
+        {/* ── Localization (§26 — centralized application localization settings) ── */}
+        <TabsContent value="localization">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Globe2 className="h-4 w-4 text-primary" /> Localization — Brunei Darussalam
+              </CardTitle>
+              <CardDescription>
+                System-wide localization is fixed to Brunei Darussalam. The business currency does not
+                follow the user&apos;s browser location. Financial settings can only be changed by authorized
+                administrators.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              <div className="flex justify-between gap-4"><span className="text-muted-foreground">Country</span><span className="font-medium">{LOCALIZATION.country}</span></div>
+              <div className="flex justify-between gap-4"><span className="text-muted-foreground">Country code</span><span className="font-medium">{LOCALIZATION.countryCode}</span></div>
+              <div className="flex justify-between gap-4"><span className="text-muted-foreground">Currency</span><span className="font-medium">{LOCALIZATION.currencyCode} ({LOCALIZATION.currencySymbol})</span></div>
+              <div className="flex justify-between gap-4"><span className="text-muted-foreground">Currency format</span><span className="font-medium tabular-nums">BND 1,250.00</span></div>
+              <div className="flex justify-between gap-4"><span className="text-muted-foreground">Locale</span><span className="font-medium">{LOCALIZATION.locale}</span></div>
+              <div className="flex justify-between gap-4"><span className="text-muted-foreground">Timezone</span><span className="font-medium">{LOCALIZATION.timezone}</span></div>
+              <div className="flex justify-between gap-4"><span className="text-muted-foreground">Phone country code</span><span className="font-medium">{LOCALIZATION.phoneCode}</span></div>
+              <p className="text-xs text-muted-foreground pt-2 border-t">
+                All financial modules, documents and notifications use the centralized BND formatter.
+                Amounts are stored as exact integer cents — no floating-point arithmetic.
+              </p>
+            </CardContent>
+          </Card>
         </TabsContent>
 
         {/* ── Automation (§63/§104 — inside the existing Settings architecture) ── */}

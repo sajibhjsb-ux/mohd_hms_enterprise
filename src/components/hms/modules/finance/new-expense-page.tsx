@@ -56,7 +56,7 @@ export function FinanceNewExpensePage() {
     const errs: Record<string, string> = {};
     const amount = parseFloat(form.value.amount);
     if (!form.value.description.trim()) errs.description = "Describe what was purchased.";
-    if (!form.value.amount.trim() || !isFinite(amount) || amount <= 0) errs.amount = "Enter a positive amount in RM.";
+    if (!form.value.amount.trim() || !isFinite(amount) || amount <= 0) errs.amount = "Enter a positive amount in BND.";
     return errs;
   }
 
@@ -142,7 +142,7 @@ export function FinanceNewExpensePage() {
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="fe-amount">Amount (RM) *</Label>
+              <Label htmlFor="fe-amount">Amount (BND) *</Label>
               <Input
                 id="fe-amount"
                 inputMode="decimal"

@@ -10,6 +10,7 @@ import { isStaff } from "@/lib/hms/rbac";
 import type { SessionUser } from "@/lib/hms/auth";
 import { emit } from "@/lib/hms/workflows/bus";
 import { EVENT_TYPES } from "@/lib/hms/workflows/types";
+import { formatCurrency } from "@/lib/hms/format";
 
 const bodySchema = z.object({
   action: z.enum(["send", "cancel"]),
@@ -56,7 +57,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         await notify({
           userId: portalUserId,
           title: `Invoice ${invoice.code} sent`,
-          message: `Invoice ${invoice.code} for ${invoice.customer.companyName} is now available. Amount due: RM ${(invoice.totalCents / 100).toFixed(2)}.`,
+          message: `Invoice ${invoice.code} for ${invoice.customer.companyName} is now available. Amount due: ${formatCurrency(invoice.totalCents / 100)}.`,
           type: "INFO",
           resourceType: "INVOICE",
           resourceId: id,
@@ -72,7 +73,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       // Outbox (§26/§30): invoice-sent event + queued email to the customer.
       await emit({ type: EVENT_TYPES.INVOICE_SENT, resourceType: "INVOICE", resourceId: id, payload: { code: invoice.code, totalCents: invoice.totalCents }, actorType: "USER", actorId: user.id });
       if (portalUserId) {
-        await emit({ type: EVENT_TYPES.EMAIL_SEND, resourceType: "INVOICE", resourceId: id, payload: { userId: portalUserId, title: `Invoice ${invoice.code} sent`, message: `Invoice ${invoice.code} is now available. Amount due: RM ${(invoice.totalCents / 100).toFixed(2)}.` }, actorType: "USER", actorId: user.id });
+        await emit({ type: EVENT_TYPES.EMAIL_SEND, resourceType: "INVOICE", resourceId: id, payload: { userId: portalUserId, title: `Invoice ${invoice.code} sent`, message: `Invoice ${invoice.code} is now available. Amount due: ${formatCurrency(invoice.totalCents / 100)}.` }, actorType: "USER", actorId: user.id });
       }
     }
 

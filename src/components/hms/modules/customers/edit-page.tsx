@@ -35,13 +35,14 @@ type CustomerEditable = {
   phone: string;
   address: string;
   city: string;
+  country: string;
   status: string;
   notes: string;
 };
 
 type FormState = {
   companyName: string; contactPerson: string; email: string; phone: string;
-  address: string; city: string; notes: string;
+  address: string; city: string; country: string; notes: string;
 };
 
 type FieldErrors = Record<string, string>;
@@ -65,14 +66,14 @@ function FieldError({ msg }: { msg?: string }) {
 function toForm(c: CustomerEditable): FormState {
   return {
     companyName: c.companyName, contactPerson: c.contactPerson, email: c.email,
-    phone: c.phone, address: c.address, city: c.city, notes: c.notes,
+    phone: c.phone, address: c.address, city: c.city, country: c.country, notes: c.notes,
   };
 }
 
 function formEquals(a: FormState, b: FormState): boolean {
   return a.companyName === b.companyName && a.contactPerson === b.contactPerson
     && a.email === b.email && a.phone === b.phone && a.address === b.address
-    && a.city === b.city && a.notes === b.notes;
+    && a.city === b.city && a.country === b.country && a.notes === b.notes;
 }
 
 // ── Page ──
@@ -129,6 +130,7 @@ export function CustomerEditPage({ id }: { id: string }) {
         phone: form.phone,
         address: form.address || undefined,
         city: form.city || undefined,
+        country: form.country || undefined,
         notes: form.notes || undefined,
       });
       toast({ title: "Customer updated", description: `${form.companyName} saved.` });
@@ -247,6 +249,10 @@ export function CustomerEditPage({ id }: { id: string }) {
             <div>
               <Label htmlFor="cus-e-city">City</Label>
               <Input id="cus-e-city" value={form.city} onChange={(e) => set({ city: e.target.value })} />
+            </div>
+            <div>
+              <Label htmlFor="cus-e-country">Country</Label>
+              <Input id="cus-e-country" value={form.country} onChange={(e) => set({ country: e.target.value })} placeholder="Brunei Darussalam" />
             </div>
             <div className="sm:col-span-2">
               <Label htmlFor="cus-e-address">Address</Label>

@@ -355,8 +355,8 @@ export function InvoiceNewPage() {
             <section className="rounded-xl border bg-card shadow-sm p-4 sm:p-5 space-y-4" aria-label="Notes and terms">
               <p className="text-sm font-medium">Notes &amp; terms</p>
               <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1.5"><Label>Discount (RM)</Label><Input inputMode="decimal" value={form.value.discount} onChange={(e) => form.setValue({ discount: e.target.value })} /></div>
-                <div className="space-y-1.5"><Label>Shipping (RM)</Label><Input inputMode="decimal" value={form.value.shipping} onChange={(e) => form.setValue({ shipping: e.target.value })} /></div>
+                <div className="space-y-1.5"><Label>Discount (BND)</Label><Input inputMode="decimal" value={form.value.discount} onChange={(e) => form.setValue({ discount: e.target.value })} /></div>
+                <div className="space-y-1.5"><Label>Shipping (BND)</Label><Input inputMode="decimal" value={form.value.shipping} onChange={(e) => form.setValue({ shipping: e.target.value })} /></div>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5"><Label>Notes</Label><Textarea rows={2} value={form.value.notes} onChange={(e) => form.setValue({ notes: e.target.value })} /></div>

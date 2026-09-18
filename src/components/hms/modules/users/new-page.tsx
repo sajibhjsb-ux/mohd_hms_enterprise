@@ -180,7 +180,7 @@ export function UserNewPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <Label htmlFor="u-phone">Phone</Label>
-              <Input id="u-phone" value={form.phone} onChange={(e) => set({ phone: e.target.value })} placeholder="+60 12-…" />
+              <Input id="u-phone" value={form.phone} onChange={(e) => set({ phone: e.target.value })} placeholder="+673 7123456" />
             </div>
             <div>
               <Label>Role</Label>

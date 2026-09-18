@@ -136,7 +136,7 @@ function VehiclesList() {
       key: "odometer",
       header: "Odometer",
       value: (v) => v.odometer,
-      render: (v) => <span className="tabular-nums">{v.odometer.toLocaleString("en-MY")} km</span>,
+      render: (v) => <span className="tabular-nums">{v.odometer.toLocaleString("en-BN")} km</span>,
       hideOnMobile: true,
     },
     {

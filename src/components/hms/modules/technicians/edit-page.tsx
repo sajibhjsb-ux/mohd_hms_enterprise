@@ -109,7 +109,7 @@ export function TechnicianEditPage({ id }: { id: string }) {
       await api.patch(`/api/v1/technicians/${tech.id}`, {
         skills: form.skills,
         specialty: form.specialty || undefined,
-        hourlyRate: form.rate === "" ? 0 : toCents(form.rate) / 100, // decimal ringgit
+        hourlyRate: form.rate === "" ? 0 : toCents(form.rate) / 100, // decimal BND
       });
       toast({ title: "Technician updated", description: `${tech.user.name} saved.` });
       setPageDirty(false);
@@ -227,7 +227,7 @@ export function TechnicianEditPage({ id }: { id: string }) {
               />
             </div>
             <div>
-              <Label htmlFor="t-rate">Hourly rate (MYR)</Label>
+              <Label htmlFor="t-rate">Hourly rate (BND)</Label>
               <Input
                 id="t-rate"
                 inputMode="decimal"

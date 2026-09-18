@@ -286,7 +286,7 @@ function FinanceList({ initialTab }: { initialTab?: string }) {
                     <BarChart data={chartData} margin={{ top: 4, right: 8, left: -14, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="oklch(0.92 0 0)" />
                       <XAxis dataKey="name" fontSize={11} tickLine={false} />
-                      <YAxis fontSize={11} tickLine={false} tickFormatter={(v: number) => `RM${v >= 1000 ? `${Math.round(v / 1000)}k` : v}`} />
+                      <YAxis fontSize={11} tickLine={false} tickFormatter={(v: number) => `BND ${v >= 1000 ? `${Math.round(v / 1000)}k` : v}`} width={62} />
                       <Tooltip formatter={(value) => money(Number(value) * 100)} />
                       <Legend iconSize={8} wrapperStyle={{ fontSize: 11 }} />
                       <Bar dataKey="Income" fill={INCOME_GREEN} radius={[4, 4, 0, 0]} />

@@ -2,6 +2,7 @@
 
 import { NextRequest } from "next/server";
 import { z } from "zod";
+import { toCents } from "@/lib/hms/format";
 import { db } from "@/lib/db";
 import { handler, ok, parseBody, Errors } from "@/lib/hms/api";
 import { PERMISSIONS } from "@/lib/hms/constants";
@@ -46,7 +47,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
       data: {
         ...(body.category !== undefined ? { category: body.category } : {}),
         ...(body.description !== undefined ? { description: body.description } : {}),
-        ...(body.amount !== undefined ? { amountCents: Math.round(body.amount * 100) } : {}),
+        ...(body.amount !== undefined ? { amountCents: toCents(body.amount) } : {}),
         ...(body.expenseDate !== undefined ? { expenseDate: body.expenseDate ? new Date(body.expenseDate) : new Date() } : {}),
         ...(body.supplierId !== undefined ? { supplierId: body.supplierId ?? null } : {}),
         ...(body.receiptNo !== undefined ? { receiptNo: body.receiptNo ?? "" } : {}),

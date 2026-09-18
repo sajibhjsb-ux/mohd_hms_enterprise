@@ -389,7 +389,7 @@ export function WorkOrderNewPage() {
             </CardHeader>
             <CardContent className="space-y-2">
               <div className="flex items-center justify-between">
-                <p className="text-xs text-muted-foreground">Parts that will be consumed (cost in RM).</p>
+                <p className="text-xs text-muted-foreground">Parts that will be consumed (cost in BND).</p>
                 <Button
                   type="button" size="sm" variant="outline"
                   onClick={() => draft.setValue({ materials: [...draft.value.materials, { name: "", qty: "1", cost: "0" }] })}
@@ -405,7 +405,7 @@ export function WorkOrderNewPage() {
                     <div key={i} className="grid grid-cols-[1fr_72px_96px_40px] gap-2 items-center">
                       <Input value={m.name} onChange={(e) => updateMaterialRow(i, { name: e.target.value })} placeholder="Material name" maxLength={200} aria-label="Material name" />
                       <Input value={m.qty} onChange={(e) => updateMaterialRow(i, { qty: e.target.value })} placeholder="Qty" inputMode="decimal" aria-label="Quantity" />
-                      <Input value={m.cost} onChange={(e) => updateMaterialRow(i, { cost: e.target.value })} placeholder="RM" inputMode="decimal" aria-label="Unit cost in ringgit" />
+                      <Input value={m.cost} onChange={(e) => updateMaterialRow(i, { cost: e.target.value })} placeholder="BND" inputMode="decimal" aria-label="Unit cost in BND" />
                       <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => draft.setValue({ materials: draft.value.materials.filter((_, j) => j !== i) })} aria-label="Remove material row">
                         <Trash2 className="h-3.5 w-3.5 text-destructive" />
                       </Button>

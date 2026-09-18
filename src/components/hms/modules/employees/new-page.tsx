@@ -2,7 +2,7 @@
 
 // MOHD.HMS ENTERPRISE — dedicated New Employee page (employees "new" view).
 // Replaces the old create dialog. Same API (POST /api/v1/employees), same
-// payload mapping (ringgit → cents), same server field-error mapping.
+// payload mapping (BND → cents), same server field-error mapping.
 // No draft hook existed for this form — pageDirty is registered whenever the
 // form differs from the initial empty state, cleared on unmount.
 
@@ -130,7 +130,7 @@ export function EmployeeNewPage() {
               </div>
               <div>
                 <Label htmlFor="e-phone">Phone</Label>
-                <Input id="e-phone" value={form.phone} onChange={(e) => set({ phone: e.target.value })} />
+                <Input id="e-phone" value={form.phone} onChange={(e) => set({ phone: e.target.value })} placeholder="+673 7123456" />
               </div>
               <div>
                 <Label htmlFor="e-join">Join date</Label>
@@ -139,7 +139,7 @@ export function EmployeeNewPage() {
               </div>
               <SalaryField
                 id="e-salary"
-                label="Monthly salary (MYR)"
+                label="Monthly salary (BND)"
                 value={form.salary}
                 onChange={(v) => set({ salary: v })}
                 errors={fieldErrors}

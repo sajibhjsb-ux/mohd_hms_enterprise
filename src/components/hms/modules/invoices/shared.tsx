@@ -92,6 +92,7 @@ export function DocumentPreview({ inv, company }: { inv: InvoiceDetail; company:
         <div className="sm:text-right">
           <div className="text-lg font-semibold">INVOICE</div>
           <div className="text-xs text-muted-foreground">{inv.code}</div>
+          <div className="text-xs text-muted-foreground mt-1">Currency: BND</div>
           <div className="text-xs text-muted-foreground mt-1">Invoice date: {fmtDate(inv.invoiceDate)}</div>
           <div className="text-xs text-muted-foreground">Due date: {fmtDate(inv.dueDate)}</div>
         </div>

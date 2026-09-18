@@ -1,5 +1,5 @@
 // MOHD.HMS ENTERPRISE — Employees module API (list / create).
-// Money: salary received as decimal ringgit, stored as integer cents.
+// Money: salary received as decimal BND, stored as integer cents.
 // LIST CONTRACT (consumed by other modules): items shaped
 // { id, employeeNo, firstName, lastName, position, email, phone, status,
 //   salaryCents, joinDate, departmentId, department: { id, name } | null }

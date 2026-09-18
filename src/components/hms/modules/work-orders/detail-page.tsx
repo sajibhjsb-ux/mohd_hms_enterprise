@@ -422,7 +422,7 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
                 <div className="grid grid-cols-2 sm:grid-cols-[1fr_90px_120px_auto] gap-2">
                   <Input value={matForm.name} onChange={(e) => setMatForm((f) => ({ ...f, name: e.target.value }))} placeholder="Material name" maxLength={200} aria-label="Material name" />
                   <Input value={matForm.qty} onChange={(e) => setMatForm((f) => ({ ...f, qty: e.target.value }))} placeholder="Qty" inputMode="decimal" aria-label="Quantity" />
-                  <Input value={matForm.cost} onChange={(e) => setMatForm((f) => ({ ...f, cost: e.target.value }))} placeholder="Cost RM" inputMode="decimal" aria-label="Unit cost in ringgit" />
+                  <Input value={matForm.cost} onChange={(e) => setMatForm((f) => ({ ...f, cost: e.target.value }))} placeholder="Cost (BND)" inputMode="decimal" aria-label="Unit cost in BND" />
                   <Button variant="outline" onClick={addMaterial} disabled={busy}><Plus className="h-4 w-4 mr-1" /> Add</Button>
                 </div>
               ) : null}
@@ -442,7 +442,7 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
                     <Input id="wo-hours" value={labourHours} onChange={(e) => setLabourHours(e.target.value)} inputMode="decimal" />
                   </div>
                   <div className="space-y-1.5">
-                    <Label htmlFor="wo-rate" className="text-xs">Rate (RM/h)</Label>
+                    <Label htmlFor="wo-rate" className="text-xs">Rate (BND/h)</Label>
                     <Input id="wo-rate" value={labourRate} onChange={(e) => setLabourRate(e.target.value)} inputMode="decimal" />
                   </div>
                   <div className="flex items-end">

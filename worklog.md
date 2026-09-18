@@ -737,3 +737,27 @@ Work Log:
 
 Stage Summary:
 - All 13 KPI mappings live in one config (KPI_NAV); zero popups; counts consistent per role; report at docs/KPI-DRILLDOWN-REPORT.md (FINAL STATUS: PASS); pushed to GitHub main
+
+---
+Task ID: 18
+Agent: Z.ai Code (main)
+Task: 47-section BRUNEI DARUSSALAM — CURRENCY & LOCALIZATION STANDARD (BND everywhere) — audit + implement + browser/API/PDF/DB verify + push to GitHub
+
+Work Log:
+- AUDIT (§27/§28): grep sweep of src for RM/MYR/en-MY/$/USD/Intl.NumberFormat/toLocaleString/ringgit/+60/company.my; found root cause = central money() in src/lib/hms/format.ts used en-MY/MYR → "RM"; money() was already THE single formatter used by 25 files; 8 server-side "RM" strings in payments/transition/workflow-handlers; finance chart axis hardcoded "RM"; +60/Kuala Lumpur/MYR/.my placeholders; zero timezone pinning; no Redis client anywhere
+- Core: rewrote src/lib/hms/format.ts — formatCurrency()/money() → "BND 1,250.00" deterministic (en-US grouping, 2dp, code prefix); toCents() now string-parsed ROUND-HALF-UP at 2dp (10.55→1055, 100.005→10001, 999.999→100000; immune to float drift); fmtDate/fmtDateTime pinned to Asia/Brunei; added LOCALIZATION constants (Brunei Darussalam/BN/BND/B$/en-BN/Asia/Brunei/+673) in constants.ts
+- DB (§27 non-destructive): additive `country String @default("Brunei Darussalam")` on Customer+Supplier+Employee; db:push backfilled 3+existing rows; no amounts touched; money stays exact integer cents (stricter than NUMERIC floor — never float, never formatted strings; quantities only are Float)
+- Backend authoritative (§6/§43): migrated 14 API routes from Math.round(x*100) → centralized toCents() (purchases, quotations, invoices, payments, expenses, inventory, employees)
+- Server strings: 8 RM messages → formatCurrency() (payment errors/notifications/emails, invoice-sent notifications, workflow auto-invoice/overdue/receipt)
+- UI: all RM/MYR/ringgit labels+placeholders → BND (line-items editor, purchases, quotations, invoices new/payment, expenses, work orders detail+new, inventory new/edit, technicians hourly rate, employees salary, users phone, customers phone/city/email); finance chart axis "BND 0/2k/…"
+- Documents (§15): "Currency: BND" added to Invoice + Quotation DocumentPreview headers (screen + print share same component)
+- Reports (§37): print header "Currency: BND (Brunei Darussalam)"; CSV export now opens with a BND header line and exports cents columns as 2dp decimals
+- Settings (§26): new Localization tab (Country/Code/Currency+symbol/format example/Locale/Timezone/+673, admin-note); Company fields gained Country; placeholders +673/BND
+- Forms (§22/§23): Customer new/edit got Country field (default Brunei Darussalam, editable for international) wired through zod schemas + create/update routes + detail display; phone placeholders "+673 7123456"
+- BUGS FOUND+FIXED: B7 dev server held stale Prisma client after schema push → customers API 500 "Unknown field country" → prisma generate + .next clear + restart (0×5xx after)
+- Tests (real browser + API + DB): dashboard KPIs BND 5,851.38/5,252.83/648.55/1,231.25 (matches SQL aggregates to the cent); finance cards+axis BND; invoices/quotation documents "Currency: BND"; payment page "Amount (BND)"; purchases/inventory/WO/expense/technician/employee forms BND; customer portal scoped BND (cross-tenant invoice still 404s); settings Localization tab renders; CSV export BND header; §42 live API 10×25.00 → subtotalCents 25000; §43 rounding 0.01/10.55/100.005/999.999 all correct server-side; §36 live payment BND 50 → balance BND 250 + notification "Payment of BND 50.00 received" (old RM row preserved as history per §27); mobile 375px no overflow; console clean; lint+tsc clean
+- PDF (§44): /tmp/invoice-bnd.pdf + /tmp/quotation-bnd.pdf via print media — "Currency: BND" line, BND-only amounts, zero RM/$; Redis §41: no client exists, 60s in-process TTL cache over DB only
+- Report: docs/BND-LOCALIZATION-REPORT.md (8 sections, FINAL STATUS: PASS)
+
+Stage Summary:
+- BND is the sole/authoritative business currency via ONE centralized formatter; backend calculations authoritative; integer-cents storage verified; Brunei localization (country/BN/B$/en-BN/Asia/Brunei/+673) centralized in constants + Settings tab; all acceptance criteria of §46 verified except provider-level PostgreSQL (sandbox runs the portable SQLite Prisma provider — documented honestly in the report); pushed to GitHub main

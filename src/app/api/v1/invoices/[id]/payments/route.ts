@@ -12,6 +12,7 @@ import type { SessionUser } from "@/lib/hms/auth";
 import { emit } from "@/lib/hms/workflows/bus";
 import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 import { dedupeSubmission } from "@/lib/hms/workflows/idempotency";
+import { formatCurrency, toCents } from "@/lib/hms/format";
 
 const bodySchema = z.object({
   amount: z.coerce.number().positive("Payment amount must be greater than 0"),
@@ -42,9 +43,9 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     if (invoice.status === "DRAFT") throw Errors.invalidTransition("Send the invoice before recording payments.");
     if (invoice.balanceCents <= 0) throw Errors.conflict("This invoice is already fully paid.");
 
-    const amountCents = Math.round(body.amount * 100);
+    const amountCents = toCents(body.amount);
     if (amountCents > invoice.balanceCents) {
-      throw Errors.badRequest(`Payment exceeds the outstanding balance of RM ${(invoice.balanceCents / 100).toFixed(2)}.`);
+      throw Errors.badRequest(`Payment exceeds the outstanding balance of ${formatCurrency(invoice.balanceCents / 100)}.`);
     }
 
     // Codes are generated outside the write transaction (SQLite single-writer safety).
@@ -111,7 +112,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     });
     await notifyRole("FINANCE", {
       title: `Payment recorded for ${invoice.code}`,
-      message: `RM ${body.amount.toFixed(2)} (${body.method}) recorded on invoice ${invoice.code}. Balance: RM ${(updated.balanceCents / 100).toFixed(2)}.`,
+      message: `${formatCurrency(body.amount)} (${body.method}) recorded on invoice ${invoice.code}. Balance: ${formatCurrency(updated.balanceCents / 100)}.`,
       type: "SUCCESS",
       resourceType: "INVOICE",
       resourceId: invoice.id,
@@ -125,7 +126,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     });
     const payPortalUser = await db.customer.findUnique({ where: { id: invoice.customerId }, select: { portalUser: { select: { id: true } } } });
     if (payPortalUser?.portalUser?.id) {
-      await emit({ type: EVENT_TYPES.EMAIL_SEND, resourceType: "INVOICE", resourceId: invoice.id, payload: { userId: payPortalUser.portalUser.id, title: `Payment received for ${invoice.code}`, message: `Payment of RM ${body.amount.toFixed(2)} received for invoice ${invoice.code}. Thank you.` }, actorType: "USER", actorId: user.id });
+      await emit({ type: EVENT_TYPES.EMAIL_SEND, resourceType: "INVOICE", resourceId: invoice.id, payload: { userId: payPortalUser.portalUser.id, title: `Payment received for ${invoice.code}`, message: `Payment of ${formatCurrency(body.amount)} received for invoice ${invoice.code}. Thank you.` }, actorType: "USER", actorId: user.id });
     }
 
     return ok(updated, 201);

@@ -249,7 +249,7 @@ export function ItemEditPage({ id }: { id: string }) {
           <Field label="Minimum stock qty">
             <Input type="number" min="0" step="any" value={form.minStockQty} onChange={(e) => patch({ minStockQty: e.target.value })} />
           </Field>
-          <Field label="Unit cost (RM)">
+          <Field label="Unit cost (BND)">
             <Input type="number" min="0" step="0.01" value={form.unitCost} onChange={(e) => patch({ unitCost: e.target.value })} />
           </Field>
           <Field label="Supplier">

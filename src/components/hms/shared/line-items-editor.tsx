@@ -90,7 +90,7 @@ export function LineItemsEditor({ items, inventory, onChange, onPickInventory, o
           <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
             <div className="space-y-1"><Label className="text-xs text-muted-foreground">Qty</Label><Input inputMode="decimal" value={it.quantity} onChange={(e) => onChange(idx, { quantity: e.target.value })} /></div>
             <div className="space-y-1"><Label className="text-xs text-muted-foreground">Unit</Label><Input value={it.unit} onChange={(e) => onChange(idx, { unit: e.target.value })} /></div>
-            <div className="space-y-1"><Label className="text-xs text-muted-foreground">Price RM</Label><Input inputMode="decimal" value={it.unitPrice} onChange={(e) => onChange(idx, { unitPrice: e.target.value })} placeholder="0.00" /></div>
+            <div className="space-y-1"><Label className="text-xs text-muted-foreground">Price (BND)</Label><Input inputMode="decimal" value={it.unitPrice} onChange={(e) => onChange(idx, { unitPrice: e.target.value })} placeholder="0.00" /></div>
             <div className="space-y-1"><Label className="text-xs text-muted-foreground">Disc %</Label><Input inputMode="decimal" value={it.discountPercent} onChange={(e) => onChange(idx, { discountPercent: e.target.value })} /></div>
             <div className="space-y-1"><Label className="text-xs text-muted-foreground">Tax %</Label><Input inputMode="decimal" value={it.taxPercent} onChange={(e) => onChange(idx, { taxPercent: e.target.value })} /></div>
           </div>

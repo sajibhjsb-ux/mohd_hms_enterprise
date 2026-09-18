@@ -3,6 +3,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { toCents } from "@/lib/hms/format";
 import type { Permission } from "@/lib/hms/constants";
 import { PERMISSIONS } from "@/lib/hms/constants";
 import { handler, ok, parseBody, Errors } from "@/lib/hms/api";
@@ -84,7 +85,7 @@ export const PATCH = withId(PERMISSIONS.purchases_manage, async (id, { req, user
       }
 
       const lines = body.items.map((i) => {
-        const unitCostCents = Math.round(i.unitCost * 100);
+        const unitCostCents = toCents(i.unitCost);
         return {
           itemId: i.itemId || null,
           description: i.description,

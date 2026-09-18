@@ -15,6 +15,16 @@ function csvEscape(value: unknown): string {
   return `"${String(value ?? "").replace(/"/g, '""')}"`;
 }
 
+// Money columns (integer cents) export as plain 2dp decimal numbers — the
+// currency is declared once in the report header line (BND).
+function csvCell(key: string, value: unknown): string {
+  if (/cents$/i.test(key)) {
+    const n = Number(value ?? 0) / 100;
+    return csvEscape(n.toFixed(2));
+  }
+  return csvEscape(value);
+}
+
 export const GET = handler(
   async ({ req }) => {
     // Run the standard report pipeline (validates params + permissions).
@@ -29,9 +39,13 @@ export const GET = handler(
 
     const rows = Array.isArray(body.data.rows) ? body.data.rows : [];
     const headers = rows.length > 0 ? Object.keys(rows[0]) : [];
-    const lines: string[] = [headers.map(csvEscape).join(",")];
+    // §37 — the report must clearly identify its currency (BND, Brunei Darussalam).
+    const lines: string[] = [
+      csvEscape(`MOHD.HMS ENTERPRISE — Currency: BND (Brunei Darussalam)`),
+      headers.map(csvEscape).join(","),
+    ];
     for (const row of rows) {
-      lines.push(headers.map((h) => csvEscape(row[h])).join(","));
+      lines.push(headers.map((h) => csvCell(h, row[h])).join(","));
     }
     // \uFEFF BOM so Excel opens UTF-8 correctly.
     const csv = "\uFEFF" + lines.join("\r\n");

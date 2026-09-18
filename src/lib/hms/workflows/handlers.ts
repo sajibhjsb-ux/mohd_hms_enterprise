@@ -8,6 +8,7 @@ import "server-only";
 import { db } from "@/lib/db";
 import { audit, nextNumber, notify, notifyRole } from "@/lib/hms/services";
 import { FREQUENCY_DAYS } from "@/lib/hms/constants";
+import { formatCurrency } from "@/lib/hms/format";
 import { isAutomationEnabled, automationNumber } from "./settings";
 import { EVENT_TYPES, type EventType } from "./types";
 import { registerWorkflow, type WorkflowResult } from "./engine";
@@ -87,7 +88,7 @@ registerWorkflow(EVENT_TYPES.COMPLAINT_CONFIRMED, "AUTO_CREATE_DRAFT_INVOICE", a
     metadata: { invoiceCode: invoice.code, subtotalCents },
   });
   await Promise.all([
-    notifyRole("FINANCE", { title: "Draft invoice ready for review", message: `Draft invoice ${invoice.code} was generated automatically from confirmed complaint ${complaint.code} (RM ${(subtotalCents / 100).toFixed(2)}).`, type: "INFO", resourceType: "INVOICE", resourceId: invoice.id }),
+    notifyRole("FINANCE", { title: "Draft invoice ready for review", message: `Draft invoice ${invoice.code} was generated automatically from confirmed complaint ${complaint.code} (${formatCurrency(subtotalCents / 100)}).`, type: "INFO", resourceType: "INVOICE", resourceId: invoice.id }),
     notifyRole("ADMIN", { title: "Draft invoice generated", message: `Complaint ${complaint.code} confirmed → draft invoice ${invoice.code} created automatically.`, type: "INFO", resourceType: "INVOICE", resourceId: invoice.id }),
   ]);
   return { result: "SUCCESS", detail: `created draft invoice ${invoice.code}` };
@@ -386,7 +387,7 @@ registerWorkflow(EVENT_TYPES.INVOICE_OVERDUE, "INVOICE_OVERDUE_MARK", async (ctx
   if (invoice.balanceCents <= 0) return { result: "SKIPPED", detail: "no balance" };
   const flipped = await db.invoice.updateMany({ where: { id: invoice.id, status: { in: ["SENT", "PARTIALLY_PAID"] } }, data: { status: "OVERDUE" } });
   if (flipped.count === 0) return { result: "SKIPPED", detail: "concurrent status change" };
-  await notifyRole("FINANCE", { title: "Invoice overdue", message: `Invoice ${invoice.code} is past its due date with an outstanding balance of RM ${(invoice.balanceCents / 100).toFixed(2)}.`, type: "WARNING", resourceType: "INVOICE", resourceId: invoice.id });
+  await notifyRole("FINANCE", { title: "Invoice overdue", message: `Invoice ${invoice.code} is past its due date with an outstanding balance of ${formatCurrency(invoice.balanceCents / 100)}.`, type: "WARNING", resourceType: "INVOICE", resourceId: invoice.id });
   await audit({ actorEmail: "SYSTEM", action: "INVOICE_MARKED_OVERDUE", resourceType: "INVOICE", resourceId: invoice.id, metadata: { invoiceCode: invoice.code, balanceCents: invoice.balanceCents } });
   return { result: "SUCCESS", detail: `marked ${invoice.code} OVERDUE` };
 });
@@ -403,7 +404,7 @@ registerWorkflow(EVENT_TYPES.PAYMENT_RECEIVED, "CUSTOMER_PAYMENT_RECEIPT", async
   const amount = Number(ctx.payload.amountCents ?? 0) / 100;
   await notify({
     userId: portalUserId, title: "Payment received",
-    message: `Payment of RM ${amount.toFixed(2)} received for invoice ${invoice.code}. Thank you.`,
+    message: `Payment of ${formatCurrency(amount)} received for invoice ${invoice.code}. Thank you.`,
     type: "SUCCESS", resourceType: "INVOICE", resourceId: invoice.id,
   });
   return { result: "SUCCESS", detail: "customer receipt notification created" };

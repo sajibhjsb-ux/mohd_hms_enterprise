@@ -22,7 +22,7 @@ import { Pencil } from "lucide-react";
 
 type CustomerDetail = {
   id: string; code: string; companyName: string; contactPerson: string;
-  email: string; phone: string; address: string; city: string; status: string; notes: string;
+  email: string; phone: string; address: string; city: string; country: string; status: string; notes: string;
   createdAt: string;
   portalUser: { id: string; email: string; name: string; status: string } | null;
   _count: { equipment: number; complaints: number; invoices: number; workOrders: number; quotations: number; payments: number };
@@ -198,7 +198,7 @@ export function CustomerDetailPage({ id }: { id: string }) {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
               <div className="space-y-1">
                 <p className="text-xs uppercase tracking-wide text-muted-foreground">Address</p>
-                <p>{[detail.address, detail.city].filter(Boolean).join(", ") || "—"}</p>
+                <p>{[detail.address, detail.city, detail.country].filter(Boolean).join(", ") || "—"}</p>
               </div>
               <div className="space-y-1">
                 <p className="text-xs uppercase tracking-wide text-muted-foreground">Portal account</p>

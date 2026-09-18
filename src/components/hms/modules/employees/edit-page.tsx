@@ -190,7 +190,7 @@ export function EmployeeEditPage({ id }: { id: string }) {
               </div>
               <div>
                 <Label htmlFor="ee-phone">Phone</Label>
-                <Input id="ee-phone" value={form.phone} onChange={(e) => set({ phone: e.target.value })} />
+                <Input id="ee-phone" value={form.phone} onChange={(e) => set({ phone: e.target.value })} placeholder="+673 7123456" />
               </div>
               <div>
                 <Label htmlFor="ee-join">Join date</Label>
@@ -199,7 +199,7 @@ export function EmployeeEditPage({ id }: { id: string }) {
               </div>
               <SalaryField
                 id="ee-salary"
-                label="Monthly salary (MYR)"
+                label="Monthly salary (BND)"
                 value={form.salary}
                 onChange={(v) => set({ salary: v })}
                 errors={fieldErrors}

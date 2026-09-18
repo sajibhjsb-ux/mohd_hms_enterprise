@@ -2,6 +2,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { toCents } from "@/lib/hms/format";
 import { db } from "@/lib/db";
 import { handler, ok, parseBody, Errors } from "@/lib/hms/api";
 import { PERMISSIONS, type Permission } from "@/lib/hms/constants";
@@ -58,7 +59,7 @@ async function loadScoped(id: string, user: SessionUser) {
 }
 
 function computeItem(input: z.infer<typeof itemSchema>) {
-  const unitPriceCents = Math.round(input.unitPrice * 100);
+  const unitPriceCents = toCents(input.unitPrice);
   const discountPercent = input.discountPercent ?? 0;
   // NOTE: InvoiceItem has no itemId column (unlike QuotationItem).
   return {
@@ -101,8 +102,8 @@ export const PATCH = withId(PERMISSIONS.invoices_manage, async (id, { req, user 
 
   const subtotalCents = items.reduce((s, it) => s + it.totalCents, 0);
   const taxCents = items.reduce((s, it) => s + Math.round((it.totalCents * it.taxPercent) / 100), 0);
-  const discountCents = body.discount !== undefined ? Math.round(body.discount * 100) : existing.discountCents;
-  const shippingCents = body.shipping !== undefined ? Math.round(body.shipping * 100) : existing.shippingCents;
+  const discountCents = body.discount !== undefined ? toCents(body.discount) : existing.discountCents;
+  const shippingCents = body.shipping !== undefined ? toCents(body.shipping) : existing.shippingCents;
   const totalCents = Math.max(0, subtotalCents - discountCents + taxCents + shippingCents);
 
   const data: Prisma.InvoiceUncheckedUpdateInput = {

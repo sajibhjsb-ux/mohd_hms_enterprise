@@ -81,6 +81,7 @@ export function DocumentPreview({ q, company }: { q: QuotationDetail; company: s
         <div className="sm:text-right">
           <div className="text-lg font-semibold">QUOTATION</div>
           <div className="text-xs text-muted-foreground">{q.code}</div>
+          <div className="text-xs text-muted-foreground mt-1">Currency: BND</div>
           <div className="text-xs text-muted-foreground mt-1">Date: {fmtDate(q.quotationDate)}</div>
           <div className="text-xs text-muted-foreground">Valid until: {fmtDate(q.validUntil)}</div>
         </div>

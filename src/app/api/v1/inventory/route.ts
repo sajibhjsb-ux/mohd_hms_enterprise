@@ -4,6 +4,7 @@
 // unitCostCents, supplierId, supplier:{id,name}|null, status, low }.
 
 import { z } from "zod";
+import { toCents } from "@/lib/hms/format";
 import { db } from "@/lib/db";
 import { handler, ok, okList, parseBody, listQuery, pagedMeta, Errors } from "@/lib/hms/api";
 import { PERMISSIONS } from "@/lib/hms/constants";
@@ -100,7 +101,7 @@ export const POST = handler(
           unit: body.unit && body.unit.length > 0 ? body.unit : "pcs",
           stockQty,
           minStockQty: body.minStockQty ?? 0,
-          unitCostCents: Math.round((body.unitCost ?? 0) * 100),
+          unitCostCents: toCents(body.unitCost ?? 0),
           supplierId: body.supplierId || null,
           status: "ACTIVE",
         },

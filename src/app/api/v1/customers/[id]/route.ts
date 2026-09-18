@@ -62,6 +62,7 @@ const updateSchema = z.object({
   phone: z.string().min(1).max(40).optional(),
   address: z.string().max(500).optional(),
   city: z.string().max(120).optional(),
+  country: z.string().max(120).optional(),
   notes: z.string().max(2000).optional(),
   status: z.enum(["ACTIVE", "INACTIVE"]).optional(),
 });
@@ -88,6 +89,7 @@ export const PATCH = withId(PERMISSIONS.customers_update, async (id, { req, user
       ...(body.phone !== undefined ? { phone: body.phone.trim() } : {}),
       ...(body.address !== undefined ? { address: body.address.trim() } : {}),
       ...(body.city !== undefined ? { city: body.city.trim() } : {}),
+      ...(body.country !== undefined ? { country: body.country.trim() } : {}),
       ...(body.notes !== undefined ? { notes: body.notes.trim() } : {}),
       ...(body.status !== undefined ? { status: body.status } : {}),
     },

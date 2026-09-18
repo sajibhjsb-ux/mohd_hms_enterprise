@@ -3,6 +3,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { toCents } from "@/lib/hms/format";
 import type { Permission } from "@/lib/hms/constants";
 import { PERMISSIONS } from "@/lib/hms/constants";
 import { handler, ok, parseBody, Errors } from "@/lib/hms/api";
@@ -72,7 +73,7 @@ export const PATCH = withId(PERMISSIONS.inventory_manage, async (id, { req, user
       ...(body.category !== undefined ? { category: body.category } : {}),
       ...(body.unit !== undefined ? { unit: body.unit } : {}),
       ...(body.minStockQty !== undefined ? { minStockQty: body.minStockQty } : {}),
-      ...(body.unitCost !== undefined ? { unitCostCents: Math.round(body.unitCost * 100) } : {}),
+      ...(body.unitCost !== undefined ? { unitCostCents: toCents(body.unitCost) } : {}),
       ...(body.supplierId !== undefined ? { supplierId: body.supplierId || null } : {}),
       ...(body.status !== undefined ? { status: body.status } : {}),
     },

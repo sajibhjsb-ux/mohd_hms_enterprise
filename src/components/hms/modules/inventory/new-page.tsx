@@ -203,7 +203,7 @@ export function ItemNewPage() {
           <Field label="Minimum stock qty">
             <Input type="number" min="0" step="any" value={draft.value.minStockQty} onChange={(e) => draft.setValue({ minStockQty: e.target.value })} placeholder="0" />
           </Field>
-          <Field label="Unit cost (RM)">
+          <Field label="Unit cost (BND)">
             <Input type="number" min="0" step="0.01" value={draft.value.unitCost} onChange={(e) => draft.setValue({ unitCost: e.target.value })} placeholder="0.00" />
           </Field>
           <Field label="Supplier">
