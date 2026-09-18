@@ -272,3 +272,23 @@ Stage Summary:
 - Complaint creation now flows: Complaints → New Complaint (full page) → draft-safe form → create → detail dialog → existing workflow. Old modal fully removed; list module untouched otherwise.
 - Honest scope notes (spec §5/§12/§13/§15 conditionals): Category/Source/Location inputs NOT added — Complaint model has no such fields (schema frozen; no invented fields); location shown read-only via equipment relation. Attachments NOT implemented — no upload endpoint/file relation exists in sandbox (documented integration point). Internal notes field does not exist at creation; description remains customer-visible by design.
 - 10-15 min soak test approximated with a 150s idle + mechanism verification (debounced autosave 1.2s to localStorage + server Draft table + restore prompt); reported honestly.
+
+---
+
+Task ID: 12 (premium header + floating nav)
+Agent: Z.ai Code (main orchestrator)
+Task: Rebuild header and floating navigation per reference design (premium glass header with global search/QR/theme/language/profile + separate floating nav container), preserving all existing logic.
+
+Work Log:
+- Decomposed monolithic shell into reusable production components: shell/header.tsx (TopHeader: branding + search trigger + QR + notifications + theme + language + profile, tooltips + aria labels), shell/floating-nav.tsx (width-measured overflow via cached item widths + ResizeObserver + fonts.ready; More dropdown; active state from activeModule), shell/global-search.tsx (Command palette, Ctrl/⌘K global shortcut w/ contentEditable guard, REAL API groups: complaints/customers/equipment server-side search, RBAC-gated per hasPerm, complaints result opens detail via complaintsFocusId), shell/qr-dialog.tsx (reuses existing qrToken deep-link mechanism — accepts raw token or full /?resource= URL), shell/theme-provider.tsx (next-themes, class strategy; globals.css already had .dark tokens).
+- shell.tsx now orchestrates: TopHeader + FloatingNav + main + footer + mobile bottom nav (kept) + dialogs. All nav entry points (logo, nav items, More, search results, QR, notifications, mobile) route through ONE guarded switchModule(key, after?) — dirty-form protection intact; hooks moved above early return (rules of hooks).
+- Content grid aligned to nav: main + footer container → max-w-[1500px] px-4 sm:px-6; header h-16 md:h-[72px]; nav h-16 rounded-3xl glass shadow; sticky nav top-[72px]; z-order header 40 / nav 30 / radix overlays 50.
+- Language: static Globe+EN indicator w/ tooltip (only English exists — no fake options per spec).
+- BUGS found & fixed during QA: (1) CommandDialog className md:top-[-8%] pushed palette off-viewport → md:top-[12%]; (2) tablet 768px brand wordmark overlapped search pill → wordmark hidden below sm + shrink-0 + md:min-w-0; (3) hooks-after-early-return + react-hooks/set-state-in-effect lint errors → hooks hoisted, rAF-deferred measurement/mounted, event-driven palette reset.
+- QA (agent-browser): customer + admin sessions; desktop 1440 (header 73px, nav 64px, More overflows 20 admin modules w/ active dot, search real results Chiller→Equipment jump, complaint result → complaints + detail focus path, Ctrl+K opens/Escape closes with no reload marker trick, theme light↔dark no reload, QR dialog token → Equipment module, notifications badge live); tablet 768 (no overlap after fix, floating nav hidden, bottom nav present); mobile 375 (simplified header, no horizontal overflow, form data survives viewport change); complaint form dirty guard verified via floating-nav click ("Leave with unsaved changes?" dialog); console clean.
+- Final: tsc 0 / eslint 0 / dev.log clean / HTTP 200.
+
+Stage Summary:
+- One authoritative navigation config (MODULES registry) drives desktop floating nav, More menu, mobile bottom nav and search module list. RBAC filtering identical across all.
+- All header/nav interactions preserved: notifications (live badge, mark read, complaint deep-open), profile (theme/Change password/About/Sign out — all roles reach password change), QR (existing deep-link reuse), search (real APIs only).
+- No business logic, API, schema, auth or RBAC changes. Test artifacts cleaned (Guard verification entry draft discarded).

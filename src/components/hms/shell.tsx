@@ -1,15 +1,15 @@
 "use client";
 
-// MOHD.HMS ENTERPRISE — application shell.
-// Desktop: floating glassmorphism navigation. Mobile: bottom navigation.
-// Role-based nav (frontend hint only — the backend enforces real permissions).
+// MOHD.HMS ENTERPRISE — application shell (orchestrator).
+// Desktop: premium top header + floating navigation (reference design).
+// Mobile: simplified header + bottom navigation. Role-based nav is a UX hint;
+// the backend enforces real permissions. One authoritative nav config: MODULES.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -20,39 +20,23 @@ import { MODULES, type ModuleDef } from "./registry";
 import { humanize } from "@/lib/hms/constants";
 import { cn } from "@/lib/utils";
 import { initials } from "@/lib/hms/format";
-import {
-  Bell, CheckCheck, ChevronDown, Home, LayoutGrid, Loader2, LogOut,
-  Menu, ScanLine, KeyRound, Info, AlertTriangle, CheckCircle2,
-} from "lucide-react";
+import { LayoutGrid, Loader2, ShieldCheck } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-
-type NotifItem = {
-  id: string; type: string; title: string; message: string;
-  resourceType: string; resourceId: string; readAt: string | null; createdAt: string;
-};
+import { TopHeader } from "./shell/header";
+import { FloatingNav } from "./shell/floating-nav";
+import { GlobalSearch, type SearchNavigateTarget } from "./shell/global-search";
+import { QrScanDialog } from "./shell/qr-dialog";
 
 export function AppShell() {
   const { user, signOut } = useSession();
   const { activeModule, setActiveModule, deepLink, setDeepLink, complaintFormDirty } = useUi();
-  const [notifsOpen, setNotifsOpen] = useState(false);
-  const [notifs, setNotifs] = useState<NotifItem[]>([]);
-  const [unread, setUnread] = useState(0);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [qrOpen, setQrOpen] = useState(false);
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [pwOpen, setPwOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
-  const [pendingModule, setPendingModule] = useState<string | null>(null);
+  const [pendingNav, setPendingNav] = useState<{ key: string; after?: () => void } | null>(null);
   const { toast } = useToast();
-
-  // Module switching with unsaved-data protection: while the complaint entry form
-  // is dirty, confirm before navigating to a different module (draft auto-saves,
-  // so leaving is recoverable — but the user must decide explicitly).
-  const switchModule = useCallback((key: string) => {
-    if (useUi.getState().complaintFormDirty && key !== "complaints") {
-      setPendingModule(key);
-      return;
-    }
-    setActiveModule(key);
-  }, [setActiveModule]);
 
   // Deep link handling (QR scans land on /?resource=equipment:{qrToken})
   useEffect(() => {
@@ -65,21 +49,6 @@ export function AppShell() {
       }
     }
   }, [setDeepLink]);
-
-  const loadNotifs = useCallback(async () => {
-    try {
-      const res = await api.get<NotifItem[]>("/api/v1/notifications?take=20");
-      setNotifs(res.data);
-      setUnread(Number(res.meta?.unread ?? 0));
-    } catch { /* silent */ }
-  }, []);
-
-  useEffect(() => {
-    if (!user) return;
-    const t = setInterval(loadNotifs, 60_000);
-    const initial = setTimeout(loadNotifs, 0);
-    return () => { clearInterval(t); clearTimeout(initial); };
-  }, [user?.id, loadNotifs]);
 
   const visible = useMemo(
     () => MODULES.filter((m: ModuleDef) => {
@@ -105,143 +74,61 @@ export function AppShell() {
     }
   }, [deepLink, visible, setActiveModule]);
 
+  /**
+   * Single guarded navigation entry used by the header, floating nav, search,
+   * QR dialog and mobile nav. While the complaint entry form is dirty, leaving
+   * the complaints module asks for confirmation first (draft auto-saves too).
+   * NOTE: declared before the early return below (rules of hooks).
+   */
+  const switchModule = useCallback((key: string, after?: () => void) => {
+    if (useUi.getState().complaintFormDirty && key !== "complaints") {
+      setPendingNav({ key, after });
+      return;
+    }
+    setActiveModule(key);
+    after?.();
+  }, [setActiveModule]);
+
+  const navigateFromSearch = useCallback((t: SearchNavigateTarget) => {
+    switchModule(t.module, () => {
+      if (t.complaintId) {
+        useUi.getState().setComplaintsView("list");
+        useUi.getState().setComplaintsFocusId(t.complaintId);
+      }
+    });
+  }, [switchModule]);
+
+  const navigateFromQr = useCallback((module: string, token: string) => {
+    switchModule(module, () => setDeepLink({ type: module, token }));
+  }, [switchModule, setDeepLink]);
+
   if (!user) return null;
 
   const active = visible.find((m) => m.key === activeModule) ?? visible[0];
   const mobileNav = visible.filter((m) => m.mobile);
   const ActiveComponent = active?.component;
 
-  async function markAllRead() {
-    await api.patch("/api/v1/notifications/read-all", {}).catch(() => undefined);
-    await loadNotifs();
-  }
-
-  async function markRead(id: string) {
-    await api.patch("/api/v1/notifications", { ids: [id] }).catch(() => undefined);
-    await loadNotifs();
-  }
-
   return (
-    <div className="min-h-screen flex flex-col bg-[radial-gradient(60rem_30rem_at_50%_-10%,oklch(0.95_0.05_152/0.6),transparent)]">
-      {/* Top bar */}
-      <header className="sticky top-0 z-40 border-b bg-background/80 backdrop-blur-md no-print">
-        <div className="mx-auto max-w-7xl px-3 sm:px-6 h-14 flex items-center gap-3">
-          <div className="flex items-center gap-2.5 mr-1">
-            <Image src="/brand/logo-128.png" alt="MOHD HMS Enterprise logo" width={36} height={36} priority className="h-9 w-9 rounded-full" />
-            <div className="leading-none">
-              <div className="font-semibold text-sm tracking-tight">MOHD.HMS</div>
-              <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Enterprise</div>
-            </div>
-          </div>
+    <div className="min-h-screen flex flex-col bg-[radial-gradient(60rem_30rem_at_50%_-10%,oklch(0.95_0.05_152/0.6),transparent)] dark:bg-none">
+      <TopHeader
+        onOpenSearch={() => setSearchOpen(true)}
+        onOpenQr={() => setQrOpen(true)}
+        onSelectModule={switchModule}
+        onOpenChangePassword={() => setPwOpen(true)}
+        onOpenAbout={() => setAboutOpen(true)}
+      />
+      <FloatingNav visible={visible} activeModule={activeModule} onSelect={switchModule} />
 
-          {/* Desktop floating nav */}
-          <nav aria-label="Primary" className="hidden lg:flex items-center gap-1 mx-auto rounded-full border bg-white/70 backdrop-blur-md shadow-sm px-1.5 py-1.5 max-w-[52rem] overflow-x-auto hms-scroll">
-            {visible.map((m) => (
-              <button
-                key={m.key}
-                onClick={() => switchModule(m.key)}
-                aria-current={activeModule === m.key ? "page" : undefined}
-                className={cn(
-                  "flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium whitespace-nowrap transition-colors",
-                  activeModule === m.key ? "bg-primary text-primary-foreground shadow" : "text-muted-foreground hover:bg-accent hover:text-foreground"
-                )}
-              >
-                <m.icon className="h-4 w-4" aria-hidden /> {m.shortLabel ?? m.label}
-              </button>
-            ))}
-          </nav>
-
-          <div className="ml-auto flex items-center gap-1.5">
-            {/* Notifications */}
-            <DropdownMenu open={notifsOpen} onOpenChange={(o) => { setNotifsOpen(o); if (o) loadNotifs(); }}>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="relative rounded-full" aria-label={`Notifications (${unread} unread)`}>
-                  <Bell className="h-5 w-5" />
-                  {unread > 0 ? (
-                    <span className="absolute -top-0.5 -right-0.5 h-4 min-w-4 px-1 rounded-full bg-destructive text-white text-[10px] font-semibold flex items-center justify-center tabular-nums">
-                      {unread > 9 ? "9+" : unread}
-                    </span>
-                  ) : null}
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-[22rem] sm:w-[26rem] p-0">
-                <div className="flex items-center justify-between px-3 py-2.5 border-b">
-                  <span className="font-medium text-sm">Notifications</span>
-                  <Button variant="ghost" size="sm" onClick={markAllRead} disabled={unread === 0} className="h-7 text-xs">
-                    <CheckCheck className="h-3.5 w-3.5 mr-1" /> Mark all read
-                  </Button>
-                </div>
-                <div className="max-h-80 overflow-y-auto hms-scroll">
-                  {notifs.length === 0 ? (
-                    <div className="px-4 py-10 text-center text-sm text-muted-foreground">You&apos;re all caught up 🎉</div>
-                  ) : (
-                    notifs.map((n) => (
-                      <button
-                        key={n.id}
-                        onClick={() => markRead(n.id)}
-                        className={cn("w-full text-left px-3 py-2.5 border-b last:border-0 flex gap-2.5 hover:bg-accent/60", !n.readAt && "bg-primary/5")}
-                      >
-                        <span className="mt-0.5 shrink-0">
-                          {n.type === "WARNING" ? <AlertTriangle className="h-4 w-4 text-amber-500" />
-                            : n.type === "SUCCESS" ? <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                            : <Info className="h-4 w-4 text-teal-500" />}
-                        </span>
-                        <span className="min-w-0">
-                          <span className="flex items-center gap-2">
-                            <span className="text-sm font-medium truncate">{n.title}</span>
-                            {!n.readAt ? <span className="h-1.5 w-1.5 rounded-full bg-primary shrink-0" aria-label="unread" /> : null}
-                          </span>
-                          <span className="text-xs text-muted-foreground line-clamp-2">{n.message}</span>
-                          <span className="text-[10px] text-muted-foreground/70">{new Date(n.createdAt).toLocaleString()}</span>
-                        </span>
-                      </button>
-                    ))
-                  )}
-                </div>
-              </DropdownMenuContent>
-            </DropdownMenu>
-
-            {/* User menu */}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" className="rounded-full pl-1 pr-2 sm:pr-3 gap-2">
-                  <span className="h-8 w-8 rounded-full bg-primary/10 text-primary text-xs font-semibold flex items-center justify-center">{initials(user.name)}</span>
-                  <span className="hidden sm:block text-left leading-tight">
-                    <span className="block text-sm font-medium max-w-[10rem] truncate">{user.name}</span>
-                    <span className="block text-[10px] uppercase tracking-wide text-muted-foreground">{humanize(user.role)}</span>
-                  </span>
-                  <ChevronDown className="h-4 w-4 text-muted-foreground hidden sm:block" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56">
-                <DropdownMenuLabel>
-                  <div className="text-sm font-medium">{user.name}</div>
-                  <div className="text-xs text-muted-foreground font-normal">{user.email}</div>
-                  <Badge variant="outline" className="mt-1.5 bg-primary/5 text-primary border-primary/20">{humanize(user.role)}</Badge>
-                </DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => setPwOpen(true)}><KeyRound className="h-4 w-4 mr-2" /> Change password</DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setAboutOpen(true)}><Info className="h-4 w-4 mr-2" /> About MOHD.HMS</DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => { signOut(); toast({ title: "Signed out", description: "You have been securely logged out." }); }}>
-                  <LogOut className="h-4 w-4 mr-2" /> Sign out
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        </div>
-      </header>
-
-      {/* Content */}
-      <main className="flex-1 mx-auto w-full max-w-7xl px-3 sm:px-6 py-5 pb-24 lg:pb-8" id="main-content">
+      {/* Content — aligned with the floating navigation grid */}
+      <main className="flex-1 mx-auto w-full max-w-[1500px] px-4 sm:px-6 py-5 pb-24 lg:pb-8" id="main-content">
         {ActiveComponent ? <ActiveComponent /> : null}
       </main>
 
       {/* Sticky footer */}
       <footer className="mt-auto border-t bg-background/80 backdrop-blur no-print">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 py-3.5 flex flex-col sm:flex-row items-center justify-between gap-1.5 text-xs text-muted-foreground">
+        <div className="mx-auto max-w-[1500px] px-4 sm:px-6 py-3.5 flex flex-col sm:flex-row items-center justify-between gap-1.5 text-xs text-muted-foreground">
           <div className="flex items-center gap-2">
-            <Image src="/brand/logo-64.png" alt="" width={20} height={20} aria-hidden className="h-5 w-5 rounded-full" />
+            <ShieldCheck className="h-3.5 w-3.5 text-primary" aria-hidden />
             <span>© {new Date().getFullYear()} MOHD.HMS Enterprise — Smart Facility Maintenance Management</span>
           </div>
           <div className="flex items-center gap-3">
@@ -256,7 +143,7 @@ export function AppShell() {
       {/* Mobile bottom navigation */}
       <nav aria-label="Mobile navigation" className="lg:hidden fixed bottom-0 inset-x-0 z-40 border-t bg-background/90 backdrop-blur-md no-print pb-[env(safe-area-inset-bottom)]">
         <div className="grid grid-cols-5">
-          {mobileNav.slice(0, 5).map((m) => (
+          {mobileNav.slice(0, 4).map((m) => (
             <button
               key={m.key}
               onClick={() => switchModule(m.key)}
@@ -270,40 +157,42 @@ export function AppShell() {
               {m.shortLabel ?? m.label}
             </button>
           ))}
-          {visible.length > 5 ? (
-            <Sheet open={mobileMoreOpen} onOpenChange={setMobileMoreOpen}>
-              <SheetTrigger asChild>
-                <button className="flex flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium text-muted-foreground min-h-[44px]">
-                  <LayoutGrid className="h-5 w-5" aria-hidden /> More
-                </button>
-              </SheetTrigger>
-              <SheetContent side="bottom" className="rounded-t-2xl">
-                <SheetHeader>
-                  <SheetTitle>All modules</SheetTitle>
-                </SheetHeader>
-                <div className="grid grid-cols-3 gap-2 pb-6">
-                  {visible.map((m) => (
-                    <button
-                      key={m.key}
-                      onClick={() => { switchModule(m.key); setMobileMoreOpen(false); }}
-                      className={cn(
-                        "flex flex-col items-center gap-1.5 rounded-xl border p-3 text-xs font-medium",
-                        activeModule === m.key ? "border-primary bg-primary/5 text-primary" : "text-muted-foreground"
-                      )}
-                    >
-                      <m.icon className="h-5 w-5" aria-hidden />
-                      {m.shortLabel ?? m.label}
-                    </button>
-                  ))}
-                </div>
-              </SheetContent>
-            </Sheet>
-          ) : null}
+          <Sheet open={mobileMoreOpen} onOpenChange={setMobileMoreOpen}>
+            <SheetTrigger asChild>
+              <button className="flex flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium text-muted-foreground min-h-[44px]">
+                <LayoutGrid className="h-5 w-5" aria-hidden /> More
+              </button>
+            </SheetTrigger>
+            <SheetContent side="bottom" className="rounded-t-2xl">
+              <SheetHeader>
+                <SheetTitle>All modules</SheetTitle>
+              </SheetHeader>
+              <div className="grid grid-cols-3 gap-2 pb-6">
+                {visible.map((m) => (
+                  <button
+                    key={m.key}
+                    onClick={() => { switchModule(m.key); setMobileMoreOpen(false); }}
+                    className={cn(
+                      "flex flex-col items-center gap-1.5 rounded-xl border p-3 text-xs font-medium",
+                      activeModule === m.key ? "border-primary bg-primary/5 text-primary" : "text-muted-foreground"
+                    )}
+                  >
+                    <m.icon className="h-5 w-5" aria-hidden />
+                    {m.shortLabel ?? m.label}
+                  </button>
+                ))}
+              </div>
+            </SheetContent>
+          </Sheet>
         </div>
       </nav>
 
+      {/* Overlays */}
       <ChangePasswordDialog open={pwOpen} onOpenChange={setPwOpen} />
-      <Dialog open={!!pendingModule} onOpenChange={(o) => { if (!o) setPendingModule(null); }}>
+      <GlobalSearch open={searchOpen} onOpenChange={setSearchOpen} onNavigate={navigateFromSearch} />
+      <QrScanDialog open={qrOpen} onOpenChange={setQrOpen} onNavigate={navigateFromQr} />
+
+      <Dialog open={!!pendingNav} onOpenChange={(o) => { if (!o) setPendingNav(null); }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Leave with unsaved changes?</DialogTitle>
@@ -312,11 +201,14 @@ export function AppShell() {
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="flex-col-reverse sm:flex-row gap-2">
-            <Button variant="outline" onClick={() => setPendingModule(null)}>Stay on this page</Button>
-            <Button onClick={() => { if (pendingModule) setActiveModule(pendingModule); setPendingModule(null); }}>Leave anyway</Button>
+            <Button variant="outline" onClick={() => setPendingNav(null)}>Stay on this page</Button>
+            <Button onClick={() => { if (pendingNav) { setActiveModule(pendingNav.key); pendingNav.after?.(); } setPendingNav(null); }}>
+              Leave anyway
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
       <Dialog open={aboutOpen} onOpenChange={setAboutOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
