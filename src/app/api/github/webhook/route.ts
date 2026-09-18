@@ -5,13 +5,12 @@ import { readFileSync } from "fs";
 
 // MOHD.HMS ENTERPRISE — GitHub push webhook → auto-deploy.
 // Receives the GitHub webhook through the tunnel (HTTPS), verifies the
-// X-Hub-Signature-256 HMAC, and hands off to the deploy worker
-// (/home/hasan/hms-deploy/deploy.sh). A failed deploy never takes the app
-// down: the worker builds in a staging clone and restores the previous
-// .next + restarts on any failure.
+// X-Hub-Signature-256 HMAC, then starts the hms-deploy oneshot systemd unit
+// (runs deploy.sh as root, decoupled from this server process). A failed
+// deploy never takes the app down: the worker builds in a staging clone and
+// restores the previous .next + restarts on any failure.
 
 const SECRET_PATH = "/home/hasan/hms-deploy/secret";
-const DEPLOY = "/home/hasan/hms-deploy/deploy.sh";
 
 export async function POST(req: NextRequest) {
   const sig = req.headers.get("x-hub-signature-256") ?? "";
@@ -44,7 +43,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, ignored: "not refs/heads/main" });
   }
 
-  spawn("/usr/bin/setsid", ["bash", DEPLOY], { detached: true, stdio: "ignore" }).unref();
+  spawn("/usr/bin/sudo", ["-n", "systemctl", "start", "hms-deploy"], { detached: true, stdio: "ignore" }).unref();
 
   return NextResponse.json({ ok: true, deployed: true });
 }
