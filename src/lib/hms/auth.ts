@@ -19,6 +19,7 @@ const scrypt = promisify(_scrypt) as (
 
 export const SESSION_COOKIE = "hms_session";
 export const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7 days
+export const SESSION_REMEMBER_TTL_MS = 1000 * 60 * 60 * 24 * 30; // 30 days ("Remember me")
 export const SESSION_RENEW_THRESHOLD_MS = SESSION_TTL_MS / 2;
 
 export async function hashPassword(password: string): Promise<string> {
@@ -54,9 +55,14 @@ export type SessionUser = {
   sessionExpiresAt: Date;
 };
 
-export async function createSession(userId: string, ip?: string, userAgent?: string) {
+/**
+ * Create a DB-backed session. `ttlMs` defaults to the standard 7-day TTL;
+ * the login flow passes SESSION_REMEMBER_TTL_MS when "Remember me" is set
+ * (sliding renewal continues to apply to both variants).
+ */
+export async function createSession(userId: string, ip?: string, userAgent?: string, ttlMs: number = SESSION_TTL_MS) {
   const token = generateToken();
-  const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
+  const expiresAt = new Date(Date.now() + ttlMs);
   await db.session.create({
     data: { token, userId, expiresAt, ip: ip ?? null, userAgent: userAgent ?? null },
   });

@@ -37,6 +37,7 @@ model User {
 
   sessions           Session[]
   passwordResets     PasswordResetToken[]
+  emailOtps          EmailOtp[]
   pushSubscriptions  PushSubscription[]
   technicianProfile  TechnicianProfile?
   employee           Employee?
@@ -72,6 +73,27 @@ model PasswordResetToken {
   usedAt    DateTime?
   createdAt DateTime  @default(now())
 
+  @@index([userId])
+}
+
+// Email-verification one-time codes (e.g. customer first credentials login).
+// Only the HASH of the 6-digit code is stored; one active code per user+purpose
+// (resend overwrites = invalidates the previous code). Delivery mirrors the
+// established sandbox pattern: EMAIL channel logged, dev mailbox in Setting.
+model EmailOtp {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  purpose    String    @default("EMAIL_VERIFICATION")
+  codeHash   String
+  expiresAt  DateTime
+  consumedAt DateTime?
+  attempts   Int       @default(0)
+  lastSentAt DateTime  @default(now())
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@unique([userId, purpose])
   @@index([userId])
 }
 
