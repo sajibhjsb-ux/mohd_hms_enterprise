@@ -26,6 +26,9 @@ model User {
   status        String    @default("ACTIVE") // ACTIVE | DISABLED
   emailVerified DateTime?
   lastLoginAt   DateTime?
+  // Google OAuth sign-in (linked to existing accounts by verified email)
+  googleId      String?   @unique
+  avatarUrl     String?
   customerId    String?   @unique
   customer      Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
   createdAt     DateTime  @default(now())

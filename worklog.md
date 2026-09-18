@@ -880,3 +880,30 @@ Work Log:
 Stage Summary:
 - ONE professional header system, two consumers of one design: server PDF engine (all 9 document types) + shared web DocumentHeader (quotation/invoice previews, screen+print). No duplicate branding sources; no API/permission/numbering changes; only layout/glyph fixes.
 - Files: src/lib/hms/pdf/engine.ts (header architecture + glyph map), src/components/hms/shared/document-header.tsx (new), src/components/hms/modules/{quotations,invoices}/shared.tsx + detail-page.tsx (wired to shared header/loader).
+
+---
+
+Task ID: 24
+Agent: Z.ai Code (main orchestrator)
+Task: Implement Google sign-in (OAuth 2.0) feature
+
+Work Log:
+- Explored existing auth: custom DB-backed sessions (opaque token, HttpOnly `hms_session` cookie, sliding renewal, scrypt passwords), `handler()` RBAC wrapper, login rate limiting. Decision: implement native Google OAuth 2.0 Authorization Code flow + PKCE on top of the existing session primitives — NextAuth was deliberately NOT used (would duplicate/conflict with the DB-session architecture).
+- Sign-in policy (enterprise-safe): Google login works for EXISTING accounts only. The Google-verified email is matched to a User (googleId first, then email) and the account is auto-linked on first use. NO open self-registration; disabled accounts rejected; `email_verified` enforced.
+- `prisma/schema.prisma`: added `User.googleId String? @unique` + `User.avatarUrl String?`; `bun run db:push` OK (additive, zero data loss).
+- New `src/lib/hms/google-auth.ts` (server-only): config detection (empty env = feature disabled), external origin via x-forwarded-host/proto, redirect-URI resolution (GOOGLE_REDIRECT_URI override or `<origin>/api/v1/auth/google/callback`), PKCE S256 pair, constant-time state compare, Google auth-URL builder (openid email profile, prompt=select_account, optional login_hint), code→token exchange, userinfo fetch, error-redirect helper. Endpoint overrides (GOOGLE_AUTH/TOKEN/USERINFO_ENDPOINT) supported for testing doubles.
+- `GET /api/v1/auth/google` (start): 307 to Google consent; issues single-use httpOnly state+PKCE-verifier cookies (path `/api/v1/auth/google`, 10 min); rate limited 30/5min/IP; `?googleError=not_configured` bounce when unconfigured.
+- `GET /api/v1/auth/google/callback`: validates state (timing-safe, single-use), exchanges code with PKCE, fetches verified profile, links/creates session via existing `createSession()` primitive, sets `hms_session` cookie, audits `LOGIN_GOOGLE` / `LOGIN_GOOGLE_FAILED` (with reason + email), lands on `/#/dashboard`. All failure paths → `/?googleError=<stable-code>`; access_denied silent.
+- `login-screen.tsx`: official 4-color Google G (inline SVG), "Sign in with Google" outline button under an "or" divider, redirect-busy state, `?googleError=` → friendly message map (incl. dynamic not_configured message printing the exact callback URL to register), URL cleaned via history.replaceState, disabled while form busy.
+- `.env`: documented placeholders (GOOGLE_CLIENT_ID/SECRET empty by default + optional overrides).
+- QA infrastructure: `mini-services/mock-google-idp/` (bun, port 3060, /auth /token /userinfo, identity via login_hint) used as a testing double; env-overridable endpoints made this possible without touching production code paths.
+- QA (curl): start → 307 with client_id/redirect_uri/state/PKCE + 2 cookies; no-cookie callback → state_mismatch; valid state + bogus code → exchange_failed; FULL round-trip (login_hint=admin@mohdhms.com) → session cookie → `/api/v1/auth/session` authenticated as SUPER_ADMIN → final redirect `/#/dashboard`; second login hit googleId branch; stranger@gmail.com → no_account; state replay → state_mismatch (single-use). Audit rows LOGIN_GOOGLE ×2 + LOGIN_GOOGLE_FAILED(no_account) verified. DB showed googleId set + lastLoginAt updated.
+- QA (browser): click "Sign in with Google" → full mock flow → dashboard as SUPER_ADMIN (screenshot google-login-dashboard.png); clean env click → clear not-configured alert with callback URL (google-not-configured.png); password login regression OK (password-login-regression.png); console clean (only realtime retries caused by localhost test browser bypassing the caddy gateway — socket.io handshake verified OK via :81; not an app defect).
+- Sandbox ops notes: (a) OOM killer killed next-server at 1.7GB RSS (4GB box) — stale headless Chrome from a previous session was the trigger; killed it; (b) `setsid`-launched background processes are reaped between tool calls in this sandbox NOW — the working pattern is double-fork: `(cmd < /dev/null > log 2>&1 &)`. Dev server + realtime-service (port 3003, was down after process kills) both restarted this way.
+- Cleanup: mock IdP stopped; admin.googleId reset to null; 4 LOGIN_GOOGLE* audit rows removed; sessions left intact; dev server running clean (no mock env) on :3000.
+
+Stage Summary:
+- Google OAuth is production-ready but INERT until real credentials exist: set GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET (Google Cloud Console → OAuth 2.0 Web client) and register `<app-origin>/api/v1/auth/google/callback` as an Authorized redirect URI. The login screen then reports exactly this URL if misconfigured.
+- New endpoints: GET /api/v1/auth/google, GET /api/v1/auth/google/callback (public, rate-limited, audited). New env knobs (all optional): GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI, GOOGLE_AUTH_ENDPOINT, GOOGLE_TOKEN_ENDPOINT, GOOGLE_USERINFO_ENDPOINT. New User fields: googleId (@unique), avatarUrl.
+- Guarantees: password login/emails/status/dates/PDF flows untouched; no second company/config source; no open registration (existing accounts only, linked by Google-verified email); RBAC unchanged (Google session == password session).
+- mini-services/mock-google-idp is a QA double only — never point production at it.
