@@ -19,9 +19,10 @@ import { navigateTo, pageFromSeg } from "@/lib/hms/router";
 import { useToast } from "@/hooks/use-toast";
 import { DataTable, type Column } from "@/components/hms/shared/data-table";
 import {
-  PageHeader, StatCard, StatusBadge, PriorityBadge, LoadingState, EmptyState, ErrorState,
+  PageHeader, StatCard, StatusBadge, PriorityBadge, LoadingState, EmptyState, ErrorState, DrilldownChips,
 } from "@/components/hms/shared/ui-bits";
 import { PERMISSIONS, PRIORITIES, humanize } from "@/lib/hms/constants";
+import { useModuleQuery } from "@/lib/hms/page-query";
 import { fmtDate } from "@/lib/hms/format";
 import { Button } from "@/components/ui/button";
 import {
@@ -52,9 +53,13 @@ type ComplaintRow = {
 const OPEN_STATUSES = ["NEW", "ASSIGNED"];
 const PROGRESS_STATUSES = ["IN_PROGRESS"];
 const RESOLVED_STATUSES = ["COMPLETED", "CONFIRMED"];
+/** Active = everything not yet resolved/closed/cancelled — matches the
+ *  dashboard "Open Complaints" KPI exactly (NEW | ASSIGNED | IN_PROGRESS). */
+const ACTIVE_STATUSES = ["NEW", "ASSIGNED", "IN_PROGRESS"];
 
 const STATUS_TABS: { key: string; label: string; match: (s: string) => boolean }[] = [
   { key: "ALL", label: "All", match: () => true },
+  { key: "ACTIVE", label: "Active", match: (s) => ACTIVE_STATUSES.includes(s) },
   { key: "OPEN", label: "Open", match: (s) => OPEN_STATUSES.includes(s) },
   { key: "IN_PROGRESS", label: "In Progress", match: (s) => PROGRESS_STATUSES.includes(s) },
   { key: "RESOLVED", label: "Resolved", match: (s) => RESOLVED_STATUSES.includes(s) },
@@ -66,13 +71,16 @@ const STATUS_TABS: { key: string; label: string; match: (s: string) => boolean }
 
 export function ComplaintsModule() {
   const seg = useUi((s) => s.pages["complaints"]) ?? [];
+  const query = useUi((s) => s.queries["complaints"] ?? "");
   const page = pageFromSeg(seg);
 
   if (page.view === "new") return <ComplaintNewPage />;
   if (page.view === "assign" && page.id) return <ComplaintAssignPage id={page.id} />;
   if (page.view === "edit" && page.id) return <ComplaintEditPage id={page.id} />;
   if (page.view === "detail" && page.id) return <ComplaintDetailPage id={page.id} />;
-  return <ComplaintsList />;
+  // key={query}: a new drill-down URL (KPI click / direct link) remounts the
+  // list with the query applied as its initial filter state.
+  return <ComplaintsList key={query} />;
 }
 
 // ── List page ──
@@ -82,6 +90,14 @@ function ComplaintsList() {
   const canCreate = hasPerm(user, PERMISSIONS.complaints_create);
   const isStaffUser = !!user && user.role !== "CUSTOMER";
 
+  // KPI drill-down (e.g. #/complaints?status=active&priority=URGENT): validated
+  // case-insensitively against the canonical tab keys / priority values, then
+  // applied once on mount.
+  const dq = useModuleQuery("complaints");
+  const statusTab = STATUS_TABS.find((t) => t.key === dq.params.status?.toUpperCase());
+  const statusParam = statusTab?.key;
+  const priorityParam = PRIORITIES.find((p) => p === dq.params.priority?.toUpperCase());
+
   // All page navigation flows through the hash router (URL + Back/Forward).
   const openPage = useCallback((seg: string[]) => navigateTo("complaints", seg), []);
 
@@ -89,7 +105,7 @@ function ComplaintsList() {
   const [rows, setRows] = useState<ComplaintRow[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState("ALL");
+  const [tab, setTab] = useState(statusParam ?? "ALL");
   const [reloadKey, setReloadKey] = useState(0);
 
   const load = useCallback(async () => {
@@ -155,6 +171,15 @@ function ComplaintsList() {
         ) : null}
       />
 
+      <DrilldownChips
+        chips={[
+          ...(statusParam && statusParam !== "ALL" ? [{ key: "status", label: "Status", value: humanize(statusParam) }] : []),
+          ...(priorityParam ? [{ key: "priority", label: "Priority", value: humanize(priorityParam) }] : []),
+        ]}
+        onRemove={(key) => dq.apply({ [key]: undefined })}
+        onClear={dq.clear}
+      />
+
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 mb-5">
         <StatCard title="Total" value={stats.total} icon={<ListChecks className="h-5 w-5" />} loading={!rows && loading} />
@@ -198,6 +223,7 @@ function ComplaintsList() {
           rowKey={(r) => r.id}
           onRowClick={(r) => openPage([r.id])}
           searchPlaceholder="Search code, title, description…"
+          initialFilters={priorityParam ? { priority: priorityParam } : undefined}
           filters={[{
             key: "priority",
             label: "Priorities",

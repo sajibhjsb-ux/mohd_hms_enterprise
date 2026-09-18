@@ -12,12 +12,31 @@ export const GET = handler(
     const staff = isStaff(user.role);
     const customerId = staff ? undefined : (user.customerId ?? "none");
 
+    // Drill-down count consistency: each KPI must equal the destination
+    // feature page's filtered list for the SAME user. Technicians see only
+    // complaints assigned/created by them, and only their work orders / PM
+    // tasks — so their KPIs are scoped identically (same predicates as the
+    // complaints / work-orders / pm task list APIs).
+    let techComplaintScope: Record<string, unknown> = {};
+    let techWoScope: Record<string, unknown> = {};
+    let techPmScope: Record<string, unknown> = {};
+    if (user.role === "TECHNICIAN") {
+      const profile = await db.technicianProfile.findUnique({ where: { userId: user.id }, select: { id: true } });
+      const pid = profile?.id ?? "none";
+      techComplaintScope = { OR: [{ assignedTechnicianId: pid }, { createdById: user.id }] };
+      techWoScope = { technicianId: pid };
+      techPmScope = { technicianId: pid };
+    }
+
     const [openComplaints, urgentComplaints, activeWOs, pendingWOs, overduePm, lowStock, equipmentDown, unreadNotifs] = await Promise.all([
-      db.complaint.count({ where: { status: { in: ["NEW", "ASSIGNED", "IN_PROGRESS"] }, ...(customerId ? { customerId } : {}) } }),
-      db.complaint.count({ where: { priority: "URGENT", status: { in: ["NEW", "ASSIGNED", "IN_PROGRESS"] }, ...(customerId ? { customerId } : {}) } }),
-      db.workOrder.count({ where: { status: { in: ["PENDING", "ACCEPTED", "IN_PROGRESS", "ON_HOLD"] }, ...(customerId ? { customerId } : {}) } }),
-      db.workOrder.count({ where: { status: { in: ["PENDING", "ACCEPTED"] }, ...(customerId ? { customerId } : {}) } }),
-      db.pmTask.count({ where: { status: { in: ["SCHEDULED", "IN_PROGRESS"] }, dueDate: { lt: new Date() } } }),
+      db.complaint.count({ where: { status: { in: ["NEW", "ASSIGNED", "IN_PROGRESS"] }, ...techComplaintScope, ...(customerId ? { customerId } : {}) } }),
+      db.complaint.count({ where: { priority: "URGENT", status: { in: ["NEW", "ASSIGNED", "IN_PROGRESS"] }, ...techComplaintScope, ...(customerId ? { customerId } : {}) } }),
+      db.workOrder.count({ where: { status: { in: ["PENDING", "ACCEPTED", "IN_PROGRESS", "ON_HOLD"] }, ...techWoScope, ...(customerId ? { customerId } : {}) } }),
+      db.workOrder.count({ where: { status: { in: ["PENDING", "ACCEPTED"] }, ...techWoScope, ...(customerId ? { customerId } : {}) } }),
+      // Overdue PM = any uncompleted task past its due date. Includes tasks the
+      // automation engine already flipped to status OVERDUE, matching the PM
+      // page's overdue filter one-to-one (count consistency for drill-down).
+      db.pmTask.count({ where: { status: { in: ["SCHEDULED", "IN_PROGRESS", "OVERDUE"] }, dueDate: { lt: new Date() }, ...techPmScope } }),
       staff ? db.inventoryItem.count({ where: { stockQty: { lte: db.inventoryItem.fields.minStockQty }, status: "ACTIVE" } }) : Promise.resolve(0),
       db.equipment.count({ where: { status: "UNDER_MAINTENANCE", ...(customerId ? { customerId } : {}) } }),
       db.notification.count({ where: { userId: user.id, readAt: null } }),

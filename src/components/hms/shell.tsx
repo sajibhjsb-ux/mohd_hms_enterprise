@@ -70,23 +70,30 @@ export function AppShell() {
   const applyHash = useCallback((hash: string) => {
     // Re-applying the page we're already on (e.g. browser Back returning to a
     // dirty form after "Stay") must be a no-op — it must NOT clear dirtiness.
-    if (hash && hash === appliedHashRef.current) return hash;
+    // The comparison includes the query string so drill-down URLs (#/complaints
+    // ?status=active) re-apply correctly and plain URLs clear the filters.
     const vis = visibleRef.current;
     const parsed = parseHash(hash);
     let target = parsed?.module;
     let seg = parsed?.seg ?? [];
+    const query = parsed?.query ?? "";
+    const canonical = hrefFor(target ?? "dashboard", seg) + (query ? `?${new URLSearchParams(query).toString()}` : "");
+    if (hash && canonical === appliedHashRef.current) return hash;
     if (!target || (vis.length > 0 && !vis.some((m) => m.key === target))) {
       target = vis[0]?.key ?? "dashboard";
       seg = [];
       replaceHash(hrefFor(target, seg));
     }
+    const routeQuery = parsed && parsed.module === target ? query : "";
+    const canonicalRoute = hrefFor(target, seg) + (routeQuery ? `?${new URLSearchParams(routeQuery).toString()}` : "");
     const ui = useUi.getState();
     if (ui.activeModule !== target) ui.setActiveModule(target);
     ui.setPage(target, seg);
+    ui.setQuery(target, routeQuery);
     // A fresh route is never dirty — the (unmounting) form page keeps its draft.
     useUi.setState({ pageDirty: false });
     window.scrollTo(0, 0);
-    appliedHashRef.current = hrefFor(target, seg);
+    appliedHashRef.current = canonicalRoute;
     return appliedHashRef.current;
   }, []);
 

@@ -19,6 +19,9 @@ type UiState = {
   pages: Record<string, string[]>;
   pageOf: (module: string) => string[];
   setPage: (module: string, seg: string[]) => void;
+  /** Raw hash query string per module (KPI drill-down filters), e.g. "status=active". */
+  queries: Record<string, string>;
+  setQuery: (module: string, query: string) => void;
   /** True while ANY dedicated form page has unsaved changes — the shell guards navigation. */
   pageDirty: boolean;
   setPageDirty: (d: boolean) => void;
@@ -34,6 +37,9 @@ export const useUi = create<UiState>((set, get) => ({
   pages: {},
   pageOf: (module) => get().pages[module] ?? LIST_SEG,
   setPage: (module, seg) => set((s) => ({ pages: { ...s.pages, [module]: seg } })),
+  queries: {},
+  setQuery: (module, query) =>
+    set((s) => ({ queries: { ...s.queries, [module]: query } })),
   pageDirty: false,
   setPageDirty: (d) => set({ pageDirty: d }),
   deepLink: null,

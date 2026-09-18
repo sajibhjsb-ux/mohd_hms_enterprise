@@ -18,9 +18,10 @@ import { useUi } from "@/lib/hms/ui-store";
 import { navigateTo, pageFromSeg } from "@/lib/hms/router";
 import { DataTable, type Column } from "@/components/hms/shared/data-table";
 import {
-  PageHeader, StatCard, StatusBadge, PriorityBadge, LoadingState, EmptyState, ErrorState,
+  PageHeader, StatCard, StatusBadge, PriorityBadge, LoadingState, EmptyState, ErrorState, DrilldownChips,
 } from "@/components/hms/shared/ui-bits";
 import { PERMISSIONS, PRIORITIES, humanize } from "@/lib/hms/constants";
+import { useModuleQuery } from "@/lib/hms/page-query";
 import { money, fmtDate } from "@/lib/hms/format";
 import { Button } from "@/components/ui/button";
 import {
@@ -48,9 +49,13 @@ type WORow = {
 };
 
 const PENDING_STATUSES = ["PENDING", "ACCEPTED"];
+/** Not yet finished — matches the dashboard "Active Work Orders" KPI exactly
+ *  (PENDING | ACCEPTED | IN_PROGRESS | ON_HOLD). */
+const ACTIVE_STATUSES = ["PENDING", "ACCEPTED", "IN_PROGRESS", "ON_HOLD"];
 
 const STATUS_TABS: { key: string; label: string; match: (s: string) => boolean }[] = [
   { key: "ALL", label: "All", match: () => true },
+  { key: "ACTIVE", label: "Active", match: (s) => ACTIVE_STATUSES.includes(s) },
   { key: "PENDING", label: "Pending", match: (s) => PENDING_STATUSES.includes(s) },
   { key: "IN_PROGRESS", label: "In Progress", match: (s) => s === "IN_PROGRESS" },
   { key: "ON_HOLD", label: "On Hold", match: (s) => s === "ON_HOLD" },
@@ -62,11 +67,14 @@ const STATUS_TABS: { key: string; label: string; match: (s: string) => boolean }
 
 export function WorkOrdersModule() {
   const seg = useUi((s) => s.pages["work-orders"]) ?? [];
+  const query = useUi((s) => s.queries["work-orders"] ?? "");
   const page = pageFromSeg(seg);
 
   if (page.view === "new") return <WorkOrderNewPage />;
   if (page.view === "detail" && page.id) return <WorkOrderDetailPage id={page.id} />;
-  return <WorkOrdersList />;
+  // key={query}: a new drill-down URL (KPI click / direct link) remounts the
+  // list with the query applied as its initial filter state.
+  return <WorkOrdersList key={query} />;
 }
 
 // ── List page ──
@@ -75,6 +83,12 @@ function WorkOrdersList() {
   const { user } = useSession();
   const canCreate = hasPerm(user, PERMISSIONS.work_orders_create);
 
+  // KPI drill-down (e.g. #/work-orders?status=active): validated case-insensitively
+  // against the canonical tab keys, then applied once on mount.
+  const dq = useModuleQuery("work-orders");
+  const statusTab = STATUS_TABS.find((t) => t.key === dq.params.status?.toUpperCase());
+  const statusParam = statusTab?.key;
+
   // All page navigation flows through the hash router (URL + Back/Forward).
   const openPage = useCallback((seg: string[]) => navigateTo("work-orders", seg), []);
 
@@ -82,7 +96,7 @@ function WorkOrdersList() {
   const [rows, setRows] = useState<WORow[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState("ALL");
+  const [tab, setTab] = useState(statusParam ?? "ALL");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -145,6 +159,12 @@ function WorkOrdersList() {
             <Plus className="h-4 w-4 mr-1.5" /> New Work Order
           </Button>
         ) : null}
+      />
+
+      <DrilldownChips
+        chips={statusParam && statusParam !== "ALL" ? [{ key: "status", label: "Status", value: humanize(statusParam) }] : []}
+        onRemove={(key) => dq.apply({ [key]: undefined })}
+        onClear={dq.clear}
       />
 
       {/* Stats */}

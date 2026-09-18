@@ -24,7 +24,9 @@ import {
   PageHeader,
   StatCard,
   StatusBadge,
+  DrilldownChips,
 } from "@/components/hms/shared/ui-bits";
+import { useModuleQuery } from "@/lib/hms/page-query";
 import { hasPerm, useSession } from "@/components/hms/session";
 import { useUi } from "@/lib/hms/ui-store";
 import { navigateTo, pageFromSeg } from "@/lib/hms/router";
@@ -113,6 +115,7 @@ function errMessage(e: unknown): string {
 
 export function InventoryModule() {
   const seg = useUi((s) => s.pages["inventory"]) ?? [];
+  const query = useUi((s) => s.queries["inventory"] ?? "");
   const page = pageFromSeg(seg);
 
   if (page.view === "new") return <ItemNewPage />;
@@ -124,7 +127,9 @@ export function InventoryModule() {
   }
   // ["new"] handled above; [id]-only (detail) falls back to the list — no
   // dedicated inventory detail page exists in this module.
-  return <InventoryList />;
+  // key={query}: a new drill-down URL (KPI click / direct link) remounts the
+  // list with view + stock filter applied.
+  return <InventoryList key={query} />;
 }
 
 // ───────────────────────────── list page ─────────────────────────────
@@ -133,9 +138,15 @@ function InventoryList() {
   const { user } = useSession();
   const { toast } = useToast();
   const canManage = hasPerm(user, PERMISSIONS.inventory_manage satisfies Permission);
+
+  // KPI drill-down (e.g. #/inventory?view=items&stock=low): validated against
+  // the module's tabs / filter options, then applied once on mount.
+  const dq = useModuleQuery("inventory");
+  const viewParam = ["items", "movements", "suppliers"].find((v) => v === dq.params.view?.toLowerCase());
+  const stockParam = dq.params.stock?.toLowerCase() === "low" ? "low" : undefined;
   const canSupplier = hasPerm(user, PERMISSIONS.purchases_manage satisfies Permission);
 
-  const [tab, setTab] = useState("items");
+  const [tab, setTab] = useState(viewParam ?? "items");
 
   // Items
   const [items, setItems] = useState<ItemRow[] | null>(null);
@@ -373,6 +384,15 @@ function InventoryList() {
         }
       />
 
+      <DrilldownChips
+        chips={[
+          ...(viewParam && viewParam !== "items" ? [{ key: "view", label: "View", value: humanize(viewParam) }] : []),
+          ...(stockParam ? [{ key: "stock", label: "Stock", value: "Low stock only" }] : []),
+        ]}
+        onRemove={(key) => dq.apply({ [key]: undefined })}
+        onClear={dq.clear}
+      />
+
       <div className="grid gap-4 sm:grid-cols-3 mb-5">
         <StatCard title="Total items" value={stats ? stats.total : "—"} sub="Active items" icon={<Boxes className="h-5 w-5" />} loading={!stats} />
         <StatCard title="Low stock" value={stats ? stats.lowStock : "—"} sub="At or below minimum" icon={<AlertTriangle className="h-5 w-5" />} tone={stats && stats.lowStock > 0 ? "warning" : "default"} loading={!stats} />
@@ -415,6 +435,7 @@ function InventoryList() {
               searchPlaceholder="Search SKU or name…"
               emptyTitle="No inventory items match"
               exportName="inventory"
+              initialFilters={stockParam ? { low: stockParam, status: "ACTIVE" } : undefined}
               filters={[
                 {
                   key: "low",

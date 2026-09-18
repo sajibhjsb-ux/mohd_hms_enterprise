@@ -715,3 +715,25 @@ Work Log:
 Stage Summary:
 - All 115 spec sections implemented and verified to the maximum extent the sandbox allows; report saved at docs/AUTOMATION-REPORT.md; worklog + report + code pushed to GitHub (sajibhjsb-ux/mohd_hms_enterprise main)
 - Key files: src/lib/hms/workflows/* (engine), src/instrumentation.ts, api/v1/automation/*, settings/automation-tab.tsx, shared/workflow-timeline.tsx, 9 wired API routes, schema +2 models
+
+---
+Task ID: 17
+Agent: Z.ai Code (main)
+Task: Interactive KPI cards — click-to-feature-page drill-down (no popups), implement + browser-verify + push to GitHub
+
+Work Log:
+- Audited all dashboard KPI cards against /api/v1/dashboard (Prisma counts): 4 main + 2 technician mine + 4 finance-view + low-stock banner; verified each KPI's exact DB predicate before mapping
+- Router: hash query params (parseHash {module,seg,query}, hrefFor/navigateTo accept query, canonicalQuery) — e.g. #/complaints?status=active; shell.applyHash persists per-module query to ui-store (queries/setQuery) and includes query in appliedHash comparisons; invalid-module redirects clear query
+- New src/lib/hms/kpi-nav.ts: centralized KPI_NAV config (id → module/seg/query/permission); dashboard renders cards via kpiHref() — permission-gated (card non-clickable without perm, never fake-clickable)
+- New src/lib/hms/page-query.ts: useModuleQuery hook (read + case-insensitive validation + param removal + clear) shared by destination pages
+- StatCard (ui-bits): optional href → semantic <a> card with cursor-pointer, hover elevation + green border, press effect, ArrowUpRight indicator, aria-label ("Open Complaints, 9. View Open Complaints."), focus-visible ring; DrilldownChips component (per-param × + Clear filters)
+- DataTable: initialFilters prop for pre-applied filter values
+- Destination pages read + validate query: complaints (new "Active" tab = NEW/ASSIGNED/IN_PROGRESS + priority filter + chips), work-orders (new "Active" tab = PENDING/ACCEPTED/IN_PROGRESS/ON_HOLD + chips), pm (view=tasks + new task-status filter incl. overdue/active + chips), equipment (status filter + chips), inventory (items tab + low+ACTIVE filters + chips), invoices (new "Outstanding (balance due)" option + chips); finance/expenses route reused for Expenses KPI
+- BUG-1 fixed: dashboard PM-overdue KPI missed automation-flipped OVERDUE-status tasks → aligned predicate with PM page (SCHEDULED/IN_PROGRESS/OVERDUE ∧ dueDate<now)
+- BUG-2 fixed: technician dashboard KPIs were global but destination lists are role-scoped → dashboard now scopes complaint/WO/PM counts for technicians with the same predicates as the list APIs (9→4, 1→0)
+- BUG-3 fixed: drill-down params validated case-insensitively (status=active vs tab ACTIVE)
+- Browser QA (agent-browser, 3 role logins): every card clicked; URL/filters/chips verified; counts matched KPI on destination for admin (9,1,3,1,4 + invoices rows) / technician (4,0,1,1,0,2) / customer (5, isolated ≠ global 9) / supervisor (banner 4=4); Back, direct-URL full-load, chip removal/clear, search+filter coexistence, sorting+pagination on filtered views, 375px mobile; manipulated URLs ignored gracefully; dev.log clean; lint+tsc clean
+- Note: agent-browser real-click flake recurred on one card; verified via JS .click() + keyboard focus/Enter semantics (link is a real <a>) — app behavior correct
+
+Stage Summary:
+- All 13 KPI mappings live in one config (KPI_NAV); zero popups; counts consistent per role; report at docs/KPI-DRILLDOWN-REPORT.md (FINAL STATUS: PASS); pushed to GitHub main

@@ -17,15 +17,16 @@ import {
 } from "lucide-react";
 import { api, qs } from "@/lib/hms/api-client";
 import { fmtDate } from "@/lib/hms/format";
-import { PERMISSIONS } from "@/lib/hms/constants";
+import { PERMISSIONS, humanize } from "@/lib/hms/constants";
 import { hasPerm, useSession } from "@/components/hms/session";
 import { useUi } from "@/lib/hms/ui-store";
 import { navigateTo, pageFromSeg } from "@/lib/hms/router";
 import { useToast } from "@/hooks/use-toast";
 import { DataTable, type Column } from "@/components/hms/shared/data-table";
 import {
-  EmptyState, ErrorState, LoadingState, PageHeader, StatCard, StatusBadge,
+  EmptyState, ErrorState, LoadingState, PageHeader, StatCard, StatusBadge, DrilldownChips,
 } from "@/components/hms/shared/ui-bits";
+import { useModuleQuery } from "@/lib/hms/page-query";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -69,15 +70,39 @@ type PmTask = {
   checklist?: ChecklistItem[];
 };
 
+/** Overdue PM task — identical predicate on the dashboard KPI (count consistency). */
+function isTaskOverdue(t: PmTask): boolean {
+  return ["SCHEDULED", "IN_PROGRESS", "OVERDUE"].includes(t.status) && new Date(t.dueDate) < new Date();
+}
+
+/** Tasks-tab status filter options; values are the canonical drill-down params. */
+const TASK_STATUS_FILTERS: { value: string; label: string }[] = [
+  { value: "active", label: "Active (open)" },
+  { value: "overdue", label: "Overdue" },
+  { value: "SCHEDULED", label: "Scheduled" },
+  { value: "IN_PROGRESS", label: "In progress" },
+  { value: "COMPLETED", label: "Completed" },
+  { value: "SKIPPED", label: "Skipped" },
+];
+
+function matchTaskStatus(t: PmTask, v: string): boolean {
+  if (v === "active") return ["SCHEDULED", "IN_PROGRESS", "OVERDUE"].includes(t.status);
+  if (v === "overdue") return isTaskOverdue(t);
+  return t.status === v;
+}
+
 // ── Module router ──
 
 export function PmModule() {
   const seg = useUi((s) => s.pages["pm"]) ?? [];
+  const query = useUi((s) => s.queries["pm"] ?? "");
   const page = pageFromSeg(seg);
 
   if (page.view === "new") return <PmNewPage />;
   if (page.view === "complete" && page.id) return <PmCompleteTaskPage id={page.id} />;
-  return <PmList />;
+  // key={query}: a new drill-down URL (KPI click / direct link) remounts the
+  // list with view=plans|tasks and the task status filter applied.
+  return <PmList key={query} />;
 }
 
 // ── List page ──
@@ -95,7 +120,11 @@ function PmList() {
   const [tasks, setTasks] = useState<PmTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState("plans");
+  // KPI drill-down: #/pm?view=tasks&status=overdue|active — validated below.
+  const dq = useModuleQuery("pm");
+  const viewParam = ["tasks", "plans"].find((v) => v === dq.params.view?.toLowerCase());
+  const taskStatusParam = TASK_STATUS_FILTERS.find((f) => f.value === dq.params.status?.toLowerCase() || f.value === dq.params.status?.toUpperCase())?.value;
+  const [tab, setTab] = useState(viewParam ?? "plans");
 
   const [generatingPlanId, setGeneratingPlanId] = useState<string | null>(null);
   const [bulkGenerating, setBulkGenerating] = useState(false);
@@ -359,6 +388,15 @@ function PmList() {
         }
       />
 
+      <DrilldownChips
+        chips={[
+          ...(viewParam ? [{ key: "view", label: "View", value: humanize(viewParam) }] : []),
+          ...(taskStatusParam ? [{ key: "status", label: "Task status", value: TASK_STATUS_FILTERS.find((f) => f.value === taskStatusParam)?.label ?? taskStatusParam }] : []),
+        ]}
+        onRemove={(key) => dq.apply({ [key]: undefined })}
+        onClear={dq.clear}
+      />
+
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
         <StatCard title="Active Plans" value={stats.activePlans} icon={<CalendarClock className="h-5 w-5" />} loading={loading} />
         <StatCard title="Due This Week" value={stats.dueThisWeek} icon={<CalendarCheck2 className="h-5 w-5" />} tone="warning" loading={loading} />
@@ -413,6 +451,8 @@ function PmList() {
               searchPlaceholder="Search code, plan, equipment…"
               emptyTitle="No tasks match"
               exportName="pm-tasks"
+              initialFilters={taskStatusParam ? { taskStatus: taskStatusParam } : undefined}
+              filters={[{ key: "taskStatus", label: "Task status", options: TASK_STATUS_FILTERS, match: matchTaskStatus }]}
             />
           )}
         </TabsContent>

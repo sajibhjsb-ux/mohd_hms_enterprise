@@ -11,29 +11,46 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { DataTable, type Column } from "@/components/hms/shared/data-table";
-import { PageHeader, StatCard, StatusBadge, LoadingState, EmptyState, ErrorState } from "@/components/hms/shared/ui-bits";
+import { PageHeader, StatCard, StatusBadge, LoadingState, EmptyState, ErrorState, DrilldownChips } from "@/components/hms/shared/ui-bits";
 import { api, qs, ClientApiError } from "@/lib/hms/api-client";
 import { useSession, hasPerm } from "@/components/hms/session";
 import { useUi } from "@/lib/hms/ui-store";
 import { navigateTo, pageFromSeg } from "@/lib/hms/router";
+import { useModuleQuery } from "@/lib/hms/page-query";
 import { money, fmtDate } from "@/lib/hms/format";
-import { PERMISSIONS } from "@/lib/hms/constants";
+import { PERMISSIONS, humanize } from "@/lib/hms/constants";
 import { CircleDollarSign, Plus, TriangleAlert, Wallet } from "lucide-react";
 import { InvoiceNewPage } from "./new-page";
 import { InvoiceDetailPage } from "./detail-page";
 import { InvoicePaymentPage } from "./payment-page";
 import type { InvoiceRow } from "./shared";
 
+/** Status filter options — "outstanding" is the drill-down view for any
+ *  invoice with a balance due (SENT | PARTIALLY_PAID | OVERDUE), matching the
+ *  dashboard "Outstanding" KPI (total invoiced − collected). */
+const STATUS_OPTIONS: { value: string; label: string }[] = [
+  { value: "outstanding", label: "Outstanding (balance due)" },
+  ...["DRAFT", "SENT", "PARTIALLY_PAID", "PAID", "OVERDUE", "CANCELLED"].map((s) => ({ value: s, label: s.replaceAll("_", " ") })),
+];
+
+function matchInvoiceStatus(r: InvoiceRow, v: string): boolean {
+  if (v === "outstanding") return ["SENT", "PARTIALLY_PAID", "OVERDUE"].includes(r.status);
+  return r.status === v;
+}
+
 // ── Module router ──
 
 export function InvoicesModule() {
   const seg = useUi((s) => s.pages["invoices"]) ?? [];
+  const query = useUi((s) => s.queries["invoices"] ?? "");
   const page = pageFromSeg(seg);
 
   if (page.view === "new") return <InvoiceNewPage />;
   if (page.view === "payment" && page.id) return <InvoicePaymentPage id={page.id} />;
   if (page.view === "detail" && page.id) return <InvoiceDetailPage id={page.id} />;
-  return <InvoicesList />;
+  // key={query}: a new drill-down URL (KPI click / direct link) remounts the
+  // list with the query applied as its initial filter state.
+  return <InvoicesList key={query} />;
 }
 
 // ── List page ──
@@ -41,6 +58,11 @@ export function InvoicesModule() {
 function InvoicesList() {
   const { user } = useSession();
   const canManage = hasPerm(user, PERMISSIONS.invoices_manage);
+
+  // KPI drill-down (e.g. #/invoices?status=outstanding|PAID): validated against
+  // the status filter options, then applied once on mount.
+  const dq = useModuleQuery("invoices");
+  const statusParam = STATUS_OPTIONS.find((o) => o.value.toLowerCase() === dq.params.status?.toLowerCase())?.value;
 
   // All page navigation flows through the hash router (URL + Back/Forward).
   const openPage = useCallback((seg: string[]) => navigateTo("invoices", seg), []);
@@ -94,6 +116,12 @@ function InvoicesList() {
         ) : null}
       />
 
+      <DrilldownChips
+        chips={statusParam ? [{ key: "status", label: "Status", value: STATUS_OPTIONS.find((o) => o.value === statusParam)?.label ?? humanize(statusParam) }] : []}
+        onRemove={(key) => dq.apply({ [key]: undefined })}
+        onClear={dq.clear}
+      />
+
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
         <StatCard title="Outstanding" value={money(meta.outstandingCents)} sub="Sent, partial & overdue" icon={<Wallet className="h-5 w-5" />} loading={loading} />
         <StatCard title="Overdue invoices" value={meta.overdueCount} icon={<TriangleAlert className="h-5 w-5" />} tone={meta.overdueCount > 0 ? "danger" : "success"} loading={loading} />
@@ -117,11 +145,8 @@ function InvoicesList() {
           rowKey={(r) => r.id}
           onRowClick={(r) => openPage([r.id])}
           searchPlaceholder="Search invoices…"
-          filters={[{
-            key: "status", label: "Status",
-            options: ["DRAFT", "SENT", "PARTIALLY_PAID", "PAID", "OVERDUE", "CANCELLED"].map((s) => ({ value: s, label: s.replaceAll("_", " ") })),
-            match: (r, v) => r.status === v,
-          }]}
+          initialFilters={statusParam ? { status: statusParam } : undefined}
+          filters={[{ key: "status", label: "Status", options: STATUS_OPTIONS, match: matchInvoiceStatus }]}
           exportName="invoices"
           emptyTitle="No invoices match"
         />

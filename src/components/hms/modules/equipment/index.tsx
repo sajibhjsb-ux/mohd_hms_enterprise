@@ -20,8 +20,9 @@ import { useUi } from "@/lib/hms/ui-store";
 import { navigateTo, pageFromSeg } from "@/lib/hms/router";
 import { useToast } from "@/hooks/use-toast";
 import { DataTable, type Column } from "@/components/hms/shared/data-table";
-import { PageHeader, StatCard, StatusBadge, LoadingState, ErrorState } from "@/components/hms/shared/ui-bits";
-import { PERMISSIONS } from "@/lib/hms/constants";
+import { PageHeader, StatCard, StatusBadge, LoadingState, ErrorState, DrilldownChips } from "@/components/hms/shared/ui-bits";
+import { PERMISSIONS, humanize } from "@/lib/hms/constants";
+import { useModuleQuery } from "@/lib/hms/page-query";
 import { fmtDate } from "@/lib/hms/format";
 import { Button } from "@/components/ui/button";
 import {
@@ -82,6 +83,7 @@ function EquipmentDeepLinkResolver() {
 
 export function EquipmentModule() {
   const seg = useUi((s) => s.pages["equipment"]) ?? [];
+  const query = useUi((s) => s.queries["equipment"] ?? "");
   const page = pageFromSeg(seg);
 
   const content = (() => {
@@ -89,7 +91,9 @@ export function EquipmentModule() {
     if (page.view === "detail" && page.id) return <EquipmentDetailPage id={page.id} />;
     if (page.view === "edit" && page.id) return <EquipmentEditPage id={page.id} />;
     if (page.view === "label" && page.id) return <EquipmentLabelPage id={page.id} />;
-    return <EquipmentList />;
+    // key={query}: a new drill-down URL (KPI click / direct link) remounts the
+    // list with the query applied as its initial filter state.
+    return <EquipmentList key={query} />;
   })();
 
   return (
@@ -108,6 +112,13 @@ function EquipmentList() {
   const canCreate = hasPerm(user, PERMISSIONS.equipment_create);
   const canUpdate = hasPerm(user, PERMISSIONS.equipment_update);
   const canDelete = hasPerm(user, PERMISSIONS.equipment_delete);
+
+  // KPI drill-down (e.g. #/equipment?status=UNDER_MAINTENANCE): validated
+  // against the table's filter option values, then applied once on mount.
+  const dq = useModuleQuery("equipment");
+  const STATUS_VALUES = ["ACTIVE", "UNDER_MAINTENANCE", "RETIRED"];
+  const statusParam = STATUS_VALUES.find((s) => s === dq.params.status?.toUpperCase());
+  const initialFilters = statusParam ? { status: statusParam } : undefined;
 
   const [rows, setRows] = useState<EquipmentRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -222,6 +233,12 @@ function EquipmentList() {
         }
       />
 
+      <DrilldownChips
+        chips={statusParam ? [{ key: "status", label: "Status", value: statusParam === "UNDER_MAINTENANCE" ? "Under maintenance" : humanize(statusParam) }] : []}
+        onRemove={(key) => dq.apply({ [key]: undefined })}
+        onClear={dq.clear}
+      />
+
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
         <StatCard title="Units" value={rows.length} icon={<Package className="h-5 w-5" />} loading={loading} />
         <StatCard title="Active" value={activeCount} tone="success" loading={loading} />
@@ -238,6 +255,7 @@ function EquipmentList() {
           columns={columns}
           rows={rows}
           rowKey={(r) => r.id}
+          initialFilters={initialFilters}
           onRowClick={(r) => navigateTo("equipment", [r.id])}
           searchPlaceholder="Search tag, name, serial, manufacturer…"
           filters={[

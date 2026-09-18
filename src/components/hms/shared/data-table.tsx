@@ -26,6 +26,8 @@ type Props<T> = {
   rowKey: (row: T) => string;
   searchPlaceholder?: string;
   filters?: { key: string; label: string; options: { value: string; label: string }[]; match: (row: T, value: string) => boolean }[];
+  /** Pre-applied filter values (KPI drill-down); must match `filters` option values. */
+  initialFilters?: Record<string, string>;
   onRowClick?: (row: T) => void;
   emptyTitle?: string;
   emptyHint?: string;
@@ -35,11 +37,11 @@ type Props<T> = {
 };
 
 export function DataTable<T>({
-  columns, rows, rowKey, searchPlaceholder = "Search…", filters = [], onRowClick,
+  columns, rows, rowKey, searchPlaceholder = "Search…", filters = [], initialFilters, onRowClick,
   emptyTitle = "No records found", emptyHint, toolbarExtra, exportName, pageSizeDefault = 10,
 }: Props<T>) {
   const [search, setSearch] = useState("");
-  const [filterVals, setFilterVals] = useState<Record<string, string>>({});
+  const [filterVals, setFilterVals] = useState<Record<string, string>>(initialFilters ?? {});
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [page, setPage] = useState(1);

@@ -12,6 +12,7 @@ import { StatCard, PageHeader, StatusBadge, ErrorState } from "@/components/hms/
 import { api, ClientApiError } from "@/lib/hms/api-client";
 import { useSession } from "@/components/hms/session";
 import { navigateTo } from "@/lib/hms/router";
+import { kpiHref, kpiNavigate } from "@/lib/hms/kpi-nav";
 import { money, fmtDate, fmtDateTime } from "@/lib/hms/format";
 import { humanize } from "@/lib/hms/constants";
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis, PieChart, Pie, Legend } from "recharts";
@@ -73,27 +74,27 @@ export function DashboardModule() {
         actions={<Button variant="outline" size="sm" onClick={load}>Refresh</Button>}
       />
 
-      {/* KPI row */}
+      {/* KPI row — every card drills down to its feature page (kpi-nav.ts); no popups. */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard title="Open Complaints" value={k?.openComplaints ?? 0} sub={k?.urgentComplaints ? `${k.urgentComplaints} urgent` : "No urgent items"} icon={<AlertTriangle className="h-5 w-5" />} tone={k?.urgentComplaints ? "danger" : "default"} loading={loading} />
-        <StatCard title="Active Work Orders" value={k?.activeWOs ?? 0} sub={k?.pendingWOs ? `${k.pendingWOs} awaiting start` : "All underway"} icon={<ClipboardList className="h-5 w-5" />} loading={loading} />
-        <StatCard title="PM Due / Overdue" value={k?.overduePm ?? 0} icon={<CalendarClock className="h-5 w-5" />} tone={(k?.overduePm ?? 0) > 0 ? "warning" : "success"} loading={loading} />
-        <StatCard title="Equipment Down" value={k?.equipmentDown ?? 0} icon={<Wrench className="h-5 w-5" />} tone={(k?.equipmentDown ?? 0) > 0 ? "warning" : "success"} loading={loading} />
+        <StatCard title="Open Complaints" value={k?.openComplaints ?? 0} sub={k?.urgentComplaints ? `${k.urgentComplaints} urgent` : "No urgent items"} icon={<AlertTriangle className="h-5 w-5" />} tone={k?.urgentComplaints ? "danger" : "default"} loading={loading} href={kpiHref("openComplaints", user)} />
+        <StatCard title="Active Work Orders" value={k?.activeWOs ?? 0} sub={k?.pendingWOs ? `${k.pendingWOs} awaiting start` : "All underway"} icon={<ClipboardList className="h-5 w-5" />} loading={loading} href={kpiHref("activeWOs", user)} />
+        <StatCard title="PM Due / Overdue" value={k?.overduePm ?? 0} icon={<CalendarClock className="h-5 w-5" />} tone={(k?.overduePm ?? 0) > 0 ? "warning" : "success"} loading={loading} href={kpiHref("overduePm", user)} />
+        <StatCard title="Equipment Down" value={k?.equipmentDown ?? 0} icon={<Wrench className="h-5 w-5" />} tone={(k?.equipmentDown ?? 0) > 0 ? "warning" : "success"} loading={loading} href={kpiHref("equipmentDown", user)} />
       </div>
 
       {/* Role extras */}
       {user?.role === "TECHNICIAN" && data?.mine ? (
         <div className="grid grid-cols-2 gap-3">
-          <StatCard title="My Work Orders" value={data.mine.workOrders} icon={<ClipboardList className="h-5 w-5" />} loading={loading} />
-          <StatCard title="My PM Tasks" value={data.mine.pmTasks} icon={<CalendarClock className="h-5 w-5" />} loading={loading} />
+          <StatCard title="My Work Orders" value={data.mine.workOrders} icon={<ClipboardList className="h-5 w-5" />} loading={loading} href={kpiHref("myWorkOrders", user)} />
+          <StatCard title="My PM Tasks" value={data.mine.pmTasks} icon={<CalendarClock className="h-5 w-5" />} loading={loading} href={kpiHref("myPmTasks", user)} />
         </div>
       ) : null}
       {isFinanceView && data.financial ? (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <StatCard title="Total Invoiced" value={money(data.financial.invoiced)} icon={<Receipt className="h-5 w-5" />} loading={loading} />
-          <StatCard title="Collected" value={money(data.financial.collected)} icon={<Wallet className="h-5 w-5" />} tone="success" loading={loading} />
-          <StatCard title="Outstanding" value={money(data.financial.outstanding)} icon={<FileWarning className="h-5 w-5" />} tone={(data.financial.outstanding ?? 0) > 0 ? "warning" : "success"} loading={loading} />
-          <StatCard title="Expenses" value={money(data.financial.expenses)} icon={<TrendingUp className="h-5 w-5" />} loading={loading} />
+          <StatCard title="Total Invoiced" value={money(data.financial.invoiced)} icon={<Receipt className="h-5 w-5" />} loading={loading} href={kpiHref("invoiced", user)} />
+          <StatCard title="Collected" value={money(data.financial.collected)} icon={<Wallet className="h-5 w-5" />} tone="success" loading={loading} href={kpiHref("collected", user)} />
+          <StatCard title="Outstanding" value={money(data.financial.outstanding)} icon={<FileWarning className="h-5 w-5" />} tone={(data.financial.outstanding ?? 0) > 0 ? "warning" : "success"} loading={loading} href={kpiHref("outstanding", user)} />
+          <StatCard title="Expenses" value={money(data.financial.expenses)} icon={<TrendingUp className="h-5 w-5" />} loading={loading} href={kpiHref("expenses", user)} />
         </div>
       ) : null}
       {!isFinanceView && (k?.lowStock ?? 0) > 0 ? (
@@ -101,7 +102,7 @@ export function DashboardModule() {
           <CardContent className="p-4 flex items-center gap-3 text-sm">
             <Boxes className="h-5 w-5 text-amber-600 shrink-0" aria-hidden />
             <span><strong>{k?.lowStock}</strong> inventory item{(k?.lowStock ?? 0) === 1 ? "" : "s"} at or below minimum stock.</span>
-            <Button size="sm" variant="outline" className="ml-auto" onClick={() => go("inventory")}>Review inventory</Button>
+            <Button size="sm" variant="outline" className="ml-auto" onClick={() => kpiNavigate("lowStock", user)}>Review low stock</Button>
           </CardContent>
         </Card>
       ) : null}

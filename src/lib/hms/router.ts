@@ -38,27 +38,49 @@ export function pageFromSeg(seg: string[]): ModulePageInfo {
   return { view: a, id: b };
 }
 
-/** Canonical hash href for a module page. */
-export function hrefFor(module: string, seg: string[] = []): string {
+/**
+ * Canonical hash href for a module page. `query` renders as URL query params
+ * after the path (e.g. #/complaints?status=active) — used for KPI drill-down.
+ */
+export function hrefFor(module: string, seg: string[] = [], query?: Record<string, string>): string {
   const clean = seg.filter((s) => s !== "").map(encodeURIComponent);
-  return `#/${module}${clean.length ? `/${clean.join("/")}` : ""}`;
+  const qs = canonicalQuery(query);
+  return `#/${module}${clean.length ? `/${clean.join("/")}` : ""}${qs ? `?${qs}` : ""}`;
 }
 
-/** Parse a location.hash into a route target (null when absent/unparsable). */
-export function parseHash(hash: string): { module: string; seg: string[] } | null {
+/** Encode a query object into a canonical URLSearchParams string (stable order/encoding). */
+export function canonicalQuery(query?: Record<string, string>): string {
+  if (!query) return "";
+  const sp = new URLSearchParams();
+  for (const [k, v] of Object.entries(query)) {
+    if (v !== undefined && v !== null && v !== "") sp.set(k, String(v));
+  }
+  return sp.toString();
+}
+
+/** Parse "a=1&b=2" into a plain object (empty string values dropped). */
+export function parseQueryParams(query: string): Record<string, string> {
+  if (!query) return {};
+  return Object.fromEntries(new URLSearchParams(query));
+}
+
+/** Parse a location.hash into a route target (null when absent/unparsable).
+ *  Query params after "?" are returned raw (path segments never contain "?"). */
+export function parseHash(hash: string): { module: string; seg: string[]; query: string } | null {
   const h = hash.replace(/^#\/?/, "").trim();
   if (!h) return null;
-  const parts = h.split("/").map(decodeURIComponent).filter((s) => s !== "");
+  const [path, query = ""] = h.split("?");
+  const parts = path.split("/").map(decodeURIComponent).filter((s) => s !== "");
   if (parts.length === 0) return null;
   const [module, ...seg] = parts;
   if (!/^[a-z][a-z0-9-]*$/i.test(module)) return null;
-  return { module, seg };
+  return { module, seg, query };
 }
 
 /** Navigate by assigning location.hash — pushes a history entry (Back works). */
-export function navigateTo(module: string, seg: string[] = []): void {
+export function navigateTo(module: string, seg: string[] = [], query?: Record<string, string>): void {
   if (typeof window === "undefined") return;
-  const next = hrefFor(module, seg);
+  const next = hrefFor(module, seg, query);
   if (window.location.hash === next) {
     // Same URL. Still re-run the route handler so the dirty-form guard can
     // (re)open when the user insists on leaving a dirty page.
