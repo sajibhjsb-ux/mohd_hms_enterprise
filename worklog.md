@@ -847,3 +847,19 @@ Work Log:
 Stage Summary:
 - Loading splash now uses the official logo — brand is now consistent across every surface: splash (gate.tsx), login screen, app header, PWA icons, PDF branding.
 - File changed: src/components/hms/gate.tsx only (additive swap of one div → next/image).
+
+---
+Task ID: 22
+Agent: Z.ai Code (main orchestrator)
+Task: Remove "Show demo accounts" from the login page (user request)
+
+Work Log:
+- src/components/hms/login-screen.tsx: deleted DEMO_ACCOUNTS constant (7 seeded emails/roles), showDemo state, the "Show demo accounts / Hide" toggle button, and the collapsible demo-accounts panel (which also displayed the shared password hint "Password@123").
+- Kept the "Forgot password?" link (container changed justify-between → single-child left align).
+- Security side-benefit: the shared demo password hint is no longer exposed on the public login screen.
+- Dev server had died mid-task (background job killed with shell session); restarted detached via setsid. Browser session also reset (agent-browser close --all) after the earlier CDP script closed it.
+- Verified in real browser: logged out via POST /api/v1/auth/logout → login page shows Email/Password/Sign in + "Forgot password?" ONLY (screenshot, no demo toggle/panel); regression check — signed in as admin@mohdhms.com via the real UI form → dashboard loads fine. eslint clean; grep confirms zero remaining references (DEMO_ACCOUNTS/showDemo/demo-accounts).
+
+Stage Summary:
+- Login page is production-clean: no demo account shortcuts or password hints on the public screen; auth flow unchanged and browser-verified.
+- File changed: src/components/hms/login-screen.tsx only.

@@ -11,23 +11,12 @@ import { ClientApiError, api } from "@/lib/hms/api-client";
 import { useSession } from "./session";
 import { Loader2, LogIn, ShieldCheck, Wrench, ClipboardList, FileText } from "lucide-react";
 
-const DEMO_ACCOUNTS = [
-  { email: "admin@mohdhms.com", role: "Super Admin" },
-  { email: "operations@mohdhms.com", role: "Admin" },
-  { email: "supervisor@mohdhms.com", role: "Supervisor" },
-  { email: "ahmad.tech@mohdhms.com", role: "Technician" },
-  { email: "finance@mohdhms.com", role: "Finance" },
-  { email: "hr@mohdhms.com", role: "HR" },
-  { email: "customer1@demo.my", role: "Customer" },
-];
-
 export function LoginScreen() {
   const { signIn } = useSession();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showDemo, setShowDemo] = useState(false);
   const [forgotOpen, setForgotOpen] = useState(false);
   const [forgotEmail, setForgotEmail] = useState("");
   const [forgotMsg, setForgotMsg] = useState<string | null>(null);
@@ -134,32 +123,11 @@ export function LoginScreen() {
                 {busy ? <Loader2 className="h-4 w-4 mr-2 animate-spin" aria-hidden /> : <LogIn className="h-4 w-4 mr-2" aria-hidden />}
                 {busy ? "Signing in…" : "Sign in"}
               </Button>
-              <div className="flex items-center justify-between text-sm">
+              <div className="flex items-center text-sm">
                 <button type="button" className="text-primary hover:underline underline-offset-2" onClick={() => setForgotOpen(true)}>
                   Forgot password?
                 </button>
-                <button type="button" className="text-muted-foreground hover:text-foreground" onClick={() => setShowDemo((s) => !s)}>
-                  {showDemo ? "Hide" : "Show"} demo accounts
-                </button>
               </div>
-              {showDemo ? (
-                <div className="rounded-lg border bg-muted/40 p-3 space-y-1.5" data-testid="demo-accounts">
-                  <p className="text-xs font-medium text-muted-foreground">Demo accounts — password: <code className="font-mono">Password@123</code></p>
-                  <div className="grid grid-cols-1 gap-1">
-                    {DEMO_ACCOUNTS.map((a) => (
-                      <button
-                        key={a.email}
-                        type="button"
-                        className="flex items-center justify-between rounded-md px-2 py-1.5 text-xs hover:bg-accent text-left"
-                        onClick={() => { setEmail(a.email); setPassword("Password@123"); }}
-                      >
-                        <span className="font-mono">{a.email}</span>
-                        <span className="text-muted-foreground">{a.role}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
             </form>
           </CardContent>
         </Card>
