@@ -832,3 +832,18 @@ Stage Summary:
 - Permissions: irms.read (staff) / irms.create (TECHNICIAN+SUPERVISOR+ADMIN+) / irms.manage (SUPERVISOR+ADMIN+) / irms.portal (CUSTOMER) — all enforced server-side, customer isolation proven.
 - Workflow DRAFT→SUBMITTED→IN_REVIEW→MANAGER_APPROVAL→(CLIENT_REVIEW)→APPROVED→ARCHIVED (+REJECTED→DRAFT) with approval records, revision snapshots, notifications, realtime events.
 - All §71 acceptance criteria verified except production-PostgreSQL provider level (sandbox SQLite, portable schema) — documented in the report.
+
+---
+Task ID: 21
+Agent: Z.ai Code (main orchestrator)
+Task: Use official brand logo on the app loading splash screen (user: "USE OFFICIAL LOGO ALSO HERE")
+
+Work Log:
+- Located the generic placeholder: src/components/hms/gate.tsx rendered a green "H" rounded square (bg-primary, animate-pulse) above "Loading MOHD.HMS Enterprise…" while the session check runs — the only remaining placeholder-branding spot (grep confirmed no other ">H<" tiles).
+- Replaced with the canonical brand asset already used by login screen + header: next/image src="/brand/logo-128.png" (64px render, h-14 w-14, rounded-full, ring/shadow to match header treatment, priority, keeps animate-pulse loading affordance).
+- Verified in real browser: plain reloads were too fast (session ~10ms) and same-URL goto was a same-document navigation, so used Python Playwright over CDP (agent-browser's Chrome, port 42233) with Network.emulateNetworkConditions (3s latency) + cache-busting query → splash captured showing the official MOHD HMS crest logo; after throttling removed, app loads to dashboard normally (no broken state).
+- eslint clean; no other files touched.
+
+Stage Summary:
+- Loading splash now uses the official logo — brand is now consistent across every surface: splash (gate.tsx), login screen, app header, PWA icons, PDF branding.
+- File changed: src/components/hms/gate.tsx only (additive swap of one div → next/image).
