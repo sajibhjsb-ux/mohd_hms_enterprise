@@ -907,3 +907,8 @@ Stage Summary:
 - New endpoints: GET /api/v1/auth/google, GET /api/v1/auth/google/callback (public, rate-limited, audited). New env knobs (all optional): GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI, GOOGLE_AUTH_ENDPOINT, GOOGLE_TOKEN_ENDPOINT, GOOGLE_USERINFO_ENDPOINT. New User fields: googleId (@unique), avatarUrl.
 - Guarantees: password login/emails/status/dates/PDF flows untouched; no second company/config source; no open registration (existing accounts only, linked by Google-verified email); RBAC unchanged (Google session == password session).
 - mini-services/mock-google-idp is a QA double only — never point production at it.
+
+Task 24 addendum (post-rebase integration):
+- Remote gained 3312282 (path routing via History API + catch-all SPA [[...slug]] + postgresql provider note) and c9b559f (document header task) while this task was in flight; rebased cleanly.
+- Follow-up fix: OAuth success redirect updated from `/#/dashboard` (old hash routing) to `/dashboard` (new path routing). Re-verified end-to-end after rebase with the mock IdP: curl chain → 307 `/dashboard`, session authenticated; browser click-through → lands on `/dashboard` as SUPER_ADMIN (google-login-path-routing.png). Clean-env bounce re-verified: `/api/v1/auth/google` → `/?googleError=not_configured`.
+- DB test artifacts from the re-verification round cleaned again (admin.googleId → null, LOGIN_GOOGLE* audits removed). Dev server left running clean on :3000.

@@ -99,7 +99,7 @@ export async function GET(req: NextRequest) {
   const { token, expiresAt } = await createSession(user.id, ip, req.headers.get("user-agent") ?? undefined);
   await audit({ actorId: user.id, actorEmail: user.email, action: "LOGIN_GOOGLE", resourceType: "AUTH", ip });
 
-  const res = NextResponse.redirect(new URL("/#/dashboard", externalOrigin(req)));
+  const res = NextResponse.redirect(new URL("/dashboard", externalOrigin(req)));
   res.cookies.set(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
