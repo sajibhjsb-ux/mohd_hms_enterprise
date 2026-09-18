@@ -583,3 +583,112 @@ Stage Summary:
 - Floating nav is now a compact 1080px centered capsule under the header; all scroll/drag/click behavior intact; more overflow handled by arrows/drag/wheel as before
 - Files changed: src/components/hms/shell/floating-nav.tsx (one className edit)
 - Note: one flaky eval during testing (click mid smooth-scroll did not land); clean retry passed — not an app defect
+
+---
+Task ID: 2-b
+Agent: Explore (data/RBAC layer)
+Task: Map Prisma models, API routes, RBAC keys, service layer
+
+Work Log:
+- Read worklog.md (all prior entries) before starting; research-only task — zero code modified.
+- prisma/schema.prisma (770 L): catalogued all 42 models, id conventions (cuid() PKs + unique business `code` columns), status enums, relations, *Cents money fields. Noted datasource is **sqlite** (db/custom.db), not PostgreSQL.
+- Traced document numbering: `nextNumber(prefix)` in src/lib/hms/services.ts → Counter table upsert keyed `PREFIX-YYYY` → `PREFIX-YYYY-NNNN`; grepped all 18 prefixes (CPT/WO/PM/PMT/PRJ/INS/ITM/PO/QTN/INV/PAY/TRX/EXP/EQ/EMP/TEC/CUS/VEH/SUP) at their call sites in API routes.
+- Read src/lib/hms/api.ts (handler wrapper: requestId, ZodError mapping, ApiError/Errors, ok/okList/parseBody/listQuery/pagedMeta, `{permission}` opt → roleCan), rbac.ts (can/roleCan/isStaff/scopeFilter), auth.ts (scrypt, DB sessions in HttpOnly cookie `hms_session`, 7d TTL, sliding renewal, SessionUser shape incl. permissions), constants.ts (full PERMISSIONS catalog — 47 keys — plus ROLE_PERMISSIONS matrix per 7 roles, workflow transition maps, STATUS_TONE).
+- Inventoried every route under src/app/api: grepped all route.ts for exported methods + permission opts; read dynamic [id] routes to confirm the local `withId(permission, fn)` bridge (awaits Next-16 Promise params, delegates to handler). Noted two-tier RBAC on transition routes (outer *read* permission + inner roleCan per action: WO accept/start/hold/resume/complete/cancel; PO approve/reject via purchases_approve; PM execute vs manage; IRMS submit=inspector vs approve=manage).
+- Read services.ts (audit/notify/notifyRole/nextNumber), rate-limit.ts (in-memory sliding window; login 8/5min per IP+email), complaints/_lib.ts + work-orders/_lib.ts (scope helpers complaintScopeWhere/assertViewComplaint/assertViewWorkOrder, recalcWorkOrderTotals, assertWoTransition).
+- Frontend: api-client.ts (api.get/post/patch/put/del, credentials:"same-origin", ApiEnvelope/ClientApiError), session.tsx (SessionProvider context + useSession + hasPerm, 4-min heartbeat to /api/v1/auth/session), registry.tsx (MODULES with permissions/roles arrays), shell.tsx (MODULES.filter → visible nav; hashchange dirty guard → "Leave with unsaved changes?" Dialog), ui-store.ts (zustand: activeModule/pages/pageDirty/deepLink), router.ts (hash router helpers, SUFFIX_VIEWS), use-draft.ts (useDraft localStorage `hms:draft:{formKey}` + debounced server backup + useDirtyGuard), drafts route (Draft table upsert, 100KB cap, password/token rejected).
+- Redis/caching: grepped repo for redis|ioredis|upstash|cache|Cache-Control|revalidate — NO Redis exists (no dependency, no client); only in-memory rate limiter and `Cache-Control: no-store` on CSV export. Recorded as a spec-vs-reality deviation.
+- Verified db.ts Prisma singleton and seed.ts demo accounts (admin@/operations@/supervisor@/finance@/hr@mohdhms.com + 3 customer portal users, CUS-000N seed codes vs API's CUS-2025-NNNN).
+
+Stage Summary:
+- 42 Prisma models (SQLite); cuid() PKs; business codes via `nextNumber(prefix)` = `PREFIX-YYYY-NNNN` (Counter table), 18 prefixes; money as integer cents; no Prisma enums — statuses are plain strings + constants.ts arrays.
+- Auth is DB-session (opaque token, HttpOnly cookie), NOT JWT; SessionUser carries `permissions: Permission[]`.
+- RBAC: `handler(fn, { permission })` from `@/lib/hms/api` + `roleCan/can` from `@/lib/hms/rbac`; dynamic routes bridge Next-16 Promise params via local `withId(permission, fn)`; transition routes use outer read-perm + inner per-action gates; catalog = 47 keys in `src/lib/hms/constants.ts` PERMISSIONS + ROLE_PERMISSIONS (SUPER_ADMIN/ADMIN=all).
+- Client: fetch wrapper `src/lib/hms/api-client.ts` (no auto-401 handling; heartbeat refresh via SessionProvider); client RBAC = React Context `useSession()` + `hasPerm()`; module visibility = registry.tsx permissions/roles filtered in shell.tsx.
+- No Redis / no cache invalidation layer (in-memory rate-limit only). Drafts: localStorage + Draft table backup via /api/v1/drafts; dirty guard = ui-store.pageDirty + shell hashchange Dialog + useDraft beforeunload.
+
+---
+Task ID: 1
+Agent: Explore (routing/shell)
+Task: Map hash-router/shell architecture for full-page route extension
+
+Work Log:
+- Read worklog.md (all prior task entries), then audited: src/lib/hms/router.ts (102 L), src/lib/hms/ui-store.ts (47 L), src/components/hms/shell.tsx (336 L), shell/{header,floating-nav,global-search,qr-dialog}.tsx, src/app/page.tsx, gate.tsx, session.tsx, registry.tsx, shared/{page-shell,data-table,ui-bits}.tsx, hooks/use-draft.ts, lib/hms/api-client.ts.
+- Traced the full hash pipeline: navigateTo → location.hash → hashchange → shell onHashChange → pageDirty guard or applyHash → parseHash → useUi.setPage(module, seg) → module component switches on pageFromSeg(seg).
+- Documented the dirty-form guard end-to-end: forms call useUi.setPageDirty(draft.dirty) in a useEffect (cleanup clears on unmount); shell intercepts hashchange while pageDirty and shows "Leave with unsaved changes?" dialog; "Stay" keeps the form mounted (appliedHashRef no-op re-protects it on Back); "Leave anyway" clears pageDirty then applyHash; navigateTo re-dispatches hashchange for same-URL clicks so re-guard works.
+- Documented both representative modules (complaints, customers) incl. new/detail/edit/assign sub-pages, PageShell chrome, DataTable (client-side search/filter/sort/pagination over a single pageSize=200 fetch), useDraft autosave (localStorage + POST /api/v1/drafts, 1.2 s debounce, restore-on-consent, beforeunload guard), toast usage, success → draft.reset + setPageDirty(false) + navigateTo(module,[id]).
+- Verified deep-linking: ?resource=equipment:{qrToken} on the URL SEARCH string (not the hash) → setDeepLink + navigateTo(module); RESOURCE_ROUTES maps notification resourceType → detail-page segs; global search navigates with navigateTo(module,[id]); PageShell back links are plain hash anchors so the guard applies. Noted: ui-store.consumeDeepLink() has zero callers (token payload currently unused by modules) and hooks/use-draft.useDirtyGuard (popstate window.confirm) is dead code superseded by the shell guard.
+- Confirmed sub-routes ALREADY exist and are in production use across 13 modules (new/detail/edit/assign/adjust/payment/label/complete + prefix views like #/inventory/suppliers, #/finance/expenses, #/irms/projects/new); no application code was modified (research only).
+
+---
+Task ID: 2-a
+Agent: Explore (popup audit)
+Task: Global popup audit for NO POPUP CRUD spec §47
+
+Work Log:
+- Read worklog.md (all prior entries incl. tasks 11, 13-a…13-l page-navigation conversions, and prior Explore Task 1 routing map).
+- Swept all of src/ for popup primitives: component imports/usages of Modal/Dialog/AlertDialog/Sheet/Drawer/CommandDialog/Popover/ContextMenu/Menubar/HoverCard + state patterns (setOpen/openModal/showModal/isModalOpen/onOpenChange/setShowForm/showForm/editing/isEditing/setEditing/window.confirm/prompt).
+- Read shell.tsx, shell/header.tsx, shell/qr-dialog.tsx, shell/global-search.tsx, login-screen.tsx, registry.tsx, router.ts, ui-store.ts, page.tsx in full; snippet-verified all 15 module AlertDialogs; grepped every module/shared file for Dialog/Sheet/Drawer/Popover/modal (zero hits outside the inventoried files).
+- Confirmed Drawer/ContextMenu/Menubar/HoverCard/Popover primitives exist only as unused files in src/components/ui/ (no app usage); no "Modal" component exists anywhere.
+- Mapped the module dispatcher pattern: every module index.tsx reads useUi.pages[module] → pageFromSeg → returns dedicated page component (SUFFIX_VIEWS edit|assign|adjust|payment|label|complete + prefix views suppliers/expenses/projects/reports/leave/attendance/departments).
+- Verified dedicated-page inventory for all 20 modules (complaints new/detail/assign; work-orders new/detail with inline checklist/materials/labour; equipment new/edit/detail/label; pm new/complete; customers new/edit/detail; users new/edit; employees new/edit; technicians edit; inventory new/edit/adjust/suppliers; purchases new/detail with inline receive mode; quotations new/detail; invoices new/detail/payment; finance expenses/new; hr leave/new, attendance/id, departments/new; irms reports/new, reports/{id}, projects/new, projects/{id}; vehicles new/edit) and the QR label page (replaced former label dialog). No application code was modified (research only).
+
+Stage Summary:
+- The §47 refactor is already substantially COMPLETE: zero class-A (business form) and zero class-B (detail view) popups remain anywhere. All CRUD runs on dedicated hash-routed full pages guarded by the shell's dirty-form confirm.
+- Popup census: 24 overlay instances total — A=0, B=0, C=8 (delete/terminate confirms: customers, inventory item, inventory supplier, IRMS project, IRMS draft report, draft quotation, draft invoice, employee terminate), D=8 (status-change/dirty-guard confirms: user disable, PM skip, equipment retire ×2, vehicle retire, complaint cancel, WO cancel, shell unsaved-changes guard), E=0, F=1 (QrScanDialog — paste-token deep-link entry, no camera), G=2 (mobile "More" bottom Sheet module picker; header profile DropdownMenu), H=5 (About, Change-password, header notifications DropdownMenu, GlobalSearch CommandDialog ⌘K, login forgot-password). 22 are true modals (15 AlertDialog + 5 Dialog + 1 Sheet + 1 CommandDialog), 2 are dropdown menus.
+- Biggest module offenders: none — no module has more than 2 confirm dialogs (inventory has 2 delete confirms; equipment retire appears in both list and detail). Shell holds the 5 utility dialogs.
+- Existing full-page patterns (reuse these): hash router lib/hms/router.ts (pageFromSeg + SUFFIX_VIEWS + hrefFor/navigateTo/RESOURCE_ROUTES), zustand ui-store pages[module] segments + pageDirty, per-module index.tsx dispatcher returning <XNewPage>/<XDetailPage> etc., shared PageShell + PageHeader + useDraft autosave; dedicated QR label page (equipment/{id}/label) is the canonical former-popup→page conversion for print views.
+- Minor notes: complaints/new-page uses an inline (non-Radix) customer autocomplete dropdown (G-equivalent, not a dialog component); purchases/detail "receive" is an inline table-edit mode, not a popup; hooks/use-draft.useDirtyGuard (window.confirm on popstate) is dead code superseded by the shell guard — safe future cleanup; sign-out has NO confirmation popup (direct action).
+
+---
+Task ID: 14
+Agent: Z.ai Code (main)
+Task: 56-section NO POPUP CRUD — audit (§47) revealed conversion already implemented; gap-check + fix 3 remaining spec gaps
+
+Work Log:
+- Launched 3 parallel Explore agents (Task 1 routing/shell, 2-a popup audit, 2-b data/RBAC). Findings: hash-router SPA with full-page routes for ALL create/edit/detail flows; popup audit = 0 A/B class popups, 24 legit dialogs (8 delete-confirms, 8 short-confirms, 1 QR entry, 2 menus, 5 utility); 42 Prisma models (SQLite), 90+ API routes with handler()+permission wrapper, 47 permission keys, 7 roles
+- Gap-check vs spec found: (1) no Complaint Edit page (spec: View/Edit/Assign pages; PATCH API exists, status NEW only), (2) QR deep-link token never consumed (scan landed on register, not the asset), (3) customer detail lacked spec's tab set
+- Fix 1: NEW src/components/hms/modules/complaints/edit-page.tsx + dispatcher branch in index.tsx + Edit button on detail page (status NEW && (canUpdate || portal owner)). Snapshot-compare dirty guard, field errors, values preserved on failure, save → PATCH → detail
+- Fix 2: EquipmentDeepLinkResolver in equipment/index.tsx — subscribes to ui-store deepLink, resolves token via GET /api/v1/equipment/-/qr?token= → navigates to detail; consume only after resolution (fixed in-flight-cancel race); covers shell ?resource= flow AND QR dialog paste; error toast on unknown token
+- Fix 3: rewrote customers/detail-page.tsx with in-page Tabs: Overview/Equipment/Complaints/Work Orders/Quotations/Invoices (counts, permission-gated, lazy-loaded per tab, Loading/Empty/Error/Success states, rows link to dedicated pages)
+- Browser verification: edit route renders prefilled; Save disabled at mount; dirty guard dialog on Back (Stay keeps values / Leave anyway navigates); Save → PATCH logged → detail shows new title; deep-link URL → EQ-0008 detail + toast; QR dialog paste → EQ-0007 detail + toast; bogus token → error toast, stays put; customer tabs render with counts and all rows link cross-module; lint clean
+
+Stage Summary:
+- Spec §47 verdict: NO POPUP CRUD conversion confirmed implemented platform-wide; 3 gaps fixed and browser-verified
+- Files changed: modules/complaints/edit-page.tsx (new), modules/complaints/index.tsx, modules/complaints/detail-page.tsx, modules/equipment/index.tsx, modules/customers/detail-page.tsx (rewrite)
+- Known pre-existing quirk (documented, not a regression): after "Stay" on the guard, clicking the same back anchor again is a no-op (same-hash anchor); leaving via any different link/nav works
+
+---
+Task ID: 15
+Agent: Z.ai Code (main)
+Task: 56-section NO POPUP CRUD — full-module browser QA, data-protection, RBAC, popup re-audit, final report
+
+Work Log:
+- Complaints QA (admin): status tabs, client search ("QA test" → 1 row), row→detail, /complaints/new (customer search picker → equipment select enabled → create CPT-2026-0009 → detail), assign page (tech dropdown → Ahmad Faizal → ASSIGNED server-verified), edit page (covered in Task 14), browser Back/Forward correct
+- Work Orders QA: /work-orders/new (WO-2026-0002 created), detail inline editors: checklist add x2 + toggle, material (Ballast 36W qty 1 cost 25) added, transitions Accept → Start Work → Mark Completed (badge Completed)
+- Equipment QA: /equipment/new (EQ-2026-0005), edit (#eeq-* ids, name updated), QR label page (data-URL image), retire AlertDialog → badge Retired; deep-link + QR-dialog paths (Task 14)
+- Customers QA: /customers/new (QA customer CUS-2026-x → detail), edit page (cus-e-* ids, phone updated), list row actions View/Edit/Delete (aria-labelled), delete AlertDialog → row removed (test data cleaned)
+- Users QA: /users/new (Supervisor role created), edit page (phone saved), list actions Edit/Reset password/Disable; Disable AlertDialog → row DISABLED
+- Employees QA: /employees/new (EMP-2026-0005), edit page, Terminate confirm → TERMINATED (soft delete)
+- Technicians QA: list with stats, dedicated edit page (#/technicians/{id}/edit)
+- HR QA: overview tabs (Employees/Attendance/Leave), /hr/leave/new (scope combobox, clear 400 error "account not linked" with form preserved, then successful submission for an employee → back to list), /hr/departments/new renders
+- Inventory QA: /inventory/new (ITM-2026-0008 with useDraft autosave toast), /inventory/{id}/adjust (Receive +25 → "new balance 50 pcs" ledger entry), suppliers/new renders; movements ledger exists
+- Purchases QA: /purchases/new (supplier + line item → PO-2026-0004 draft), Submit for approval → Approve → Receive stock (inline table mode) → badge Received
+- Vehicles QA: /vehicles/new (VEH-2026-0003), edit saved, retire confirm
+- PM QA: /pm/new (plan PM-2026-0003 + 3-line checklist template), Generate → PMT-2026-0004, Start, dedicated /pm/tasks/{id}/complete page (3 Radix switches + note) → completed, back to list
+- Quotations QA: /quotations/new (live total RM 350.00), QTN-2026-0004 → Send → Approve → Convert to Invoice → INV-2026-0008 detail
+- Invoices QA: /invoices/new (validation toast "Line items required" when empty; created INV-2026-0009), Send → dedicated /invoices/{id}/payment page (pay-amount 200) → "Balance now RM 300.00 — status partially paid"
+- Finance QA: /finance/expenses/new (EXP-2026-0002), Approve from list
+- IRMS QA: /irms/projects/new (PRJ-2026-0002), /irms/reports/new (INS-2026-0002 draft → Submit for Approval → Approve)
+- Reports/Settings/Audit render + Export CSV button present; Audit Logs populated
+- DATA PROTECTION: /complaints/new filled → server draft row verified (GET /api/v1/drafts) → FULL PAGE REFRESH → form empty + "Unsubmitted draft saved" banner + Restore → title & description fully restored → Discard cleanup. Unsaved-changes guard verified in Task 14. Session heartbeat (4-min) causes no reloads (SPA stayed mounted throughout).
+- Mobile 375px: floating nav hidden, bottom nav present, /complaints/new renders single-column, list→detail navigation works, zero horizontal overflow (screenshot verified)
+- RBAC: technician ahmad.tech@mohdhms.com → exactly 7 modules (dashboard/complaints/work-orders/equipment/pm/inventory/irms), no "New Complaint" button (no complaints.create), direct URL #/users/new → redirected to dashboard (RBAC fallback); customer1@demo.my → 7 portal modules + New Complaint allowed, complaint list scoped to own 5 records, direct URL to another customer's complaint → 403 "You do not have permission" ErrorState, other customer's equipment → 404 "Equipment not found" ErrorState (existence not revealed)
+- Popup re-audit: dialog files unchanged from §47 audit baseline; new code (complaints edit-page, customers detail tabs, equipment resolver) contains ZERO dialogs; only C/D-class confirms + F QR entry + G menus + H utility dialogs remain
+- Server log: zero 5xx; the four 4xx responses were deliberate negative tests (bad QR token 404, unlinked-employee leave 400, cross-tenant complaint 403, cross-tenant equipment 404)
+- agent-browser CLI flake recurred once (real clicks silently dropped after ~45 min session); fixed by agent-browser close + reopen (same remedy as Task 11)
+
+Stage Summary:
+- ALL spec-56 sections verified by real-browser testing; every Create/View/Edit/Delete/Search/Filter/Tab/Back-Forward/Direct-URL flow exercised per module; data protection (draft-on-refresh, guard, no unexpected resets) proven; dual RBAC + tenant scoping proven server-authoritative
+- Final files changed this task set: modules/complaints/edit-page.tsx (new), modules/complaints/index.tsx, modules/complaints/detail-page.tsx, modules/equipment/index.tsx, modules/customers/detail-page.tsx
+- FINAL STATUS: PASS — ready for 12-section report

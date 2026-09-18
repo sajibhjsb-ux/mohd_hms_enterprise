@@ -37,15 +37,67 @@ import { CATEGORIES, type EquipmentRow } from "./shared";
 
 // ── Module router ──
 
+/**
+ * Consumes a pending QR deep link (shell stores it from /?resource=equipment:{token})
+ * and resolves the token to the unit's dedicated detail page — so a scan opens
+ * the exact asset, not just the register. Subscribes to the store so links set
+ * while the module is already mounted (QR dialog paste) also resolve; failures
+ * keep the user on the register with an explanatory toast.
+ */
+function EquipmentDeepLinkResolver() {
+  const { toast } = useToast();
+  // Subscribe so a link set while the module is ALREADY mounted (e.g. pasted
+  // into the QR dialog from a detail page) still triggers resolution.
+  const deepLink = useUi((s) => s.deepLink);
+  useEffect(() => {
+    if (!deepLink || deepLink.type !== "equipment" || !deepLink.token) return;
+    const token = deepLink.token;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api.get<{ equipmentId: string; assetTag: string; name: string }>(
+          `/api/v1/equipment/-/qr?token=${encodeURIComponent(token)}`
+        );
+        if (cancelled || !res.data?.equipmentId) return;
+        // Clear the link only after resolution so the in-flight effect is not
+        // cancelled by its own state update (consume → re-render → cleanup).
+        useUi.getState().consumeDeepLink();
+        toast({ title: "Equipment found", description: `${res.data.assetTag} — ${res.data.name}` });
+        navigateTo("equipment", [res.data.equipmentId]);
+      } catch (e) {
+        if (!cancelled) {
+          useUi.getState().consumeDeepLink();
+          toast({
+            title: "Scan could not be resolved",
+            description: e instanceof Error ? e.message : "This equipment token is unknown.",
+            variant: "destructive",
+          });
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [deepLink, toast]);
+  return null;
+}
+
 export function EquipmentModule() {
   const seg = useUi((s) => s.pages["equipment"]) ?? [];
   const page = pageFromSeg(seg);
 
-  if (page.view === "new") return <EquipmentNewPage />;
-  if (page.view === "detail" && page.id) return <EquipmentDetailPage id={page.id} />;
-  if (page.view === "edit" && page.id) return <EquipmentEditPage id={page.id} />;
-  if (page.view === "label" && page.id) return <EquipmentLabelPage id={page.id} />;
-  return <EquipmentList />;
+  const content = (() => {
+    if (page.view === "new") return <EquipmentNewPage />;
+    if (page.view === "detail" && page.id) return <EquipmentDetailPage id={page.id} />;
+    if (page.view === "edit" && page.id) return <EquipmentEditPage id={page.id} />;
+    if (page.view === "label" && page.id) return <EquipmentLabelPage id={page.id} />;
+    return <EquipmentList />;
+  })();
+
+  return (
+    <>
+      <EquipmentDeepLinkResolver />
+      {content}
+    </>
+  );
 }
 
 // ── List page ──

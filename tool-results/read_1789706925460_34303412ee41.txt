@@ -1,0 +1,770 @@
+     1→     1→// MOHD.HMS ENTERPRISE — Database Schema
+     2→     2→// Domains: Auth, Users, Roles, Sessions, Customers, Employees, Technicians,
+     3→     3→// Equipment, Assets, Locations, Complaints, Work Orders, PM, Inspections/IRMS,
+     4→     4→// Inventory, Suppliers, Purchases, Quotations, Invoices, Payments, Finance,
+     5→     5→// HR, Vehicles, Notifications, Documents, Settings, Audit Logs, Drafts.
+     6→     6→
+     7→     7→generator client {
+     8→     8→  provider = "prisma-client-js"
+     9→     9→}
+    10→    10→
+    11→    11→datasource db {
+    12→    12→  provider = "sqlite"
+    13→    13→  url      = env("DATABASE_URL")
+    14→    14→}
+    15→    15→
+    16→    16→// ─────────────────────────── AUTH / USERS / RBAC ───────────────────────────
+    17→    17→
+    18→    18→model User {
+    19→    19→  id            String    @id @default(cuid())
+    20→    20→  email         String    @unique
+    21→    21→  passwordHash  String
+    22→    22→  name          String
+    23→    23→  phone         String?
+    24→    24→  // SUPER_ADMIN | ADMIN | SUPERVISOR | TECHNICIAN | CUSTOMER | FINANCE | HR
+    25→    25→  role          String    @default("CUSTOMER")
+    26→    26→  status        String    @default("ACTIVE") // ACTIVE | DISABLED
+    27→    27→  emailVerified DateTime?
+    28→    28→  lastLoginAt   DateTime?
+    29→    29→  customerId    String?   @unique
+    30→    30→  customer      Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+    31→    31→  createdAt     DateTime  @default(now())
+    32→    32→  updatedAt     DateTime  @updatedAt
+    33→    33→  createdBy     String?
+    34→    34→
+    35→    35→  sessions           Session[]
+    36→    36→  passwordResets     PasswordResetToken[]
+    37→    37→  technicianProfile  TechnicianProfile?
+    38→    38→  employee           Employee?
+    39→    39→  notifications      Notification[]
+    40→    40→  auditLogs          AuditLog[]
+    41→    41→  attendance         Attendance[]
+    42→    42→
+    43→    43→  @@index([role])
+    44→    44→  @@index([status])
+    45→    45→}
+    46→    46→
+    47→    47→model Session {
+    48→    48→  id        String   @id @default(cuid())
+    49→    49→  token     String   @unique
+    50→    50→  userId    String
+    51→    51→  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+    52→    52→  expiresAt DateTime
+    53→    53→  ip        String?
+    54→    54→  userAgent String?
+    55→    55→  createdAt DateTime @default(now())
+    56→    56→  lastSeenAt DateTime @default(now())
+    57→    57→
+    58→    58→  @@index([userId])
+    59→    59→  @@index([expiresAt])
+    60→    60→}
+    61→    61→
+    62→    62→model PasswordResetToken {
+    63→    63→  id        String    @id @default(cuid())
+    64→    64→  token     String    @unique
+    65→    65→  userId    String
+    66→    66→  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+    67→    67→  expiresAt DateTime
+    68→    68→  usedAt    DateTime?
+    69→    69→  createdAt DateTime  @default(now())
+    70→    70→
+    71→    71→  @@index([userId])
+    72→    72→}
+    73→    73→
+    74→    74→model TechnicianProfile {
+    75→    75→  id             String  @id @default(cuid())
+    76→    76→  userId         String  @unique
+    77→    77→  user           User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+    78→    78→  employeeNo     String  @unique
+    79→    79→  skills         String  @default("") // comma separated
+    80→    80→  specialty      String  @default("GENERAL")
+    81→    81→  hourlyRateCents Int    @default(0)
+    82→    82→  status         String  @default("AVAILABLE") // AVAILABLE | ON_JOB | OFF_DUTY
+    83→    83→  vehicleId      String? @unique
+    84→    84→
+    85→    85→  complaints      Complaint[] @relation("assignedComplaints")
+    86→    86→  workOrders      WorkOrder[] @relation("assignedWorkOrders")
+    87→    87→  pmPlans         PmPlan[]    @relation("assignedPmPlans")
+    88→    88→  pmTasks         PmTask[]    @relation("assignedPmTasks")
+    89→    89→  inspections     InspectionReport[] @relation("inspectorReports")
+    90→    90→  vehicles        Vehicle[]   @relation("vehicleAssignee")
+    91→    91→}
+    92→    92→
+    93→    93→// ─────────────────────────── CUSTOMERS ───────────────────────────
+    94→    94→
+    95→    95→model Customer {
+    96→    96→  id            String   @id @default(cuid())
+    97→    97→  code          String   @unique
+    98→    98→  companyName   String
+    99→    99→  contactPerson String
+   100→   100→  email         String
+   101→   101→  phone         String
+   102→   102→  address       String   @default("")
+   103→   103→  city          String   @default("")
+   104→   104→  status        String   @default("ACTIVE") // ACTIVE | INACTIVE
+   105→   105→  notes         String   @default("")
+   106→   106→  createdAt     DateTime @default(now())
+   107→   107→  updatedAt     DateTime @updatedAt
+   108→   108→
+   109→   109→  portalUser  User?
+   110→   110→  equipment   Equipment[]
+   111→   111→  complaints  Complaint[]
+   112→   112→  workOrders  WorkOrder[]
+   113→   113→  quotations  Quotation[]
+   114→   114→  invoices    Invoice[]
+   115→   115→  payments    Payment[]
+   116→   116→  irmsProjects IrmsProject[]
+   117→   117→}
+   118→   118→
+   119→   119→// ─────────────────────────── HR / EMPLOYEES ───────────────────────────
+   120→   120→
+   121→   121→model Department {
+   122→   122→  id          String @id @default(cuid())
+   123→   123→  name        String @unique
+   124→   124→  description String @default("")
+   125→   125→
+   126→   126→  employees Employee[]
+   127→   127→}
+   128→   128→
+   129→   129→model Employee {
+   130→   130→  id         String    @id @default(cuid())
+   131→   131→  employeeNo String    @unique
+   132→   132→  userId     String?   @unique
+   133→   133→  user       User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+   134→   134→  firstName  String
+   135→   135→  lastName   String
+   136→   136→  departmentId String?
+   137→   137→  department Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+   138→   138→  position   String    @default("")
+   139→   139→  email      String    @default("")
+   140→   140→  phone      String    @default("")
+   141→   141→  address    String    @default("")
+   142→   142→  joinDate   DateTime?
+   143→   143→  salaryCents Int      @default(0)
+   144→   144→  status     String    @default("ACTIVE") // ACTIVE | ON_LEAVE | TERMINATED
+   145→   145→  createdAt  DateTime  @default(now())
+   146→   146→  updatedAt  DateTime  @updatedAt
+   147→   147→
+   148→   148→  leaveRequests LeaveRequest[]
+   149→   149→  attendance    Attendance[]
+   150→   150→}
+   151→   151→
+   152→   152→model Attendance {
+   153→   153→  id         String   @id @default(cuid())
+   154→   154→  employeeId String
+   155→   155→  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+   156→   156→  userId     String?
+   157→   157→  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+   158→   158→  date       DateTime
+   159→   159→  status     String   @default("PRESENT") // PRESENT | ABSENT | LEAVE | HALF_DAY
+   160→   160→  checkIn    DateTime?
+   161→   161→  checkOut   DateTime?
+   162→   162→  notes      String   @default("")
+   163→   163→
+   164→   164→  @@unique([employeeId, date])
+   165→   165→  @@index([date])
+   166→   166→}
+   167→   167→
+   168→   168→model LeaveRequest {
+   169→   169→  id         String   @id @default(cuid())
+   170→   170→  employeeId String
+   171→   171→  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+   172→   172→  type       String   @default("ANNUAL") // ANNUAL | SICK | UNPAID | OTHER
+   173→   173→  startDate  DateTime
+   174→   174→  endDate    DateTime
+   175→   175→  days       Int      @default(1)
+   176→   176→  reason     String   @default("")
+   177→   177→  status     String   @default("PENDING") // PENDING | APPROVED | REJECTED
+   178→   178→  approvedById String?
+   179→   179→  approvedAt DateTime?
+   180→   180→  createdAt  DateTime @default(now())
+   181→   181→
+   182→   182→  @@index([status])
+   183→   183→}
+   184→   184→
+   185→   185→// ─────────────────────────── LOCATIONS / EQUIPMENT ───────────────────────────
+   186→   186→
+   187→   187→model Location {
+   188→   188→  id          String @id @default(cuid())
+   189→   189→  name        String
+   190→   190→  code        String @unique
+   191→   191→  description String @default("")
+   192→   192→
+   193→   193→  equipment Equipment[]
+   194→   194→}
+   195→   195→
+   196→   196→model Equipment {
+   197→   197→  id               String    @id @default(cuid())
+   198→   198→  assetTag         String    @unique
+   199→   199→  serialNumber     String    @default("")
+   200→   200→  name             String
+   201→   201→  manufacturer     String    @default("")
+   202→   202→  model            String    @default("")
+   203→   203→  category         String    @default("GENERAL")
+   204→   204→  locationId       String?
+   205→   205→  location         Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+   206→   206→  customerId       String?
+   207→   207→  customer         Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+   208→   208→  installationDate DateTime?
+   209→   209→  warrantyExpiry   DateTime?
+   210→   210→  pmFrequencyDays  Int       @default(90)
+   211→   211→  status           String    @default("ACTIVE") // ACTIVE | UNDER_MAINTENANCE | RETIRED
+   212→   212→  qrToken          String    @unique @default(cuid())
+   213→   213→  notes            String    @default("")
+   214→   214→  createdAt        DateTime  @default(now())
+   215→   215→  updatedAt        DateTime  @updatedAt
+   216→   216→
+   217→   217→  complaints    Complaint[]
+   218→   218→  workOrders    WorkOrder[]
+   219→   219→  pmPlans       PmPlan[]
+   220→   220→  pmTasks       PmTask[]
+   221→   221→  inspections   InspectionReport[]
+   222→   222→}
+   223→   223→
+   224→   224→// ─────────────────────────── COMPLAINTS ───────────────────────────
+   225→   225→
+   226→   226→model Complaint {
+   227→   227→  id                  String    @id @default(cuid())
+   228→   228→  code                String    @unique
+   229→   229→  customerId          String
+   230→   230→  customer            Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+   231→   231→  equipmentId         String?
+   232→   232→  equipment           Equipment? @relation(fields: [equipmentId], references: [id], onDelete: SetNull)
+   233→   233→  title               String
+   234→   234→  description         String
+   235→   235→  priority            String    @default("MEDIUM") // LOW | MEDIUM | HIGH | URGENT
+   236→   236→  // NEW → ASSIGNED → IN_PROGRESS → COMPLETED → CONFIRMED → CLOSED
+   237→   237→  status              String    @default("NEW")
+   238→   238→  createdById         String?
+   239→   239→  assignedTechnicianId String?
+   240→   240→  assignedTechnician  TechnicianProfile? @relation("assignedComplaints", fields: [assignedTechnicianId], references: [id], onDelete: SetNull)
+   241→   241→  assignedAt          DateTime?
+   242→   242→  acceptedAt          DateTime?
+   243→   243→  startedAt           DateTime?
+   244→   244→  completedAt         DateTime?
+   245→   245→  confirmedAt         DateTime?
+   246→   246→  closedAt            DateTime?
+   247→   247→  resolutionNotes     String    @default("")
+   248→   248→  customerFeedback    String    @default("")
+   249→   249→  customerRating      Int?
+   250→   250→  createdAt           DateTime  @default(now())
+   251→   251→  updatedAt           DateTime  @updatedAt
+   252→   252→
+   253→   253→  statusHistory ComplaintStatusHistory[]
+   254→   254→  workOrders    WorkOrder[]
+   255→   255→
+   256→   256→  @@index([status])
+   257→   257→  @@index([customerId])
+   258→   258→  @@index([assignedTechnicianId])
+   259→   259→}
+   260→   260→
+   261→   261→model ComplaintStatusHistory {
+   262→   262→  id          String    @id @default(cuid())
+   263→   263→  complaintId String
+   264→   264→  complaint   Complaint @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+   265→   265→  fromStatus  String
+   266→   266→  toStatus    String
+   267→   267→  changedById String?
+   268→   268→  note        String    @default("")
+   269→   269→  createdAt   DateTime  @default(now())
+   270→   270→}
+   271→   271→
+   272→   272→// ─────────────────────────── WORK ORDERS ───────────────────────────
+   273→   273→
+   274→   274→model WorkOrder {
+   275→   275→  id             String    @id @default(cuid())
+   276→   276→  code           String    @unique
+   277→   277→  complaintId    String?
+   278→   278→  complaint      Complaint? @relation(fields: [complaintId], references: [id], onDelete: SetNull)
+   279→   279→  customerId     String
+   280→   280→  customer       Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+   281→   281→  equipmentId    String?
+   282→   282→  equipment      Equipment? @relation(fields: [equipmentId], references: [id], onDelete: SetNull)
+   283→   283→  technicianId   String?
+   284→   284→  technician     TechnicianProfile? @relation("assignedWorkOrders", fields: [technicianId], references: [id], onDelete: SetNull)
+   285→   285→  title          String
+   286→   286→  description    String    @default("")
+   287→   287→  priority       String    @default("MEDIUM")
+   288→   288→  status         String    @default("PENDING") // PENDING | ACCEPTED | IN_PROGRESS | ON_HOLD | COMPLETED | CANCELLED
+   289→   289→  scheduledDate  DateTime?
+   290→   290→  startedAt      DateTime?
+   291→   291→  completedAt    DateTime?
+   292→   292→  labourHours    Float     @default(0)
+   293→   293→  labourRateCents Int      @default(0)
+   294→   294→  labourTotalCents Int    @default(0)
+   295→   295→  materialsTotalCents Int  @default(0)
+   296→   296→  totalCents     Int       @default(0)
+   297→   297→  notes          String    @default("")
+   298→   298→  customerConfirmed Boolean @default(false)
+   299→   299→  confirmedAt    DateTime?
+   300→   300→  invoiceId      String?
+   301→   301→  invoice        Invoice?  @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+   302→   302→  createdAt      DateTime  @default(now())
+   303→   303→  updatedAt      DateTime  @updatedAt
+   304→   304→
+   305→   305→  checklist WorkOrderChecklistItem[]
+   306→   306→  materials WorkOrderMaterial[]
+   307→   307→
+   308→   308→  @@index([status])
+   309→   309→  @@index([customerId])
+   310→   310→}
+   311→   311→
+   312→   312→model WorkOrderChecklistItem {
+   313→   313→  id          String    @id @default(cuid())
+   314→   314→  workOrderId String
+   315→   315→  workOrder   WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+   316→   316→  label       String
+   317→   317→  done        Boolean   @default(false)
+   318→   318→  doneAt      DateTime?
+   319→   319→  sortOrder   Int       @default(0)
+   320→   320→}
+   321→   321→
+   322→   322→model WorkOrderMaterial {
+   323→   323→  id             String         @id @default(cuid())
+   324→   324→  workOrderId    String
+   325→   325→  workOrder      WorkOrder      @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+   326→   326→  inventoryItemId String?
+   327→   327→  inventoryItem  InventoryItem? @relation(fields: [inventoryItemId], references: [id], onDelete: SetNull)
+   328→   328→  name           String
+   329→   329→  quantity       Float
+   330→   330→  unit           String         @default("pcs")
+   331→   331→  unitCostCents  Int            @default(0)
+   332→   332→  totalCents     Int            @default(0)
+   333→   333→}
+   334→   334→
+   335→   335→// ─────────────────────────── PREVENTIVE MAINTENANCE ───────────────────────────
+   336→   336→
+   337→   337→model PmPlan {
+   338→   338→  id                  String    @id @default(cuid())
+   339→   339→  code                String    @unique
+   340→   340→  name                String
+   341→   341→  equipmentId         String
+   342→   342→  equipment           Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+   343→   343→  frequency           String    @default("MONTHLY") // WEEKLY | MONTHLY | QUARTERLY | SEMI_ANNUAL | ANNUAL
+   344→   344→  assignedTechnicianId String?
+   345→   345→  assignedTechnician  TechnicianProfile? @relation("assignedPmPlans", fields: [assignedTechnicianId], references: [id], onDelete: SetNull)
+   346→   346→  checklistTemplate   String    @default("[]") // JSON string of labels
+   347→   347→  active              Boolean   @default(true)
+   348→   348→  nextDueDate         DateTime?
+   349→   349→  lastCompletedAt     DateTime?
+   350→   350→  createdAt           DateTime  @default(now())
+   351→   351→  updatedAt           DateTime  @updatedAt
+   352→   352→
+   353→   353→  tasks PmTask[]
+   354→   354→}
+   355→   355→
+   356→   356→model PmTask {
+   357→   357→  id             String    @id @default(cuid())
+   358→   358→  code           String    @unique
+   359→   359→  planId         String
+   360→   360→  plan           PmPlan    @relation(fields: [planId], references: [id], onDelete: Cascade)
+   361→   361→  equipmentId    String
+   362→   362→  equipment      Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+   363→   363→  technicianId   String?
+   364→   364→  technician     TechnicianProfile? @relation("assignedPmTasks", fields: [technicianId], references: [id], onDelete: SetNull)
+   365→   365→  dueDate        DateTime
+   366→   366→  status         String    @default("SCHEDULED") // SCHEDULED | OVERDUE | IN_PROGRESS | COMPLETED | SKIPPED
+   367→   367→  completedAt    DateTime?
+   368→   368→  notes          String    @default("")
+   369→   369→  createdAt      DateTime  @default(now())
+   370→   370→  updatedAt      DateTime  @updatedAt
+   371→   371→
+   372→   372→  checklist PmTaskChecklistItem[]
+   373→   373→}
+   374→   374→
+   375→   375→model PmTaskChecklistItem {
+   376→   376→  id        String  @id @default(cuid())
+   377→   377→  taskId    String
+   378→   378→  task      PmTask  @relation(fields: [taskId], references: [id], onDelete: Cascade)
+   379→   379→  label     String
+   380→   380→  done      Boolean @default(false)
+   381→   381→  sortOrder Int     @default(0)
+   382→   382→}
+   383→   383→
+   384→   384→// ─────────────────────────── IRMS (Inspections) ───────────────────────────
+   385→   385→
+   386→   386→model IrmsProject {
+   387→   387→  id          String    @id @default(cuid())
+   388→   388→  code        String    @unique
+   389→   389→  name        String
+   390→   390→  customerId  String?
+   391→   391→  customer    Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+   392→   392→  siteLocation String   @default("")
+   393→   393→  description String    @default("")
+   394→   394→  status      String    @default("ACTIVE") // PLANNING | ACTIVE | ON_HOLD | COMPLETED
+   395→   395→  startDate   DateTime?
+   396→   396→  endDate     DateTime?
+   397→   397→  createdAt   DateTime  @default(now())
+   398→   398→  updatedAt   DateTime  @updatedAt
+   399→   399→
+   400→   400→  inspections InspectionReport[]
+   401→   401→}
+   402→   402→
+   403→   403→model InspectionReport {
+   404→   404→  id               String    @id @default(cuid())
+   405→   405→  code             String    @unique
+   406→   406→  projectId        String
+   407→   407→  project          IrmsProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+   408→   408→  equipmentId      String?
+   409→   409→  equipment        Equipment? @relation(fields: [equipmentId], references: [id], onDelete: SetNull)
+   410→   410→  title            String
+   411→   411→  type             String    @default("ROUTINE") // ROUTINE | SAFETY | EQUIPMENT | PROJECT | OTHER
+   412→   412→  inspectionDate   DateTime
+   413→   413→  inspectorId      String?
+   414→   414→  inspector        TechnicianProfile? @relation("inspectorReports", fields: [inspectorId], references: [id], onDelete: SetNull)
+   415→   415→  status           String    @default("DRAFT") // DRAFT | SUBMITTED | APPROVED
+   416→   416→  summary          String    @default("")
+   417→   417→  overallCondition String    @default("GOOD") // EXCELLENT | GOOD | FAIR | POOR | CRITICAL
+   418→   418→  recommendations  String    @default("")
+   419→   419→  createdAt        DateTime  @default(now())
+   420→   420→  updatedAt        DateTime  @updatedAt
+   421→   421→
+   422→   422→  findings InspectionFinding[]
+   423→   423→}
+   424→   424→
+   425→   425→model InspectionFinding {
+   426→   426→  id             String           @id @default(cuid())
+   427→   427→  reportId       String
+   428→   428→  report         InspectionReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+   429→   429→  finding        String
+   430→   430→  severity       String           @default("MEDIUM") // LOW | MEDIUM | HIGH | CRITICAL
+   431→   431→  recommendation String           @default("")
+   432→   432→}
+   433→   433→
+   434→   434→// ─────────────────────────── INVENTORY / SUPPLIERS / PURCHASES ───────────────────────────
+   435→   435→
+   436→   436→model Supplier {
+   437→   437→  id            String   @id @default(cuid())
+   438→   438→  code          String   @unique
+   439→   439→  name          String
+   440→   440→  contactPerson String   @default("")
+   441→   441→  email         String   @default("")
+   442→   442→  phone         String   @default("")
+   443→   443→  address       String   @default("")
+   444→   444→  status        String   @default("ACTIVE")
+   445→   445→  createdAt     DateTime @default(now())
+   446→   446→  updatedAt     DateTime @updatedAt
+   447→   447→
+   448→   448→  items          InventoryItem[]
+   449→   449→  purchaseOrders PurchaseOrder[]
+   450→   450→  expenses       Expense[]
+   451→   451→}
+   452→   452→
+   453→   453→model InventoryItem {
+   454→   454→  id             String   @id @default(cuid())
+   455→   455→  sku            String   @unique
+   456→   456→  name           String
+   457→   457→  category       String   @default("GENERAL")
+   458→   458→  unit           String   @default("pcs")
+   459→   459→  stockQty       Float    @default(0)
+   460→   460→  minStockQty    Float    @default(0)
+   461→   461→  unitCostCents  Int      @default(0)
+   462→   462→  supplierId     String?
+   463→   463→  supplier       Supplier? @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+   464→   464→  status         String   @default("ACTIVE")
+   465→   465→  createdAt      DateTime @default(now())
+   466→   466→  updatedAt      DateTime @updatedAt
+   467→   467→
+   468→   468→  movements        StockMovement[]
+   469→   469→  woMaterials      WorkOrderMaterial[]
+   470→   470→  quotationItems   QuotationItem[]
+   471→   471→  purchaseItems    PurchaseItem[]
+   472→   472→}
+   473→   473→
+   474→   474→model StockMovement {
+   475→   475→  id           String        @id @default(cuid())
+   476→   476→  itemId       String
+   477→   477→  item         InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+   478→   478→  type         String // RECEIVE | ISSUE | RETURN | ADJUST
+   479→   479→  quantity     Float // signed
+   480→   480→  balanceAfter Float
+   481→   481→  referenceType String @default("MANUAL") // MANUAL | WORK_ORDER | PURCHASE | QUOTATION
+   482→   482→  referenceId  String @default("")
+   483→   483→  note         String @default("")
+   484→   484→  createdById  String?
+   485→   485→  createdAt    DateTime @default(now())
+   486→   486→
+   487→   487→  @@index([itemId])
+   488→   488→}
+   489→   489→
+   490→   490→model PurchaseOrder {
+   491→   491→  id             String    @id @default(cuid())
+   492→   492→  code           String    @unique
+   493→   493→  supplierId     String
+   494→   494→  supplier       Supplier  @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+   495→   495→  orderDate      DateTime  @default(now())
+   496→   496→  expectedDate   DateTime?
+   497→   497→  status         String    @default("DRAFT") // DRAFT | PENDING_APPROVAL | APPROVED | REJECTED | PARTIALLY_RECEIVED | RECEIVED | CANCELLED
+   498→   498→  subtotalCents  Int       @default(0)
+   499→   499→  taxCents       Int       @default(0)
+   500→   500→  totalCents     Int       @default(0)
+   501→   501→  notes          String    @default("")
+   502→   502→  approvedById   String?
+   503→   503→  approvedAt     DateTime?
+   504→   504→  receivedAt     DateTime?
+   505→   505→  createdAt      DateTime  @default(now())
+   506→   506→  updatedAt      DateTime  @updatedAt
+   507→   507→
+   508→   508→  items PurchaseItem[]
+   509→   509→}
+   510→   510→
+   511→   511→model PurchaseItem {
+   512→   512→  id            String        @id @default(cuid())
+   513→   513→  poId          String
+   514→   514→  po            PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
+   515→   515→  itemId        String?
+   516→   516→  item          InventoryItem? @relation(fields: [itemId], references: [id], onDelete: SetNull)
+   517→   517→  description   String
+   518→   518→  quantity      Float
+   519→   519→  unitCostCents Int
+   520→   520→  totalCents    Int
+   521→   521→  receivedQty   Float         @default(0)
+   522→   522→}
+   523→   523→
+   524→   524→// ─────────────────────────── QUOTATIONS ───────────────────────────
+   525→   525→
+   526→   526→model Quotation {
+   527→   527→  id              String    @id @default(cuid())
+   528→   528→  code            String    @unique
+   529→   529→  customerId      String
+   530→   530→  customer        Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+   531→   531→  quotationDate   DateTime  @default(now())
+   532→   532→  validUntil      DateTime?
+   533→   533→  status          String    @default("DRAFT") // DRAFT | SENT | APPROVED | REJECTED | EXPIRED | CONVERTED
+   534→   534→  subtotalCents   Int       @default(0)
+   535→   535→  discountCents   Int       @default(0)
+   536→   536→  taxCents        Int       @default(0)
+   537→   537→  shippingCents   Int       @default(0)
+   538→   538→  totalCents      Int       @default(0)
+   539→   539→  labourCostCents Int       @default(0)
+   540→   540→  materialCostCents Int     @default(0)
+   541→   541→  notes           String    @default("")
+   542→   542→  terms           String    @default("")
+   543→   543→  convertedInvoiceId String?
+   544→   544→  createdById     String?
+   545→   545→  createdAt       DateTime  @default(now())
+   546→   546→  updatedAt       DateTime  @updatedAt
+   547→   547→
+   548→   548→  items    QuotationItem[]
+   549→   549→  invoices Invoice[]
+   550→   550→}
+   551→   551→
+   552→   552→model QuotationItem {
+   553→   553→  id              String         @id @default(cuid())
+   554→   554→  quotationId     String
+   555→   555→  quotation       Quotation      @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+   556→   556→  kind            String         @default("MATERIAL") // MATERIAL | LABOUR | SERVICE | CUSTOM
+   557→   557→  itemId          String?
+   558→   558→  item            InventoryItem? @relation(fields: [itemId], references: [id], onDelete: SetNull)
+   559→   559→  description     String
+   560→   560→  quantity        Float          @default(1)
+   561→   561→  unit            String         @default("pcs")
+   562→   562→  unitPriceCents  Int            @default(0)
+   563→   563→  discountPercent Float          @default(0)
+   564→   564→  taxPercent      Float          @default(0)
+   565→   565→  totalCents      Int            @default(0)
+   566→   566→}
+   567→   567→
+   568→   568→// ─────────────────────────── INVOICES / PAYMENTS ───────────────────────────
+   569→   569→
+   570→   570→model Invoice {
+   571→   571→  id             String    @id @default(cuid())
+   572→   572→  code           String    @unique
+   573→   573→  customerId     String
+   574→   574→  customer       Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+   575→   575→  quotationId    String?
+   576→   576→  quotation      Quotation? @relation(fields: [quotationId], references: [id], onDelete: SetNull)
+   577→   577→  workOrderId    String?
+   578→   578→  complaintId    String?
+   579→   579→  invoiceDate    DateTime  @default(now())
+   580→   580→  dueDate        DateTime?
+   581→   581→  status         String    @default("DRAFT") // DRAFT | SENT | PARTIALLY_PAID | PAID | OVERDUE | CANCELLED
+   582→   582→  subtotalCents  Int       @default(0)
+   583→   583→  discountCents  Int       @default(0)
+   584→   584→  taxCents       Int       @default(0)
+   585→   585→  shippingCents  Int       @default(0)
+   586→   586→  totalCents     Int       @default(0)
+   587→   587→  paidCents      Int       @default(0)
+   588→   588→  balanceCents   Int       @default(0)
+   589→   589→  notes          String    @default("")
+   590→   590→  terms          String    @default("")
+   591→   591→  sentAt         DateTime?
+   592→   592→  createdById    String?
+   593→   593→  createdAt      DateTime  @default(now())
+   594→   594→  updatedAt      DateTime  @updatedAt
+   595→   595→
+   596→   596→  items    InvoiceItem[]
+   597→   597→  payments Payment[]
+   598→   598→  workOrders WorkOrder[]
+   599→   599→}
+   600→   600→
+   601→   601→model InvoiceItem {
+   602→   602→  id              String    @id @default(cuid())
+   603→   603→  invoiceId       String
+   604→   604→  invoice         Invoice   @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+   605→   605→  kind            String    @default("MATERIAL")
+   606→   606→  description     String
+   607→   607→  quantity        Float     @default(1)
+   608→   608→  unit            String    @default("pcs")
+   609→   609→  unitPriceCents  Int       @default(0)
+   610→   610→  discountPercent Float     @default(0)
+   611→   611→  taxPercent      Float     @default(0)
+   612→   612→  totalCents      Int       @default(0)
+   613→   613→}
+   614→   614→
+   615→   615→model Payment {
+   616→   616→  id           String    @id @default(cuid())
+   617→   617→  code         String    @unique
+   618→   618→  invoiceId    String?
+   619→   619→  invoice      Invoice?  @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+   620→   620→  customerId   String?
+   621→   621→  customer     Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+   622→   622→  amountCents  Int
+   623→   623→  method       String    @default("BANK_TRANSFER") // CASH | BANK_TRANSFER | CARD | CHEQUE | ONLINE
+   624→   624→  reference    String    @default("")
+   625→   625→  paidAt       DateTime  @default(now())
+   626→   626→  note         String    @default("")
+   627→   627→  recordedById String?
+   628→   628→  createdAt    DateTime  @default(now())
+   629→   629→
+   630→   630→  @@index([invoiceId])
+   631→   631→}
+   632→   632→
+   633→   633→// ─────────────────────────── FINANCE ───────────────────────────
+   634→   634→
+   635→   635→model Account {
+   636→   636→  id           String @id @default(cuid())
+   637→   637→  code         String @unique
+   638→   638→  name         String
+   639→   639→  type         String // CASH | BANK | RECEIVABLE | PAYABLE | INCOME | EXPENSE
+   640→   640→  balanceCents Int    @default(0)
+   641→   641→
+   642→   642→  transactions Transaction[]
+   643→   643→}
+   644→   644→
+   645→   645→model Transaction {
+   646→   646→  id            String   @id @default(cuid())
+   647→   647→  code          String   @unique
+   648→   648→  type          String // INCOME | EXPENSE
+   649→   649→  category      String   @default("GENERAL")
+   650→   650→  description   String   @default("")
+   651→   651→  amountCents   Int
+   652→   652→  accountId     String?
+   653→   653→  account       Account? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+   654→   654→  date          DateTime @default(now())
+   655→   655→  referenceType String   @default("MANUAL") // INVOICE | PAYMENT | PURCHASE | EXPENSE | MANUAL
+   656→   656→  referenceId   String   @default("")
+   657→   657→  createdById   String?
+   658→   658→  createdAt     DateTime @default(now())
+   659→   659→
+   660→   660→  @@index([type])
+   661→   661→  @@index([date])
+   662→   662→}
+   663→   663→
+   664→   664→model Expense {
+   665→   665→  id          String    @id @default(cuid())
+   666→   666→  code        String    @unique
+   667→   667→  category    String    @default("GENERAL")
+   668→   668→  description String    @default("")
+   669→   669→  amountCents Int
+   670→   670→  expenseDate DateTime  @default(now())
+   671→   671→  supplierId  String?
+   672→   672→  supplier    Supplier? @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+   673→   673→  status      String    @default("PENDING") // PENDING | APPROVED | PAID
+   674→   674→  approvedById String?
+   675→   675→  receiptNo   String    @default("")
+   676→   676→  createdById String?
+   677→   677→  createdAt   DateTime  @default(now())
+   678→   678→  updatedAt   DateTime  @updatedAt
+   679→   679→}
+   680→   680→
+   681→   681→// ─────────────────────────── VEHICLES ───────────────────────────
+   682→   682→
+   683→   683→model Vehicle {
+   684→   684→  id                 String    @id @default(cuid())
+   685→   685→  code               String    @unique
+   686→   686→  registrationNo     String    @unique
+   687→   687→  make               String    @default("")
+   688→   688→  model              String    @default("")
+   689→   689→  type               String    @default("VAN") // VAN | TRUCK | CAR | PICKUP | OTHER
+   690→   690→  assignedTechnicianId String? @unique
+   691→   691→  assignedTechnician TechnicianProfile? @relation("vehicleAssignee", fields: [assignedTechnicianId], references: [id], onDelete: SetNull)
+   692→   692→  status             String    @default("AVAILABLE") // AVAILABLE | IN_USE | MAINTENANCE | RETIRED
+   693→   693→  odometer           Int       @default(0)
+   694→   694→  lastServiceDate    DateTime?
+   695→   695→  nextServiceDue     DateTime?
+   696→   696→  notes              String    @default("")
+   697→   697→  createdAt          DateTime  @default(now())
+   698→   698→  updatedAt          DateTime  @updatedAt
+   699→   699→}
+   700→   700→
+   701→   701→// ─────────────────────────── NOTIFICATIONS / DOCUMENTS / SETTINGS / AUDIT ───────────────────────────
+   702→   702→
+   703→   703→model Notification {
+   704→   704→  id           String    @id @default(cuid())
+   705→   705→  userId       String
+   706→   706→  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+   707→   707→  channel      String    @default("IN_APP") // IN_APP | EMAIL | WHATSAPP | PUSH
+   708→   708→  type         String    @default("INFO") // INFO | SUCCESS | WARNING | ERROR
+   709→   709→  title        String
+   710→   710→  message      String
+   711→   711→  resourceType String    @default("")
+   712→   712→  resourceId   String    @default("")
+   713→   713→  readAt       DateTime?
+   714→   714→  createdAt    DateTime  @default(now())
+   715→   715→
+   716→   716→  @@index([userId, readAt])
+   717→   717→}
+   718→   718→
+   719→   719→model Document {
+   720→   720→  id          String   @id @default(cuid())
+   721→   721→  name        String
+   722→   722→  safeName    String
+   723→   723→  mimeType    String
+   724→   724→  sizeBytes   Int
+   725→   725→  storagePath String
+   726→   726→  category    String   @default("GENERAL") // COMPLAINT | WORK_ORDER | EQUIPMENT | INSPECTION | QUOTATION | INVOICE | EMPLOYEE | GENERAL
+   727→   727→  resourceType String  @default("")
+   728→   728→  resourceId  String   @default("")
+   729→   729→  uploadedById String?
+   730→   730→  createdAt   DateTime @default(now())
+   731→   731→}
+   732→   732→
+   733→   733→model Setting {
+   734→   734→  key        String   @id
+   735→   735→  value      String
+   736→   736→  updatedAt  DateTime @updatedAt
+   737→   737→}
+   738→   738→
+   739→   739→model AuditLog {
+   740→   740→  id           String   @id @default(cuid())
+   741→   741→  actorId      String?
+   742→   742→  actor        User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+   743→   743→  actorEmail   String   @default("")
+   744→   744→  action       String
+   745→   745→  resourceType String   @default("")
+   746→   746→  resourceId   String   @default("")
+   747→   747→  metadata     String   @default("")
+   748→   748→  ip           String   @default("")
+   749→   749→  createdAt    DateTime @default(now())
+   750→   750→
+   751→   751→  @@index([createdAt])
+   752→   752→  @@index([action])
+   753→   753→}
+   754→   754→
+   755→   755→model Counter {
+   756→   756→  key   String @id
+   757→   757→  value Int    @default(0)
+   758→   758→}
+   759→   759→
+   760→   760→model Draft {
+   761→   761→  id        String   @id @default(cuid())
+   762→   762→  userId    String
+   763→   763→  formKey   String
+   764→   764→  data      String // JSON payload
+   765→   765→  createdAt DateTime @default(now())
+   766→   766→  updatedAt DateTime @updatedAt
+   767→   767→
+   768→   768→  @@unique([userId, formKey])
+   769→   769→}
+   770→   770→

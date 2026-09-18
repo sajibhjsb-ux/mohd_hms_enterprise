@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ComplaintNewPage } from "./new-page";
+import { ComplaintEditPage } from "./edit-page";
 import { ComplaintDetailPage } from "./detail-page";
 import { ComplaintAssignPage } from "./assign-page";
 
@@ -69,6 +70,7 @@ export function ComplaintsModule() {
 
   if (page.view === "new") return <ComplaintNewPage />;
   if (page.view === "assign" && page.id) return <ComplaintAssignPage id={page.id} />;
+  if (page.view === "edit" && page.id) return <ComplaintEditPage id={page.id} />;
   if (page.view === "detail" && page.id) return <ComplaintDetailPage id={page.id} />;
   return <ComplaintsList />;
 }

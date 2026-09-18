@@ -24,7 +24,7 @@ import {
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
-  CheckCircle2, ClipboardCheck, Hammer, UserPlus,
+  CheckCircle2, ClipboardCheck, Hammer, Pencil, UserPlus,
 } from "lucide-react";
 
 type HistoryRow = {
@@ -138,6 +138,11 @@ export function ComplaintDetailPage({ id }: { id: string }) {
       description={`${detail.customer?.companyName ?? "—"}${detail.equipment ? ` · ${detail.equipment.name} (${detail.equipment.assetTag})` : ""} · Logged ${fmtDateTime(detail.createdAt)}`}
       actions={
         <div className="flex items-center gap-2">
+          {status === "NEW" && (canUpdate || isPortalOwner) ? (
+            <Button variant="outline" size="sm" onClick={() => navigateTo("complaints", [detail.id, "edit"])}>
+              <Pencil className="h-4 w-4 mr-1.5" /> Edit
+            </Button>
+          ) : null}
           <StatusBadge status={detail.status} />
           <PriorityBadge priority={detail.priority} />
         </div>

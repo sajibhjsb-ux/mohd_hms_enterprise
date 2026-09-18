@@ -1,0 +1,573 @@
+     1→     1→"use client";
+     2→     2→
+     3→     3→// MOHD.HMS ENTERPRISE — dedicated Complaint Entry page (complaints/new view).
+     4→     4→// Replaces the old "New Complaint" modal as the primary complaint entry mechanism.
+     5→     5→// Reuses the existing Complaint API, RBAC, workflow, numbering, audit and draft
+     6→     6→// architecture — no duplicate tables, no duplicate APIs, no mock data.
+     7→     7→
+     8→     8→import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+     9→     9→import { api, qs } from "@/lib/hms/api-client";
+    10→    10→import { hasPerm, useSession } from "@/components/hms/session";
+    11→    11→import { useUi } from "@/lib/hms/ui-store";
+    12→    12→import { navigateTo } from "@/lib/hms/router";
+    13→    13→import { useToast } from "@/hooks/use-toast";
+    14→    14→import { useDraft } from "@/hooks/use-draft";
+    15→    15→import {
+    16→    16→  PageHeader, EmptyState,
+    17→    17→} from "@/components/hms/shared/ui-bits";
+    18→    18→import { PERMISSIONS, PRIORITIES, humanize } from "@/lib/hms/constants";
+    19→    19→import { fmtDateTime } from "@/lib/hms/format";
+    20→    20→import { Button } from "@/components/ui/button";
+    21→    21→import { Input } from "@/components/ui/input";
+    22→    22→import { Label } from "@/components/ui/label";
+    23→    23→import { Textarea } from "@/components/ui/textarea";
+    24→    24→import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+    25→    25→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+    26→    26→import {
+    27→    27→  AlertCircle, ArrowLeft, ChevronRight, Loader2, MapPin, Save, Send, User, X,
+    28→    28→} from "lucide-react";
+    29→    29→import { cn } from "@/lib/utils";
+    30→    30→
+    31→    31→// ── Types ──
+    32→    32→
+    33→    33→type CustomerOpt = {
+    34→    34→  id: string;
+    35→    35→  companyName?: string;
+    36→    36→  name?: string;
+    37→    37→  contactPerson?: string;
+    38→    38→  phone?: string;
+    39→    39→  code?: string;
+    40→    40→};
+    41→    41→
+    42→    42→type EquipmentOpt = {
+    43→    43→  id: string;
+    44→    44→  name?: string;
+    45→    45→  assetTag?: string;
+    46→    46→  location?: { id: string; name?: string | null; code?: string | null } | null;
+    47→    47→  customer?: { id: string; companyName?: string; code?: string } | null;
+    48→    48→};
+    49→    49→
+    50→    50→type CreateForm = {
+    51→    51→  title: string;
+    52→    52→  description: string;
+    53→    53→  priority: string;
+    54→    54→  customerId: string;
+    55→    55→  equipmentId: string;
+    56→    56→};
+    57→    57→
+    58→    58→const EMPTY_CREATE: CreateForm = { title: "", description: "", priority: "MEDIUM", customerId: "", equipmentId: "" };
+    59→    59→const TITLE_MAX = 200;
+    60→    60→const DESC_MAX = 5000;
+    61→    61→
+    62→    62→// ── Page ──
+    63→    63→
+    64→    64→export function ComplaintNewPage() {
+    65→    65→  const { user } = useSession();
+    66→    66→  const { toast } = useToast();
+    67→    67→  const setPageDirty = useUi((s) => s.setPageDirty);
+    68→    68→  const isStaffUser = !!user && user.role !== "CUSTOMER";
+    69→    69→  const canCreate = hasPerm(user, PERMISSIONS.complaints_create);
+    70→    70→
+    71→    71→  const draft = useDraft<CreateForm>({ formKey: "complaint.create", initial: EMPTY_CREATE });
+    72→    72→  const [errors, setErrors] = useState<Record<string, string>>({});
+    73→    73→  const [submitError, setSubmitError] = useState<string | null>(null);
+    74→    74→  const [creating, setCreating] = useState(false);
+    75→    75→
+    76→    76→  // ── Customer search (API-backed, never loads the whole table) ──
+    77→    77→  const [custQuery, setCustQuery] = useState("");
+    78→    78→  const [custResults, setCustResults] = useState<CustomerOpt[]>([]);
+    79→    79→  const [custLoading, setCustLoading] = useState(false);
+    80→    80→  const [custOpen, setCustOpen] = useState(false);
+    81→    81→  const [custInitialDone, setCustInitialDone] = useState(false);
+    82→    82→  const [selectedCustomer, setSelectedCustomer] = useState<CustomerOpt | null>(null);
+    83→    83→  const [portalCustomerName, setPortalCustomerName] = useState<string | null>(null);
+    84→    84→  const searchSeq = useRef(0);
+    85→    85→
+    86→    86→  const selectedId = isStaffUser ? draft.value.customerId : (user?.customerId ?? "");
+    87→    87→
+    88→    88→  // Initial page of customers (20) for staff — search narrows server-side from there.
+    89→    89→  useEffect(() => {
+    90→    90→    if (!isStaffUser) return;
+    91→    91→    let alive = true;
+    92→    92→    setCustLoading(true);
+    93→    93→    api.get<CustomerOpt[]>(`/api/v1/customers${qs({ pageSize: 20 })}`)
+    94→    94→      .then((r) => { if (alive) { setCustResults(Array.isArray(r.data) ? r.data : []); setCustInitialDone(true); } })
+    95→    95→      .catch(() => { if (alive) setCustInitialDone(true); })
+    96→    96→      .finally(() => { if (alive) setCustLoading(false); });
+    97→    97→    return () => { alive = false; };
+    98→    98→  }, [isStaffUser]);
+    99→    99→
+   100→   100→  // Debounced server-side search while typing (≥2 chars); empty query restores the initial page.
+   101→   101→  useEffect(() => {
+   102→   102→    if (!isStaffUser) return;
+   103→   103→    const q = custQuery.trim();
+   104→   104→    if (q.length < 2) {
+   105→   105→      if (custInitialDone && custQuery === "") {
+   106→   106→        let alive = true;
+   107→   107→        setCustLoading(true);
+   108→   108→        api.get<CustomerOpt[]>(`/api/v1/customers${qs({ pageSize: 20 })}`)
+   109→   109→          .then((r) => { if (alive) setCustResults(Array.isArray(r.data) ? r.data : []); })
+   110→   110→          .catch(() => undefined)
+   111→   111→          .finally(() => { if (alive) setCustLoading(false); });
+   112→   112→        return () => { alive = false; };
+   113→   113→      }
+   114→   114→      return;
+   115→   115→    }
+   116→   116→    const seq = ++searchSeq.current;
+   117→   117→    const t = setTimeout(() => {
+   118→   118→      setCustLoading(true);
+   119→   119→      api.get<CustomerOpt[]>(`/api/v1/customers${qs({ search: q, pageSize: 20 })}`)
+   120→   120→        .then((r) => { if (alive(seq)) setCustResults(Array.isArray(r.data) ? r.data : []); })
+   121→   121→        .catch(() => { if (alive(seq)) setCustResults([]); })
+   122→   122→        .finally(() => { if (alive(seq)) setCustLoading(false); });
+   123→   123→    }, 300);
+   124→   124→    function alive(s: number) { return s === searchSeq.current; }
+   125→   125→    return () => clearTimeout(t);
+   126→   126→  }, [custQuery, custInitialDone, isStaffUser]);
+   127→   127→
+   128→   128→  // Portal users file under their own customer record — show its name for clarity.
+   129→   129→  useEffect(() => {
+   130→   130→    if (isStaffUser || !user?.customerId) return;
+   131→   131→    let alive = true;
+   132→   132→    api.get<CustomerOpt[]>("/api/v1/customers")
+   133→   133→      .then((r) => {
+   134→   134→        if (!alive) return;
+   135→   135→        const own = Array.isArray(r.data) ? r.data[0] : undefined;
+   136→   136→        if (own) setPortalCustomerName(own.companyName ?? own.name ?? null);
+   137→   137→      })
+   138→   138→      .catch(() => undefined);
+   139→   139→    return () => { alive = false; };
+   140→   140→  }, [isStaffUser, user?.customerId]);
+   141→   141→
+   142→   142→  // BUGFIX: after a draft restores customerId (component-local display state is
+   143→   143→  // lost on reload), re-fetch the customer record so the selection card renders.
+   144→   144→  useEffect(() => {
+   145→   145→    if (!isStaffUser) return;
+   146→   146→    const cid = draft.value.customerId;
+   147→   147→    if (!cid || selectedCustomer?.id === cid) return;
+   148→   148→    let alive = true;
+   149→   149→    api.get<CustomerOpt[]>(`/api/v1/customers${qs({ customerId: cid })}`)
+   150→   150→      .then((r) => {
+   151→   151→        if (!alive) return;
+   152→   152→        const c = Array.isArray(r.data) ? r.data.find((x) => x.id === cid) : undefined;
+   153→   153→        if (c) {
+   154→   154→          setSelectedCustomer(c);
+   155→   155→          setCustQuery(c.companyName ?? c.name ?? c.id);
+   156→   156→        }
+   157→   157→      })
+   158→   158→      .catch(() => undefined);
+   159→   159→    return () => { alive = false; };
+   160→   160→  }, [draft.value.customerId, isStaffUser, selectedCustomer?.id]);
+   161→   161→
+   162→   162→  // ── Equipment follows the selected customer (server-filtered) ──
+   163→   163→  const [equipment, setEquipment] = useState<EquipmentOpt[]>([]);
+   164→   164→  const [equipLoading, setEquipLoading] = useState(false);
+   165→   165→  const [equipLoaded, setEquipLoaded] = useState(false);
+   166→   166→
+   167→   167→  useEffect(() => {
+   168→   168→    if (!canCreate) return;
+   169→   169→    if (isStaffUser && !selectedId) { setEquipment([]); setEquipLoaded(true); return; }
+   170→   170→    let alive = true;
+   171→   171→    setEquipLoading(true);
+   172→   172→    setEquipLoaded(false);
+   173→   173→    api.get<EquipmentOpt[]>(`/api/v1/equipment${qs({ customerId: selectedId || undefined, pageSize: 200 })}`)
+   174→   174→      .then((r) => {
+   175→   175→        if (!alive) return;
+   176→   176→        const list = Array.isArray(r.data) ? r.data : [];
+   177→   177→        setEquipment(list);
+   178→   178→        // Portal UX: derive the caller's own customer name from the equipment payload
+   179→   179→        // (customers lack customers.read by design — no extra API, no RBAC change).
+   180→   180→        if (!isStaffUser) {
+   181→   181→          const ownName = list.find((e) => e.customer?.companyName)?.customer?.companyName;
+   182→   182→          if (ownName) setPortalCustomerName(ownName);
+   183→   183→        }
+   184→   184→      })
+   185→   185→      .catch(() => { if (alive) setEquipment([]); })
+   186→   186→      .finally(() => { if (alive) { setEquipLoading(false); setEquipLoaded(true); } });
+   187→   187→    return () => { alive = false; };
+   188→   188→  }, [selectedId, isStaffUser, canCreate]);
+   189→   189→
+   190→   190→  const selectedEquipment = useMemo(
+   191→   191→    () => equipment.find((e) => e.id === draft.value.equipmentId) ?? null,
+   192→   192→    [equipment, draft.value.equipmentId]
+   193→   193→  );
+   194→   194→
+   195→   195→  // ── Dirty-state wiring (central router guard + data protection) ──
+   196→   196→  useEffect(() => {
+   197→   197→    setPageDirty(draft.dirty);
+   198→   198→    return () => { setPageDirty(false); };
+   199→   199→  }, [draft.dirty, setPageDirty]);
+   200→   200→
+   201→   201→  function goBackToList() {
+   202→   202→    draft.saveNow(); // silent protection — never lose typed data when leaving via Back
+   203→   203→    navigateTo("complaints");
+   204→   204→  }
+   205→   205→
+   206→   206→  function saveDraft() {
+   207→   207→    draft.saveNow();
+   208→   208→    toast({ title: "Draft saved successfully", description: "You can safely leave this page and restore the draft later." });
+   209→   209→  }
+   210→   210→
+   211→   211→  function pickCustomer(c: CustomerOpt) {
+   212→   212→    setSelectedCustomer(c);
+   213→   213→    setCustQuery(c.companyName ?? c.name ?? c.id);
+   214→   214→    setCustOpen(false);
+   215→   215→    draft.setValue({ customerId: c.id, equipmentId: "" });
+   216→   216→    setErrors((prev) => { const { customerId: _drop, ...rest } = prev; return rest; });
+   217→   217→  }
+   218→   218→
+   219→   219→  function clearCustomer() {
+   220→   220→    setSelectedCustomer(null);
+   221→   221→    setCustQuery("");
+   222→   222→    draft.setValue({ customerId: "", equipmentId: "" });
+   223→   223→  }
+   224→   224→
+   225→   225→  function validate(): Record<string, string> {
+   226→   226→    const errs: Record<string, string> = {};
+   227→   227→    const t = draft.value.title.trim();
+   228→   228→    if (!t) errs.title = "Title is required.";
+   229→   229→    else if (t.length < 3) errs.title = "Title must be at least 3 characters.";
+   230→   230→    const d = draft.value.description.trim();
+   231→   231→    if (!d) errs.description = "Description is required.";
+   232→   232→    else if (d.length < 3) errs.description = "Description must be at least 3 characters.";
+   233→   233→    if (isStaffUser && !draft.value.customerId) errs.customerId = "Please select a customer.";
+   234→   234→    return errs;
+   235→   235→  }
+   236→   236→
+   237→   237→  async function createComplaint() {
+   238→   238→    const errs = validate();
+   239→   239→    setErrors(errs);
+   240→   240→    if (Object.keys(errs).length > 0) {
+   241→   241→      toast({ title: "Check the highlighted fields", variant: "destructive" });
+   242→   242→      return;
+   243→   243→    }
+   244→   244→    setCreating(true);
+   245→   245→    setSubmitError(null);
+   246→   246→    try {
+   247→   247→      const payload: Record<string, unknown> = {
+   248→   248→        title: draft.value.title.trim(),
+   249→   249→        description: draft.value.description.trim(),
+   250→   250→        priority: draft.value.priority,
+   251→   251→        ...(isStaffUser && draft.value.customerId ? { customerId: draft.value.customerId } : {}),
+   252→   252→        ...(draft.value.equipmentId ? { equipmentId: draft.value.equipmentId } : {}),
+   253→   253→      };
+   254→   254→      const res = await api.post<{ id: string; code: string }>("/api/v1/complaints", payload);
+   255→   255→      toast({ title: "Complaint created", description: `${res.data.code} logged successfully.` });
+   256→   256→      draft.reset(EMPTY_CREATE);
+   257→   257→      setSelectedCustomer(null);
+   258→   258→      setCustQuery("");
+   259→   259→      setPageDirty(false);
+   260→   260→      // Continue the existing workflow on the complaint's dedicated detail page.
+   261→   261→      navigateTo("complaints", [res.data.id]);
+   262→   262→    } catch (e) {
+   263→   263→      // CRITICAL: keep every user-entered value on failure — show the error and allow retry.
+   264→   264→      const msg = e instanceof Error ? e.message : "Could not create the complaint. Please try again.";
+   265→   265→      setSubmitError(msg);
+   266→   266→      toast({ title: "Could not create complaint", description: msg, variant: "destructive" });
+   267→   267→    } finally {
+   268→   268→      setCreating(false);
+   269→   269→    }
+   270→   270→  }
+   271→   271→
+   272→   272→  if (!canCreate) {
+   273→   273→    return (
+   274→   274→      <EmptyState
+   275→   275→        title="You don't have permission to create complaints"
+   276→   276→        hint="Complaint creation is limited to authorized roles. Contact your administrator if you believe this is a mistake."
+   277→   277→      />
+   278→   278→    );
+   279→   279→  }
+   280→   280→
+   281→   281→  const actions = (
+   282→   282→    <>
+   283→   283→      <Button variant="outline" onClick={saveDraft} disabled={creating}>
+   284→   284→        <Save className="h-4 w-4 mr-1.5" /> Save Draft
+   285→   285→      </Button>
+   286→   286→      <Button onClick={createComplaint} disabled={creating}>
+   287→   287→        {creating ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Send className="h-4 w-4 mr-1.5" />}
+   288→   288→        {creating ? "Creating…" : "Create Complaint"}
+   289→   289→      </Button>
+   290→   290→    </>
+   291→   291→  );
+   292→   292→
+   293→   293→  return (
+   294→   294→    <div>
+   295→   295→      {/* Breadcrumb */}
+   296→   296→      <nav aria-label="Breadcrumb" className="mb-2">
+   297→   297→        <ol className="flex items-center gap-1 text-sm text-muted-foreground">
+   298→   298→          <li>
+   299→   299→            <button
+   300→   300→              onClick={goBackToList}
+   301→   301→              className="hover:text-foreground hover:underline underline-offset-2 rounded"
+   302→   302→            >
+   303→   303→              Complaints
+   304→   304→            </button>
+   305→   305→          </li>
+   306→   306→          <li aria-hidden><ChevronRight className="h-3.5 w-3.5" /></li>
+   307→   307→          <li aria-current="page" className="text-foreground font-medium">New Complaint</li>
+   308→   308→        </ol>
+   309→   309→      </nav>
+   310→   310→
+   311→   311→      {/* Back link */}
+   312→   312→      <button
+   313→   313→        onClick={goBackToList}
+   314→   314→        className="mb-3 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors rounded"
+   315→   315→      >
+   316→   316→        <ArrowLeft className="h-4 w-4" aria-hidden /> Back to Complaints
+   317→   317→      </button>
+   318→   318→
+   319→   319→      <PageHeader
+   320→   320→        title="New Complaint"
+   321→   321→        subtitle={isStaffUser ? "Log a complaint on behalf of a customer." : "Report an issue — our team will assign a technician."}
+   322→   322→        actions={<div className="hidden sm:flex items-center gap-2 no-print">{actions}</div>}
+   323→   323→      />
+   324→   324→
+   325→   325→      {/* Recoverable draft banner */}
+   326→   326→      {draft.draftExists ? (
+   327→   327→        <div className="mb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2 rounded-lg border border-dashed bg-muted/30 p-3 text-sm">
+   328→   328→          <span className="text-muted-foreground">
+   329→   329→            Unsubmitted draft saved {draft.lastSavedAt ? fmtDateTime(draft.lastSavedAt) : "earlier"} — restore it to continue where you left off.
+   330→   330→          </span>
+   331→   331→          <div className="flex items-center gap-2">
+   332→   332→            <Button size="sm" variant="outline" onClick={draft.restore}>Restore</Button>
+   333→   333→            <Button size="sm" variant="ghost" onClick={draft.discard}>Discard</Button>
+   334→   334→          </div>
+   335→   335→        </div>
+   336→   336→      ) : null}
+   337→   337→
+   338→   338→      {submitError ? (
+   339→   339→        <div role="alert" className="mb-4 flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+   340→   340→          <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" aria-hidden />
+   341→   341→          <div>
+   342→   342→            <p className="font-medium">The complaint could not be created.</p>
+   343→   343→            <p className="mt-0.5">{submitError} Your entries are preserved — you can retry.</p>
+   344→   344→          </div>
+   345→   345→        </div>
+   346→   346→      ) : null}
+   347→   347→
+   348→   348→      <div className="grid gap-4 xl:grid-cols-5">
+   349→   349→        {/* ── Complaint information ── */}
+   350→   350→        <Card className="xl:col-span-3 shadow-sm">
+   351→   351→          <CardHeader className="pb-3">
+   352→   352→            <CardTitle className="text-base">Complaint Information</CardTitle>
+   353→   353→          </CardHeader>
+   354→   354→          <CardContent className="space-y-4">
+   355→   355→            <div className="space-y-1.5">
+   356→   356→              <div className="flex items-center justify-between">
+   357→   357→                <Label htmlFor="nc-title">Title *</Label>
+   358→   358→                <span className="text-[11px] text-muted-foreground tabular-nums">{draft.value.title.trim().length}/{TITLE_MAX}</span>
+   359→   359→              </div>
+   360→   360→              <Input
+   361→   361→                id="nc-title"
+   362→   362→                value={draft.value.title}
+   363→   363→                onChange={(e) => { draft.setValue({ title: e.target.value }); setErrors((p) => ({ ...p, title: "" })); }}
+   364→   364→                placeholder="Short summary of the issue — e.g. Air Conditioning Unit Not Cooling"
+   365→   365→                maxLength={TITLE_MAX}
+   366→   366→                aria-invalid={!!errors.title}
+   367→   367→                aria-describedby={errors.title ? "nc-title-err" : undefined}
+   368→   368→              />
+   369→   369→              {errors.title ? <p id="nc-title-err" className="text-xs text-destructive">{errors.title}</p> : null}
+   370→   370→            </div>
+   371→   371→
+   372→   372→            <div className="space-y-1.5">
+   373→   373→              <div className="flex items-center justify-between">
+   374→   374→                <Label htmlFor="nc-desc">Description *</Label>
+   375→   375→                <span className="text-[11px] text-muted-foreground tabular-nums">{draft.value.description.trim().length}/{DESC_MAX}</span>
+   376→   376→              </div>
+   377→   377→              <Textarea
+   378→   378→                id="nc-desc"
+   379→   379→                value={draft.value.description}
+   380→   380→                onChange={(e) => { draft.setValue({ description: e.target.value }); setErrors((p) => ({ ...p, description: "" })); }}
+   381→   381→                placeholder={"Describe the problem, location and impact…\n\nExample: Air conditioning unit in Level 2 meeting room is not cooling properly. Temperature remains above normal operating level."}
+   382→   382→                rows={7}
+   383→   383→                maxLength={DESC_MAX}
+   384→   384→                aria-invalid={!!errors.description}
+   385→   385→                aria-describedby={errors.description ? "nc-desc-err" : undefined}
+   386→   386→                className="min-h-[9rem]"
+   387→   387→              />
+   388→   388→              {errors.description ? <p id="nc-desc-err" className="text-xs text-destructive">{errors.description}</p> : null}
+   389→   389→            </div>
+   390→   390→
+   391→   391→            <div className="space-y-1.5 sm:max-w-xs">
+   392→   392→              <Label>Priority</Label>
+   393→   393→              <Select value={draft.value.priority} onValueChange={(v) => draft.setValue({ priority: v })}>
+   394→   394→                <SelectTrigger aria-label="Priority"><SelectValue /></SelectTrigger>
+   395→   395→                <SelectContent>
+   396→   396→                  {PRIORITIES.map((p) => <SelectItem key={p} value={p}>{humanize(p)}</SelectItem>)}
+   397→   397→                </SelectContent>
+   398→   398→              </Select>
+   399→   399→              <p className="text-[11px] text-muted-foreground">Defaults to Medium — the server enforces the same priority scale.</p>
+   400→   400→            </div>
+   401→   401→          </CardContent>
+   402→   402→        </Card>
+   403→   403→
+   404→   404→        {/* ── Customer & asset ── */}
+   405→   405→        <div className="xl:col-span-2 space-y-4">
+   406→   406→          <Card className="shadow-sm">
+   407→   407→            <CardHeader className="pb-3">
+   408→   408→              <CardTitle className="text-base">Customer &amp; Asset</CardTitle>
+   409→   409→            </CardHeader>
+   410→   410→            <CardContent className="space-y-4">
+   411→   411→              {isStaffUser ? (
+   412→   412→                <div className="space-y-1.5">
+   413→   413→                  <Label htmlFor="nc-customer">Customer *</Label>
+   414→   414→                  {selectedCustomer ? (
+   415→   415→                    <div className="flex items-start justify-between gap-2 rounded-lg border bg-muted/30 p-3">
+   416→   416→                      <div className="min-w-0 text-sm">
+   417→   417→                        <p className="font-medium truncate">{selectedCustomer.companyName ?? selectedCustomer.name ?? selectedCustomer.id}</p>
+   418→   418→                        <p className="text-xs text-muted-foreground truncate">
+   419→   419→                          {[selectedCustomer.contactPerson, selectedCustomer.phone, selectedCustomer.code ? `#${selectedCustomer.code}` : ""].filter(Boolean).join(" · ") || "—"}
+   420→   420→                        </p>
+   421→   421→                      </div>
+   422→   422→                      <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={clearCustomer} aria-label="Clear selected customer">
+   423→   423→                        <X className="h-3.5 w-3.5" />
+   424→   424→                      </Button>
+   425→   425→                    </div>
+   426→   426→                  ) : (
+   427→   427→                    <div className="relative">
+   428→   428→                      <Input
+   429→   429→                        id="nc-customer"
+   430→   430→                        role="combobox"
+   431→   431→                        aria-expanded={custOpen}
+   432→   432→                        aria-controls="nc-customer-list"
+   433→   433→                        aria-autocomplete="list"
+   434→   434→                        autoComplete="off"
+   435→   435→                        value={custQuery}
+   436→   436→                        onChange={(e) => { setCustQuery(e.target.value); setCustOpen(true); }}
+   437→   437→                        onFocus={() => setCustOpen(true)}
+   438→   438→                        onKeyDown={(e) => { if (e.key === "Escape") setCustOpen(false); }}
+   439→   439→                        placeholder="Search customer by name, contact or code…"
+   440→   440→                        aria-invalid={!!errors.customerId}
+   441→   441→                        aria-describedby={errors.customerId ? "nc-customer-err" : undefined}
+   442→   442→                      />
+   443→   443→                      {custLoading ? <Loader2 className="absolute right-3 top-2.5 h-4 w-4 animate-spin text-muted-foreground" aria-hidden /> : null}
+   444→   444→                      {custOpen ? (
+   445→   445→                        <>
+   446→   446→                          <div className="fixed inset-0 z-30" onClick={() => setCustOpen(false)} aria-hidden />
+   447→   447→                          <div
+   448→   448→                            id="nc-customer-list"
+   449→   449→                            role="listbox"
+   450→   450→                            aria-label="Customer results"
+   451→   451→                            className="absolute z-40 mt-1 w-full max-h-60 overflow-y-auto hms-scroll rounded-md border bg-background shadow-md"
+   452→   452→                          >
+   453→   453→                            {custLoading && custResults.length === 0 ? (
+   454→   454→                              <p className="px-3 py-4 text-sm text-muted-foreground flex items-center gap-2"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading customers…</p>
+   455→   455→                            ) : custResults.length === 0 ? (
+   456→   456→                              <p className="px-3 py-4 text-sm text-muted-foreground">No customers match “{custQuery.trim()}”.</p>
+   457→   457→                            ) : (
+   458→   458→                              custResults.map((c) => (
+   459→   459→                                <button
+   460→   460→                                  key={c.id}
+   461→   461→                                  type="button"
+   462→   462→                                  role="option"
+   463→   463→                                  aria-selected={false}
+   464→   464→                                  onClick={() => pickCustomer(c)}
+   465→   465→                                  className="w-full text-left px-3 py-2 hover:bg-accent focus:bg-accent focus:outline-none border-b last:border-0"
+   466→   466→                                >
+   467→   467→                                  <span className="block text-sm font-medium truncate">{c.companyName ?? c.name ?? c.id}</span>
+   468→   468→                                  <span className="block text-xs text-muted-foreground truncate">
+   469→   469→                                    {[c.contactPerson, c.phone, c.code ? `#${c.code}` : ""].filter(Boolean).join(" · ") || "\u00A0"}
+   470→   470→                                  </span>
+   471→   471→                                </button>
+   472→   472→                              ))
+   473→   473→                            )}
+   474→   474→                          </div>
+   475→   475→                        </>
+   476→   476→                      ) : null}
+   477→   477→                    </div>
+   478→   478→                  )}
+   479→   479→                  {errors.customerId ? <p id="nc-customer-err" className="text-xs text-destructive">{errors.customerId}</p> : null}
+   480→   480→                </div>
+   481→   481→              ) : (
+   482→   482→                <div className="flex items-start gap-2 rounded-lg border bg-muted/30 p-3 text-sm">
+   483→   483→                  <User className="h-4 w-4 mt-0.5 text-primary shrink-0" aria-hidden />
+   484→   484→                  <div>
+   485→   485→                    <p className="font-medium">{portalCustomerName ?? "Your account"}</p>
+   486→   486→                    <p className="text-xs text-muted-foreground">This complaint will be filed under your own customer record. You cannot file on behalf of another customer.</p>
+   487→   487→                  </div>
+   488→   488→                </div>
+   489→   489→              )}
+   490→   490→
+   491→   491→              <div className="space-y-1.5">
+   492→   492→                <Label htmlFor="nc-equipment">Equipment</Label>
+   493→   493→                <Select
+   494→   494→                  value={draft.value.equipmentId}
+   495→   495→                  onValueChange={(v) => { draft.setValue({ equipmentId: v }); }}
+   496→   496→                  disabled={isStaffUser && !selectedId}
+   497→   497→                >
+   498→   498→                  <SelectTrigger id="nc-equipment" aria-label="Equipment">
+   499→   499→                    <SelectValue placeholder={
+   500→   500→                      isStaffUser && !selectedId
+   501→   501→                        ? "Select a customer first…"
+   502→   502→                        : equipLoading
+   503→   503→                          ? "Loading equipment…"
+   504→   504→                          : equipLoaded && equipment.length === 0
+   505→   505→                            ? "No equipment"
+   506→   506→                            : "Optional — pick the equipment…"
+   507→   507→                    } />
+   508→   508→                  </SelectTrigger>
+   509→   509→                  <SelectContent>
+   510→   510→                    {equipment.map((e) => (
+   511→   511→                      <SelectItem key={e.id} value={e.id}>
+   512→   512→                        {e.name ?? e.id}{e.assetTag ? ` (${e.assetTag})` : ""}
+   513→   513→                      </SelectItem>
+   514→   514→                    ))}
+   515→   515→                  </SelectContent>
+   516→   516→                </Select>
+   517→   517→                {equipLoading ? (
+   518→   518→                  <p className="text-xs text-muted-foreground flex items-center gap-1.5"><Loader2 className="h-3 w-3 animate-spin" /> Loading equipment…</p>
+   519→   519→                ) : isStaffUser && !selectedId ? (
+   520→   520→                  <p className="text-xs text-muted-foreground">Equipment options appear once a customer is selected.</p>
+   521→   521→                ) : equipLoaded && equipment.length === 0 ? (
+   522→   522→                  <p className="text-xs text-muted-foreground">No equipment found for this customer.</p>
+   523→   523→                ) : null}
+   524→   524→              </div>
+   525→   525→
+   526→   526→              {/* Location — read-only, from the existing equipment → location relationship */}
+   527→   527→              {selectedEquipment?.location ? (
+   528→   528→                <div className="flex items-start gap-2 rounded-lg border bg-muted/30 p-3 text-sm">
+   529→   529→                  <MapPin className="h-4 w-4 mt-0.5 text-primary shrink-0" aria-hidden />
+   530→   530→                  <div className="min-w-0">
+   531→   531→                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Location (from equipment record)</p>
+   532→   532→                    <p className="font-medium truncate">{selectedEquipment.location.name ?? "—"}{selectedEquipment.location.code ? ` · ${selectedEquipment.location.code}` : ""}</p>
+   533→   533→                  </div>
+   534→   534→                </div>
+   535→   535→              ) : null}
+   536→   536→            </CardContent>
+   537→   537→          </Card>
+   538→   538→
+   539→   539→          <Card className="shadow-sm bg-muted/20">
+   540→   540→            <CardContent className="p-4 text-xs text-muted-foreground space-y-1.5">
+   541→   541→              <p className="font-medium text-foreground text-sm">What happens next?</p>
+   542→   542→              <p>On creation the complaint gets a unique number (CPT-…) and enters the standard workflow: <span className="font-medium">New → Assigned → In Progress → Completed → Confirmed → Closed</span>.</p>
+   543→   543→              <p>Supervisors and admins are notified automatically. Technician assignment happens from the complaint details — responsibilities stay separated.</p>
+   544→   544→            </CardContent>
+   545→   545→          </Card>
+   546→   546→        </div>
+   547→   547→      </div>
+   548→   548→
+   549→   549→      {/* Autosave hint */}
+   550→   550→      <p className="mt-3 text-xs text-muted-foreground">
+   551→   551→        {draft.dirty
+   552→   552→          ? "Draft auto-saves as you type — safe to leave and restore later."
+   553→   553→          : draft.lastSavedAt
+   554→   554→            ? `Draft saved at ${fmtDateTime(draft.lastSavedAt)}.`
+   555→   555→            : "Tip: use Save Draft to keep incomplete entries for later."}
+   556→   556→      </p>
+   557→   557→
+   558→   558→      {/* Sticky mobile action bar */}
+   559→   559→      <div className={cn("sticky bottom-[4.4rem] lg:bottom-4 z-20 mt-4 lg:hidden no-print")}>
+   560→   560→        <div className="rounded-xl border bg-background/95 backdrop-blur shadow-lg p-3 flex items-center gap-2">
+   561→   561→          <Button variant="outline" className="flex-1" onClick={saveDraft} disabled={creating}>
+   562→   562→            <Save className="h-4 w-4 mr-1.5" /> Save Draft
+   563→   563→          </Button>
+   564→   564→          <Button className="flex-1" onClick={createComplaint} disabled={creating}>
+   565→   565→            {creating ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Send className="h-4 w-4 mr-1.5" />}
+   566→   566→            {creating ? "Creating…" : "Create Complaint"}
+   567→   567→          </Button>
+   568→   568→        </div>
+   569→   569→      </div>
+   570→   570→    </div>
+   571→   571→  );
+   572→   572→}
+   573→   573→

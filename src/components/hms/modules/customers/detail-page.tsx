@@ -1,19 +1,21 @@
 "use client";
 
 // MOHD.HMS ENTERPRISE — Customer Detail (dedicated full page, #/customers/{id}).
-// Replaces the former detail dialog: same data, same API (GET /api/v1/customers/{id}).
-// Recent complaints link to their complaint pages, recent invoices to the
-// invoice pages — cross-module navigation flows through the hash router.
+// Replaces the former detail dialog. In-page TABS (no popups): Overview,
+// Equipment, Complaints, Work Orders, Quotations, Invoices — each tab is a
+// lazy-loaded list that links to the record's dedicated page via the hash
+// router. Tabs the signed-in user has no read permission for are hidden.
 
-import { useCallback, useEffect, useState } from "react";
-import { api } from "@/lib/hms/api-client";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { api, qs } from "@/lib/hms/api-client";
 import { hasPerm, useSession } from "@/components/hms/session";
 import { navigateTo } from "@/lib/hms/router";
 import { PageShell } from "@/components/hms/shared/page-shell";
 import { StatCard, StatusBadge, LoadingState, EmptyState, ErrorState } from "@/components/hms/shared/ui-bits";
 import { PERMISSIONS } from "@/lib/hms/constants";
-import { fmtDate, money } from "@/lib/hms/format";
+import { fmtDate, fmtDateTime, money } from "@/lib/hms/format";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Pencil } from "lucide-react";
 
 // ── Types ──
@@ -24,15 +26,72 @@ type CustomerDetail = {
   createdAt: string;
   portalUser: { id: string; email: string; name: string; status: string } | null;
   _count: { equipment: number; complaints: number; invoices: number; workOrders: number; quotations: number; payments: number };
-  complaints: { id: string; code: string; title: string; status: string; priority: string; createdAt: string }[];
-  invoices: { id: string; code: string; totalCents: number; paidCents: number; status: string; invoiceDate: string }[];
 };
+
+type EquipmentRow = { id: string; assetTag: string; name: string; category: string; status: string };
+type ComplaintRow = { id: string; code: string; title: string; status: string; priority: string; createdAt: string };
+type WorkOrderRow = { id: string; code: string; title: string; status: string; scheduledDate: string | null };
+type QuotationRow = { id: string; code: string; quotationDate: string; status: string; totalCents: number };
+type InvoiceRow = { id: string; code: string; invoiceDate: string; status: string; totalCents: number; paidCents: number };
+
+// ── Generic lazy tab list (Loading / Empty / Error / Success) ──
+
+function TabResourceList<T>({ load, row, emptyTitle, emptyHint }: {
+  load: () => Promise<T[]>;
+  row: (item: T) => ReactNode;
+  emptyTitle: string;
+  emptyHint: string;
+}) {
+  const [rows, setRows] = useState<T[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function run() {
+      setError(null);
+      try {
+        const d = await load();
+        if (!cancelled) setRows(d);
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : "Could not load this list.");
+      }
+    }
+    run();
+    return () => { cancelled = true; };
+  }, [load, tick]);
+
+  if (rows === null && error) return <ErrorState message={error} onRetry={() => setTick((t) => t + 1)} />;
+  if (rows === null) return <LoadingState label="Loading…" rows={5} />;
+  if (rows.length === 0) return <EmptyState title={emptyTitle} hint={emptyHint} />;
+  return (
+    <div className="divide-y rounded-lg border">
+      {rows.map((item) => (
+        <div key={(item as { id?: string }).id ?? JSON.stringify(item)}>{row(item)}</div>
+      ))}
+    </div>
+  );
+}
+
+/** Row link shared by every tab — navigates to the record's dedicated page. */
+function RowLink({ href, children }: { href: string; children: ReactNode }) {
+  return (
+    <a href={href} className="flex items-center gap-3 px-3 py-2 hover:bg-accent transition-colors text-sm">
+      {children}
+    </a>
+  );
+}
 
 // ── Page ──
 
 export function CustomerDetailPage({ id }: { id: string }) {
   const { user } = useSession();
   const canUpdate = hasPerm(user, PERMISSIONS.customers_update);
+  const canReadEquipment = hasPerm(user, PERMISSIONS.equipment_read);
+  const canReadComplaints = hasPerm(user, PERMISSIONS.complaints_read);
+  const canReadWorkOrders = hasPerm(user, PERMISSIONS.work_orders_read);
+  const canReadQuotations = hasPerm(user, PERMISSIONS.quotations_read);
+  const canReadInvoices = hasPerm(user, PERMISSIONS.invoices_read);
 
   const [detail, setDetail] = useState<CustomerDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -52,6 +111,28 @@ export function CustomerDetailPage({ id }: { id: string }) {
   }, [id]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Stable per-customer loaders for the lazy tabs.
+  const loadEquipment = useCallback(
+    () => api.get<EquipmentRow[]>(`/api/v1/equipment${qs({ customerId: id, pageSize: 200 })}`).then((r) => r.data),
+    [id]
+  );
+  const loadComplaints = useCallback(
+    () => api.get<ComplaintRow[]>(`/api/v1/complaints${qs({ customerId: id, pageSize: 200 })}`).then((r) => r.data),
+    [id]
+  );
+  const loadWorkOrders = useCallback(
+    () => api.get<WorkOrderRow[]>(`/api/v1/work-orders${qs({ customerId: id, pageSize: 200 })}`).then((r) => r.data),
+    [id]
+  );
+  const loadQuotations = useCallback(
+    () => api.get<QuotationRow[]>(`/api/v1/quotations${qs({ customerId: id, pageSize: 200 })}`).then((r) => r.data),
+    [id]
+  );
+  const loadInvoices = useCallback(
+    () => api.get<InvoiceRow[]>(`/api/v1/invoices${qs({ customerId: id, pageSize: 200 })}`).then((r) => r.data),
+    [id]
+  );
 
   if (loading && !detail) {
     return (
@@ -95,92 +176,154 @@ export function CustomerDetailPage({ id }: { id: string }) {
         </div>
       }
     >
-      {/* Engagement stats */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-        <StatCard title="Equipment" value={detail._count.equipment} />
-        <StatCard title="Complaints" value={detail._count.complaints} />
-        <StatCard title="Work orders" value={detail._count.workOrders} />
-      </div>
+      <Tabs defaultValue="overview" className="space-y-4">
+        <TabsList className="flex-wrap h-auto">
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          {canReadEquipment ? <TabsTrigger value="equipment">Equipment ({detail._count.equipment})</TabsTrigger> : null}
+          {canReadComplaints ? <TabsTrigger value="complaints">Complaints ({detail._count.complaints})</TabsTrigger> : null}
+          {canReadWorkOrders ? <TabsTrigger value="work-orders">Work Orders ({detail._count.workOrders})</TabsTrigger> : null}
+          {canReadQuotations ? <TabsTrigger value="quotations">Quotations ({detail._count.quotations})</TabsTrigger> : null}
+          {canReadInvoices ? <TabsTrigger value="invoices">Invoices ({detail._count.invoices})</TabsTrigger> : null}
+        </TabsList>
 
-      {/* Record information */}
-      <div className="rounded-xl border bg-card shadow-sm p-4 sm:p-5">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
-          <div className="space-y-1">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">Address</p>
-            <p>{[detail.address, detail.city].filter(Boolean).join(", ") || "—"}</p>
+        {/* ── Overview ── */}
+        <TabsContent value="overview" className="space-y-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <StatCard title="Equipment" value={detail._count.equipment} />
+            <StatCard title="Complaints" value={detail._count.complaints} />
+            <StatCard title="Work orders" value={detail._count.workOrders} />
           </div>
-          <div className="space-y-1">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">Portal account</p>
-            <p className="flex items-center gap-2">
-              {detail.portalUser ? (
-                <>
-                  <StatusBadge status={detail.portalUser.status} />
-                  <span className="truncate">{detail.portalUser.email}</span>
-                </>
-              ) : "No portal user"}
-            </p>
+
+          <div className="rounded-xl border bg-card shadow-sm p-4 sm:p-5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+              <div className="space-y-1">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Address</p>
+                <p>{[detail.address, detail.city].filter(Boolean).join(", ") || "—"}</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Portal account</p>
+                <p className="flex items-center gap-2">
+                  {detail.portalUser ? (
+                    <>
+                      <StatusBadge status={detail.portalUser.status} />
+                      <span className="truncate">{detail.portalUser.email}</span>
+                    </>
+                  ) : "No portal user"}
+                </p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Quotations / Invoices</p>
+                <p>{detail._count.quotations} / {detail._count.invoices}</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Customer since</p>
+                <p>{fmtDate(detail.createdAt)}</p>
+              </div>
+            </div>
+            {detail.notes ? (
+              <div className="mt-4 space-y-1 text-sm">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Notes</p>
+                <p className="whitespace-pre-wrap rounded-lg bg-muted/40 p-3">{detail.notes}</p>
+              </div>
+            ) : null}
           </div>
-          <div className="space-y-1">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">Quotations / Invoices</p>
-            <p>{detail._count.quotations} / {detail._count.invoices}</p>
-          </div>
-          <div className="space-y-1">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">Customer since</p>
-            <p>{fmtDate(detail.createdAt)}</p>
-          </div>
-        </div>
-        {detail.notes ? (
-          <div className="mt-4 space-y-1 text-sm">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">Notes</p>
-            <p className="whitespace-pre-wrap rounded-lg bg-muted/40 p-3">{detail.notes}</p>
-          </div>
+        </TabsContent>
+
+        {/* ── Equipment ── */}
+        {canReadEquipment ? (
+          <TabsContent value="equipment">
+            <TabResourceList<EquipmentRow>
+              load={loadEquipment}
+              emptyTitle="No equipment registered"
+              emptyHint="Units installed for this customer will appear here."
+              row={(eq) => (
+                <RowLink href={`#/equipment/${encodeURIComponent(eq.id)}`}>
+                  <span className="font-mono text-xs text-muted-foreground w-24 shrink-0">{eq.assetTag}</span>
+                  <span className="flex-1 min-w-0 truncate">{eq.name}</span>
+                  <span className="hidden sm:inline text-xs text-muted-foreground">{eq.category}</span>
+                  <StatusBadge status={eq.status} />
+                </RowLink>
+              )}
+            />
+          </TabsContent>
         ) : null}
-      </div>
 
-      {/* Recent complaints → complaint detail pages */}
-      <div className="rounded-xl border bg-card shadow-sm p-4 sm:p-5">
-        <p className="text-sm font-medium mb-2">Recent complaints</p>
-        {detail.complaints.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No complaints logged.</p>
-        ) : (
-          <div className="divide-y rounded-lg border">
-            {detail.complaints.map((c) => (
-              <a
-                key={c.id}
-                href={`#/complaints/${encodeURIComponent(c.id)}`}
-                className="flex items-center gap-3 px-3 py-2 hover:bg-accent transition-colors"
-              >
-                <span className="font-mono text-xs text-muted-foreground w-24 shrink-0">{c.code}</span>
-                <span className="flex-1 min-w-0 truncate text-sm">{c.title}</span>
-                <StatusBadge status={c.priority} />
-                <StatusBadge status={c.status} />
-              </a>
-            ))}
-          </div>
-        )}
-      </div>
+        {/* ── Complaints ── */}
+        {canReadComplaints ? (
+          <TabsContent value="complaints">
+            <TabResourceList<ComplaintRow>
+              load={loadComplaints}
+              emptyTitle="No complaints logged"
+              emptyHint="Complaints for this customer will appear here."
+              row={(c) => (
+                <RowLink href={`#/complaints/${encodeURIComponent(c.id)}`}>
+                  <span className="font-mono text-xs text-muted-foreground w-24 shrink-0">{c.code}</span>
+                  <span className="flex-1 min-w-0 truncate">{c.title}</span>
+                  <StatusBadge status={c.priority} />
+                  <StatusBadge status={c.status} />
+                </RowLink>
+              )}
+            />
+          </TabsContent>
+        ) : null}
 
-      {/* Recent invoices → invoice detail pages */}
-      <div className="rounded-xl border bg-card shadow-sm p-4 sm:p-5">
-        <p className="text-sm font-medium mb-2">Recent invoices</p>
-        {detail.invoices.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No invoices issued.</p>
-        ) : (
-          <div className="divide-y rounded-lg border">
-            {detail.invoices.map((inv) => (
-              <a
-                key={inv.id}
-                href={`#/invoices/${encodeURIComponent(inv.id)}`}
-                className="flex items-center gap-3 px-3 py-2 hover:bg-accent transition-colors"
-              >
-                <span className="font-mono text-xs text-muted-foreground w-24 shrink-0">{inv.code}</span>
-                <span className="flex-1 text-sm">{money(inv.totalCents)} <span className="text-muted-foreground">({money(inv.paidCents)} paid)</span></span>
-                <StatusBadge status={inv.status} />
-              </a>
-            ))}
-          </div>
-        )}
-      </div>
+        {/* ── Work Orders ── */}
+        {canReadWorkOrders ? (
+          <TabsContent value="work-orders">
+            <TabResourceList<WorkOrderRow>
+              load={loadWorkOrders}
+              emptyTitle="No work orders"
+              emptyHint="Work orders raised for this customer will appear here."
+              row={(w) => (
+                <RowLink href={`#/work-orders/${encodeURIComponent(w.id)}`}>
+                  <span className="font-mono text-xs text-muted-foreground w-24 shrink-0">{w.code}</span>
+                  <span className="flex-1 min-w-0 truncate">{w.title}</span>
+                  {w.scheduledDate ? <span className="hidden sm:inline text-xs text-muted-foreground">{fmtDate(w.scheduledDate)}</span> : null}
+                  <StatusBadge status={w.status} />
+                </RowLink>
+              )}
+            />
+          </TabsContent>
+        ) : null}
+
+        {/* ── Quotations ── */}
+        {canReadQuotations ? (
+          <TabsContent value="quotations">
+            <TabResourceList<QuotationRow>
+              load={loadQuotations}
+              emptyTitle="No quotations"
+              emptyHint="Quotations prepared for this customer will appear here."
+              row={(q) => (
+                <RowLink href={`#/quotations/${encodeURIComponent(q.id)}`}>
+                  <span className="font-mono text-xs text-muted-foreground w-24 shrink-0">{q.code}</span>
+                  <span className="flex-1 min-w-0 truncate">{fmtDate(q.quotationDate)}</span>
+                  <span className="text-xs">{money(q.totalCents)}</span>
+                  <StatusBadge status={q.status} />
+                </RowLink>
+              )}
+            />
+          </TabsContent>
+        ) : null}
+
+        {/* ── Invoices ── */}
+        {canReadInvoices ? (
+          <TabsContent value="invoices">
+            <TabResourceList<InvoiceRow>
+              load={loadInvoices}
+              emptyTitle="No invoices issued"
+              emptyHint="Invoices for this customer will appear here."
+              row={(inv) => (
+                <RowLink href={`#/invoices/${encodeURIComponent(inv.id)}`}>
+                  <span className="font-mono text-xs text-muted-foreground w-24 shrink-0">{inv.code}</span>
+                  <span className="flex-1 min-w-0 truncate">{fmtDateTime(inv.invoiceDate)}</span>
+                  <span className="text-xs">{money(inv.totalCents)} <span className="text-muted-foreground">({money(inv.paidCents)} paid)</span></span>
+                  <StatusBadge status={inv.status} />
+                </RowLink>
+              )}
+            />
+          </TabsContent>
+        ) : null}
+      </Tabs>
     </PageShell>
   );
 }
