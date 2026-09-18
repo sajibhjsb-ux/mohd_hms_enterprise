@@ -2,8 +2,8 @@
 
 // MOHD.HMS ENTERPRISE — dedicated Mark/Edit Attendance page (hr/attendance view).
 // Replaces the former "Mark Attendance" dialog. Routing (hash router):
-//   #/hr/attendance/new    → create — defaults to today's date
-//   #/hr/attendance/{id}   → edit — prefilled from the attendance record
+//   /hr/attendance/new    → create — defaults to today's date
+//   /hr/attendance/{id}   → edit — prefilled from the attendance record
 //
 // The record id alone doesn't carry its date, so the edit page pulls the
 // attendance list (the same GET /api/v1/hr/attendance endpoint the register
@@ -209,8 +209,8 @@ export function HrAttendancePage({ attendanceId }: { attendanceId: string }) {
   if (!canManage) {
     return (
       <PageShell
-        backLabel="Back to HR" backHref="#/hr"
-        crumbs={[{ label: "HR", href: "#/hr" }, { label: "Attendance" }, { label: "Mark Attendance" }]}
+        backLabel="Back to HR" backHref="/hr"
+        crumbs={[{ label: "HR", href: "/hr" }, { label: "Attendance" }, { label: "Mark Attendance" }]}
         title="Mark Attendance"
       >
         <EmptyState
@@ -225,8 +225,8 @@ export function HrAttendancePage({ attendanceId }: { attendanceId: string }) {
   if (isEdit && recordLoading) {
     return (
       <PageShell
-        backLabel="Back to HR" backHref="#/hr"
-        crumbs={[{ label: "HR", href: "#/hr" }, { label: "Attendance" }, { label: "Edit Attendance" }]}
+        backLabel="Back to HR" backHref="/hr"
+        crumbs={[{ label: "HR", href: "/hr" }, { label: "Attendance" }, { label: "Edit Attendance" }]}
         title="Edit Attendance"
       >
         <LoadingState label="Loading attendance record…" rows={3} />
@@ -236,8 +236,8 @@ export function HrAttendancePage({ attendanceId }: { attendanceId: string }) {
   if (isEdit && recordError) {
     return (
       <PageShell
-        backLabel="Back to HR" backHref="#/hr"
-        crumbs={[{ label: "HR", href: "#/hr" }, { label: "Attendance" }, { label: "Edit Attendance" }]}
+        backLabel="Back to HR" backHref="/hr"
+        crumbs={[{ label: "HR", href: "/hr" }, { label: "Attendance" }, { label: "Edit Attendance" }]}
         title="Edit Attendance"
       >
         <ErrorState message={recordError} onRetry={() => void loadRecord()} />
@@ -247,8 +247,8 @@ export function HrAttendancePage({ attendanceId }: { attendanceId: string }) {
   if (isEdit && recordMissing) {
     return (
       <PageShell
-        backLabel="Back to HR" backHref="#/hr"
-        crumbs={[{ label: "HR", href: "#/hr" }, { label: "Attendance" }, { label: "Edit Attendance" }]}
+        backLabel="Back to HR" backHref="/hr"
+        crumbs={[{ label: "HR", href: "/hr" }, { label: "Attendance" }, { label: "Edit Attendance" }]}
         title="Edit Attendance"
       >
         <EmptyState
@@ -277,8 +277,8 @@ export function HrAttendancePage({ attendanceId }: { attendanceId: string }) {
   return (
     <div>
       <PageShell
-        backLabel="Back to HR" backHref="#/hr"
-        crumbs={[{ label: "HR", href: "#/hr" }, { label: "Attendance" }, { label: title }]}
+        backLabel="Back to HR" backHref="/hr"
+        crumbs={[{ label: "HR", href: "/hr" }, { label: "Attendance" }, { label: title }]}
         title={title}
         description={description}
         actions={employeesError ? undefined : <div className="hidden sm:flex items-center gap-2 no-print">{saveButton}</div>}

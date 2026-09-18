@@ -7,10 +7,10 @@
 //
 // NAVIGATION ARCHITECTURE — dedicated pages, no popup CRUD:
 // Every business form/detail/management view is a full page addressed by a
-// hash route (#/complaints/new, #/complaints/{id}, …). The shell owns the
-// location.hash ⇄ ui-store sync, so browser Back/Forward and direct URLs work.
-// While any form page is dirty, route changes are guarded by a confirm dialog
-// ("Leave with unsaved changes?") — drafts auto-save as a second safety net.
+// path route (/complaints/new, /complaints/{id}, …). The shell owns the
+// location pathname ⇄ ui-store sync, so browser Back/Forward and direct URLs
+// work. While any form page is dirty, route changes are guarded by a confirm
+// dialog ("Leave with unsaved changes?") — drafts auto-save as a second safety net.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
@@ -23,7 +23,7 @@ import { Badge } from "@/components/ui/badge";
 import { ClientApiError, api } from "@/lib/hms/api-client";
 import { hasPerm, useSession } from "./session";
 import { useUi } from "@/lib/hms/ui-store";
-import { hrefFor, navigateTo, parseHash, replaceHash } from "@/lib/hms/router";
+import { ROUTE_EVENT, hrefFor, navigateTo, parsePath, replacePath } from "@/lib/hms/router";
 import { MODULES, type ModuleDef } from "./registry";
 import { humanize } from "@/lib/hms/constants";
 import { cn } from "@/lib/utils";
@@ -65,25 +65,25 @@ export function AppShell() {
   const visibleRef = useRef<ModuleDef[]>(visible);
   useEffect(() => { visibleRef.current = visible; }, [visible]);
 
-  /** Hash of the page currently rendered (drives guard + no-op detection). */
+  /** Path of the page currently rendered (drives guard + no-op detection). */
   const appliedHashRef = useRef<string>("");
 
-  const applyHash = useCallback((hash: string) => {
+  const applyRoute = useCallback((path: string) => {
     // Re-applying the page we're already on (e.g. browser Back returning to a
     // dirty form after "Stay") must be a no-op — it must NOT clear dirtiness.
-    // The comparison includes the query string so drill-down URLs (#/complaints
+    // The comparison includes the query string so drill-down URLs (/complaints
     // ?status=active) re-apply correctly and plain URLs clear the filters.
     const vis = visibleRef.current;
-    const parsed = parseHash(hash);
+    const parsed = parsePath(path);
     let target = parsed?.module;
     let seg = parsed?.seg ?? [];
     const query = parsed?.query ?? "";
     const canonical = hrefFor(target ?? "dashboard", seg) + (query ? `?${new URLSearchParams(query).toString()}` : "");
-    if (hash && canonical === appliedHashRef.current) return hash;
+    if (path && canonical === appliedHashRef.current) return path;
     if (!target || (vis.length > 0 && !vis.some((m) => m.key === target))) {
       target = vis[0]?.key ?? "dashboard";
       seg = [];
-      replaceHash(hrefFor(target, seg));
+      replacePath(hrefFor(target, seg));
     }
     const routeQuery = parsed && parsed.module === target ? query : "";
     const canonicalRoute = hrefFor(target, seg) + (routeQuery ? `?${new URLSearchParams(routeQuery).toString()}` : "");
@@ -98,24 +98,29 @@ export function AppShell() {
     return appliedHashRef.current;
   }, []);
 
-  // Hash ⇄ store sync. Mounted once the user is authenticated so role-based
-  // fallbacks resolve; also handles direct URLs (#/complaints/{id}) after login.
+  // Path ⇄ store sync. Mounted once the user is authenticated so role-based
+  // fallbacks resolve; also handles direct URLs (/complaints/{id}) after login.
   useEffect(() => {
     if (!user) return;
-    applyHash(window.location.hash || `#${visibleRef.current[0]?.key ?? "dashboard"}`);
-    const onHashChange = () => {
-      const next = window.location.hash;
+    const currentPath = () => window.location.pathname + window.location.search;
+    applyRoute(currentPath() || `/${visibleRef.current[0]?.key ?? "dashboard"}`);
+    const onRouteChange = () => {
+      const next = currentPath();
       if (useUi.getState().pageDirty && next !== appliedHashRef.current) {
         // Keep rendering the form until the user confirms; URL shows the target.
         setPendingNav(next);
         return;
       }
-      applyHash(next);
+      applyRoute(next);
     };
-    window.addEventListener("hashchange", onHashChange);
-    if (!window.location.hash) replaceHash(appliedHashRef.current);
-    return () => window.removeEventListener("hashchange", onHashChange);
-  }, [user, applyHash]);
+    window.addEventListener("popstate", onRouteChange);
+    window.addEventListener(ROUTE_EVENT, onRouteChange);
+    if (window.location.pathname === "/") replacePath(appliedHashRef.current);
+    return () => {
+      window.removeEventListener("popstate", onRouteChange);
+      window.removeEventListener(ROUTE_EVENT, onRouteChange);
+    };
+  }, [user, applyRoute]);
 
   // Deep link handling (QR scans land on /?resource=equipment:{qrToken})
   useEffect(() => {
@@ -132,7 +137,7 @@ export function AppShell() {
 
   useEffect(() => {
     if (deepLink && visible.some((m) => m.key === deepLink.type)) {
-      if (!window.location.hash) navigateTo(deepLink.type);
+      if (window.location.pathname === "/") navigateTo(deepLink.type);
     }
   }, [deepLink, visible]);
 
@@ -262,7 +267,7 @@ export function AppShell() {
               const target = pendingNav;
               setPendingNav(null);
               useUi.getState().setPageDirty(false);
-              if (target) applyHash(target);
+              if (target) applyRoute(target);
             }}>
               Leave anyway
             </Button>

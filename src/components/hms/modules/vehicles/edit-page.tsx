@@ -193,7 +193,7 @@ export function VehiclesEditPage({ id }: { id: string }) {
   }
 
   const backLabel = "Back to Vehicles";
-  const backHref = "#/vehicles";
+  const backHref = "/vehicles";
 
   if (!canManage) {
     return (
@@ -234,7 +234,7 @@ export function VehiclesEditPage({ id }: { id: string }) {
     <PageShell
       backLabel={backLabel}
       backHref={backHref}
-      crumbs={[{ label: "Vehicles", href: "#/vehicles" }, { label: vehicle.code, href: "#/vehicles" }, { label: "Edit" }]}
+      crumbs={[{ label: "Vehicles", href: "/vehicles" }, { label: vehicle.code, href: "/vehicles" }, { label: "Edit" }]}
       title={`Edit ${vehicle.code}`}
       description="Update registration, assignment or service details."
       actions={

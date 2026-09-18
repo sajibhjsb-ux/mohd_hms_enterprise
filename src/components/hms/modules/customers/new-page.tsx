@@ -122,8 +122,8 @@ export function CustomerNewPage() {
     return (
       <PageShell
         backLabel="Back to Customers"
-        backHref="#/customers"
-        crumbs={[{ label: "Customers", href: "#/customers" }, { label: "New Customer" }]}
+        backHref="/customers"
+        crumbs={[{ label: "Customers", href: "/customers" }, { label: "New Customer" }]}
         title="New Customer"
       >
         <EmptyState
@@ -144,8 +144,8 @@ export function CustomerNewPage() {
   return (
     <PageShell
       backLabel="Back to Customers"
-      backHref="#/customers"
-      crumbs={[{ label: "Customers", href: "#/customers" }, { label: "New Customer" }]}
+      backHref="/customers"
+      crumbs={[{ label: "Customers", href: "/customers" }, { label: "New Customer" }]}
       title="New Customer"
       description="Code is generated automatically. Optionally provision a portal login."
       actions={<div className="hidden sm:flex items-center gap-2 no-print">{createButton}</div>}

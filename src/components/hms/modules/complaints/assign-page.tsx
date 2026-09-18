@@ -1,6 +1,6 @@
 "use client";
 
-// MOHD.HMS ENTERPRISE — Assign Technician (dedicated full page, #/complaints/{id}/assign).
+// MOHD.HMS ENTERPRISE — Assign Technician (dedicated full page, /complaints/{id}/assign).
 // Replaces the former in-dialog assign section per the page-navigation
 // architecture: complaint information + technician selector + note + action.
 // Same API as before: POST /api/v1/complaints/{id}/transition {action:"assign"}.
@@ -96,7 +96,7 @@ export function ComplaintAssignPage({ id }: { id: string }) {
 
   if (!canAssign) {
     return (
-      <PageShell backLabel="Back to Complaints" backHref="#/complaints" title="Assign technician">
+      <PageShell backLabel="Back to Complaints" backHref="/complaints" title="Assign technician">
         <EmptyState
           title="You don't have permission to assign complaints"
           hint="Assignment is limited to supervisors, admins and super admins. Contact your administrator if you believe this is a mistake."
@@ -107,7 +107,7 @@ export function ComplaintAssignPage({ id }: { id: string }) {
 
   if (loading && !complaint) {
     return (
-      <PageShell backLabel="Back to Complaints" backHref="#/complaints" title="Assign technician">
+      <PageShell backLabel="Back to Complaints" backHref="/complaints" title="Assign technician">
         <LoadingState label="Loading complaint…" rows={3} />
       </PageShell>
     );
@@ -115,7 +115,7 @@ export function ComplaintAssignPage({ id }: { id: string }) {
 
   if (loadError && !complaint) {
     return (
-      <PageShell backLabel="Back to Complaints" backHref="#/complaints" title="Assign technician">
+      <PageShell backLabel="Back to Complaints" backHref="/complaints" title="Assign technician">
         <ErrorState message={loadError} onRetry={load} />
       </PageShell>
     );
@@ -123,7 +123,7 @@ export function ComplaintAssignPage({ id }: { id: string }) {
 
   if (!complaint) {
     return (
-      <PageShell backLabel="Back to Complaints" backHref="#/complaints" title="Assign technician">
+      <PageShell backLabel="Back to Complaints" backHref="/complaints" title="Assign technician">
         <EmptyState title="Complaint not found" hint="It may have been removed or the link is incorrect." />
       </PageShell>
     );
@@ -133,8 +133,8 @@ export function ComplaintAssignPage({ id }: { id: string }) {
     return (
       <PageShell
         backLabel="Back to Complaints"
-        backHref="#/complaints"
-        crumbs={[{ label: "Complaints", href: "#/complaints" }, { label: complaint.code, href: `#/complaints/${encodeURIComponent(complaint.id)}` }, { label: "Assign" }]}
+        backHref="/complaints"
+        crumbs={[{ label: "Complaints", href: "/complaints" }, { label: complaint.code, href: `/complaints/${encodeURIComponent(complaint.id)}` }, { label: "Assign" }]}
         title="Assign technician"
         description="This complaint is no longer awaiting assignment."
       >
@@ -150,8 +150,8 @@ export function ComplaintAssignPage({ id }: { id: string }) {
   return (
     <PageShell
       backLabel="Back to Complaints"
-      backHref={`#/complaints/${encodeURIComponent(complaint.id)}`}
-      crumbs={[{ label: "Complaints", href: "#/complaints" }, { label: complaint.code, href: `#/complaints/${encodeURIComponent(complaint.id)}` }, { label: "Assign technician" }]}
+      backHref={`/complaints/${encodeURIComponent(complaint.id)}`}
+      crumbs={[{ label: "Complaints", href: "/complaints" }, { label: complaint.code, href: `/complaints/${encodeURIComponent(complaint.id)}` }, { label: "Assign technician" }]}
       title="Assign technician"
       description="Send this complaint to a technician to start the workflow."
       actions={

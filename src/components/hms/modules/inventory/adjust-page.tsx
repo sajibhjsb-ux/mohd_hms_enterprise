@@ -142,8 +142,8 @@ export function ItemAdjustPage({ id }: { id: string }) {
     return (
       <PageShell
         backLabel="Back to Inventory"
-        backHref="#/inventory"
-        crumbs={[{ label: "Inventory", href: "#/inventory" }, { label: "Stock Adjustment" }]}
+        backHref="/inventory"
+        crumbs={[{ label: "Inventory", href: "/inventory" }, { label: "Stock Adjustment" }]}
         title="Adjust stock"
       >
         <LoadingState label="Loading item…" rows={4} />
@@ -155,8 +155,8 @@ export function ItemAdjustPage({ id }: { id: string }) {
     return (
       <PageShell
         backLabel="Back to Inventory"
-        backHref="#/inventory"
-        crumbs={[{ label: "Inventory", href: "#/inventory" }, { label: "Stock Adjustment" }]}
+        backHref="/inventory"
+        crumbs={[{ label: "Inventory", href: "/inventory" }, { label: "Stock Adjustment" }]}
         title="Adjust stock"
       >
         <EmptyState title="Could not load this item" hint={loadError} />
@@ -168,8 +168,8 @@ export function ItemAdjustPage({ id }: { id: string }) {
     return (
       <PageShell
         backLabel="Back to Inventory"
-        backHref="#/inventory"
-        crumbs={[{ label: "Inventory", href: "#/inventory" }, { label: "Stock Adjustment" }]}
+        backHref="/inventory"
+        crumbs={[{ label: "Inventory", href: "/inventory" }, { label: "Stock Adjustment" }]}
         title="Adjust stock"
       >
         <EmptyState title="Item not found" hint="It may have been removed or the link is incorrect." />
@@ -180,8 +180,8 @@ export function ItemAdjustPage({ id }: { id: string }) {
   return (
     <PageShell
       backLabel="Back to Inventory"
-      backHref="#/inventory"
-      crumbs={[{ label: "Inventory", href: "#/inventory" }, { label: item.sku }, { label: "Stock Adjustment" }]}
+      backHref="/inventory"
+      crumbs={[{ label: "Inventory", href: "/inventory" }, { label: item.sku }, { label: "Stock Adjustment" }]}
       title={`Adjust stock — ${item.sku}`}
       description="Every movement is recorded in the ledger with the resulting balance."
       actions={

@@ -93,7 +93,7 @@ export function FinanceNewExpensePage() {
 
   if (!canManage) {
     return (
-      <PageShell backLabel="Back to Finance" backHref="#/finance" title="Add Expense">
+      <PageShell backLabel="Back to Finance" backHref="/finance" title="Add Expense">
         <EmptyState
           title="You don't have permission to record expenses"
           hint="Expense submission is limited to finance managers, admins and super admins. Contact your administrator if you believe this is a mistake."
@@ -112,8 +112,8 @@ export function FinanceNewExpensePage() {
   return (
     <PageShell
       backLabel="Back to Finance"
-      backHref="#/finance"
-      crumbs={[{ label: "Finance", href: "#/finance" }, { label: "Expenses", href: "#/finance/expenses" }, { label: "New Expense" }]}
+      backHref="/finance"
+      crumbs={[{ label: "Finance", href: "/finance" }, { label: "Expenses", href: "/finance/expenses" }, { label: "New Expense" }]}
       title="Add Expense"
       description="Submitted expenses start as PENDING until a finance manager approves them."
       actions={<div className="hidden sm:flex items-center gap-2 no-print">{actions}</div>}

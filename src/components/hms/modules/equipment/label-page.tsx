@@ -44,10 +44,10 @@ export function EquipmentLabelPage({ id }: { id: string }) {
   return (
     <PageShell
       backLabel="Back to Equipment"
-      backHref="#/equipment"
+      backHref="/equipment"
       crumbs={[
-        { label: "Equipment", href: "#/equipment" },
-        { label: qr?.name ?? qr?.assetTag ?? "…", href: `#/equipment/${encodeURIComponent(id)}` },
+        { label: "Equipment", href: "/equipment" },
+        { label: qr?.name ?? qr?.assetTag ?? "…", href: `/equipment/${encodeURIComponent(id)}` },
         { label: "QR Label" },
       ]}
       title="QR label"

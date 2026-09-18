@@ -3,7 +3,7 @@
 // MOHD.HMS ENTERPRISE — KPI drill-down query hook.
 //
 // Dashboard KPI cards navigate to feature pages with hash query params
-// (e.g. #/complaints?status=active). The shell parses the query on every
+// (e.g. /complaints?status=active). The shell parses the query on every
 // hashchange and stores it per module (ui-store queries). List pages use this
 // hook to read + validate those params, apply them as initial filters, and
 // render/refresh filter chips (see DrilldownChips in shared/ui-bits).
@@ -24,7 +24,7 @@ export type ModuleQuery = {
    * `undefined` (or "") removes the key; an empty object clears everything.
    */
   apply: (next: Record<string, string | undefined>) => void;
-  /** Navigate to the unfiltered module list (#/module). */
+  /** Navigate to the unfiltered module list (/module). */
   clear: () => void;
 };
 

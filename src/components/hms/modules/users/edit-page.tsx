@@ -157,8 +157,8 @@ export function UserEditPage({ id }: { id: string }) {
     return (
       <PageShell
         backLabel="Back to Users"
-        backHref="#/users"
-        crumbs={[{ label: "Users", href: "#/users" }, { label: "Edit" }]}
+        backHref="/users"
+        crumbs={[{ label: "Users", href: "/users" }, { label: "Edit" }]}
         title="Edit user"
       >
         <EmptyState
@@ -173,8 +173,8 @@ export function UserEditPage({ id }: { id: string }) {
     return (
       <PageShell
         backLabel="Back to Users"
-        backHref="#/users"
-        crumbs={[{ label: "Users", href: "#/users" }, { label: "Edit" }]}
+        backHref="/users"
+        crumbs={[{ label: "Users", href: "/users" }, { label: "Edit" }]}
         title="Edit user"
       >
         <LoadingState label="Loading user…" rows={3} />
@@ -186,8 +186,8 @@ export function UserEditPage({ id }: { id: string }) {
     return (
       <PageShell
         backLabel="Back to Users"
-        backHref="#/users"
-        crumbs={[{ label: "Users", href: "#/users" }, { label: "Edit" }]}
+        backHref="/users"
+        crumbs={[{ label: "Users", href: "/users" }, { label: "Edit" }]}
         title="Edit user"
       >
         <ErrorState message={loadError} onRetry={load} />
@@ -199,8 +199,8 @@ export function UserEditPage({ id }: { id: string }) {
     return (
       <PageShell
         backLabel="Back to Users"
-        backHref="#/users"
-        crumbs={[{ label: "Users", href: "#/users" }, { label: "Edit" }]}
+        backHref="/users"
+        crumbs={[{ label: "Users", href: "/users" }, { label: "Edit" }]}
         title="Edit user"
       >
         <EmptyState
@@ -218,8 +218,8 @@ export function UserEditPage({ id }: { id: string }) {
     return (
       <PageShell
         backLabel="Back to Users"
-        backHref="#/users"
-        crumbs={[{ label: "Users", href: "#/users" }, { label: target.name, href: "#/users" }, { label: "Edit" }]}
+        backHref="/users"
+        crumbs={[{ label: "Users", href: "/users" }, { label: target.name, href: "/users" }, { label: "Edit" }]}
         title="Edit user"
       >
         <EmptyState
@@ -235,8 +235,8 @@ export function UserEditPage({ id }: { id: string }) {
   return (
     <PageShell
       backLabel="Back to Users"
-      backHref="#/users"
-      crumbs={[{ label: "Users", href: "#/users" }, { label: target.name, href: "#/users" }, { label: "Edit" }]}
+      backHref="/users"
+      crumbs={[{ label: "Users", href: "/users" }, { label: target.name, href: "/users" }, { label: "Edit" }]}
       title={`Edit ${target.name}`}
       description={`${target.email}${target.technicianProfile ? ` · ${target.technicianProfile.employeeNo}` : ""}`}
       actions={

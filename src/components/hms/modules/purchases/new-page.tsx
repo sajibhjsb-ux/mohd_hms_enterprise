@@ -225,8 +225,8 @@ export function PurchaseNewPage() {
   return (
     <PageShell
       backLabel="Back to Purchases"
-      backHref="#/purchases"
-      crumbs={[{ label: "Purchases", href: "#/purchases" }, { label: "New Purchase Order" }]}
+      backHref="/purchases"
+      crumbs={[{ label: "Purchases", href: "/purchases" }, { label: "New Purchase Order" }]}
       title="New Purchase Order"
       description="Pick supplier, expected delivery and order lines — choose inventory items with prefilled rates or type free-text lines. Totals (6% tax) are computed for you, and your work drafts automatically."
       actions={

@@ -7,9 +7,9 @@
 // NAVIGATION ARCHITECTURE (no popup CRUD): user create / edit are DEDICATED
 // PAGES routed by the hash router (ui-store pages["users"]):
 //   []            → this list page
-//   ["new"]       → UserNewPage    (#/users/new)
-//   [id]          → UserEditPage   (#/users/{id})     — no separate detail
-//   [id, "edit"]  → UserEditPage   (#/users/{id}/edit) — profile + password
+//   ["new"]       → UserNewPage    (/users/new)
+//   [id]          → UserEditPage   (/users/{id})     — no separate detail
+//   [id, "edit"]  → UserEditPage   (/users/{id}/edit) — profile + password
 // Only the disable confirmation remains an AlertDialog (confirm-only dialog).
 
 import { useCallback, useEffect, useState } from "react";

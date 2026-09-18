@@ -105,7 +105,7 @@ export function VehiclesNewPage() {
 
   if (!canManage) {
     return (
-      <PageShell backLabel="Back to Vehicles" backHref="#/vehicles" title="Add Vehicle">
+      <PageShell backLabel="Back to Vehicles" backHref="/vehicles" title="Add Vehicle">
         <EmptyState
           title="You don't have permission to manage vehicles"
           hint="Adding vehicles is limited to supervisors, admins and super admins. Contact your administrator if you believe this is a mistake."
@@ -117,8 +117,8 @@ export function VehiclesNewPage() {
   return (
     <PageShell
       backLabel="Back to Vehicles"
-      backHref="#/vehicles"
-      crumbs={[{ label: "Vehicles", href: "#/vehicles" }, { label: "Add Vehicle" }]}
+      backHref="/vehicles"
+      crumbs={[{ label: "Vehicles", href: "/vehicles" }, { label: "Add Vehicle" }]}
       title="Add Vehicle"
       description="Register a new vehicle to the fleet."
       actions={

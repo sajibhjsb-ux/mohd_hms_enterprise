@@ -58,7 +58,7 @@ export function IrmsSectionNav({ active }: { active: IrmsSection }) {
           return (
             <a
               key={s.key}
-              href={`#/irms${s.seg.length ? `/${s.seg.join("/")}` : ""}`}
+              href={`/irms${s.seg.length ? `/${s.seg.join("/")}` : ""}`}
               aria-current={isActive ? "page" : undefined}
               className={cn(
                 "inline-flex min-h-[40px] items-center justify-center whitespace-nowrap rounded-md px-3.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
@@ -126,7 +126,7 @@ export function IrmsDashboardPage() {
   const kpis = data?.kpis;
   const pendingReports = kpis ? kpis.submitted + kpis.inReview + kpis.managerApproval + kpis.clientReview : 0;
 
-  const myReportsHref = "#/irms/reports?mine=1";
+  const myReportsHref = "/irms/reports?mine=1";
 
   return (
     <div>
@@ -197,7 +197,7 @@ export function IrmsDashboardPage() {
                     {data.recent.map((r) => (
                       <li key={r.id}>
                         <a
-                          href={`#/irms/reports/${r.id}`}
+                          href={`/irms/reports/${r.id}`}
                           className="flex items-center gap-3 rounded-md px-2 py-2.5 transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         >
                           <div className="min-w-0 flex-1">

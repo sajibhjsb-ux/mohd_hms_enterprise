@@ -181,8 +181,8 @@ export function ComplaintEditPage({ id }: { id: string }) {
     return (
       <PageShell
         backLabel="Back to Complaints"
-        backHref="#/complaints"
-        crumbs={[{ label: "Complaints", href: "#/complaints" }, { label: "Edit" }]}
+        backHref="/complaints"
+        crumbs={[{ label: "Complaints", href: "/complaints" }, { label: "Edit" }]}
         title="Edit complaint"
       >
         <EmptyState title="You cannot edit this complaint" hint="Editing requires the complaints update permission." />
@@ -194,8 +194,8 @@ export function ComplaintEditPage({ id }: { id: string }) {
     return (
       <PageShell
         backLabel="Back to Complaints"
-        backHref="#/complaints"
-        crumbs={[{ label: "Complaints", href: "#/complaints" }, { label: "Edit" }]}
+        backHref="/complaints"
+        crumbs={[{ label: "Complaints", href: "/complaints" }, { label: "Edit" }]}
         title="Edit complaint"
       >
         <LoadingState label="Loading complaint…" rows={4} />
@@ -207,8 +207,8 @@ export function ComplaintEditPage({ id }: { id: string }) {
     return (
       <PageShell
         backLabel="Back to Complaints"
-        backHref="#/complaints"
-        crumbs={[{ label: "Complaints", href: "#/complaints" }, { label: "Edit" }]}
+        backHref="/complaints"
+        crumbs={[{ label: "Complaints", href: "/complaints" }, { label: "Edit" }]}
         title="Edit complaint"
       >
         <ErrorState message={loadError} onRetry={load} />
@@ -220,8 +220,8 @@ export function ComplaintEditPage({ id }: { id: string }) {
     return (
       <PageShell
         backLabel="Back to Complaints"
-        backHref="#/complaints"
-        crumbs={[{ label: "Complaints", href: "#/complaints" }, { label: "Edit" }]}
+        backHref="/complaints"
+        crumbs={[{ label: "Complaints", href: "/complaints" }, { label: "Edit" }]}
         title="Edit complaint"
       >
         <EmptyState title="Complaint not found" hint="It may have been removed or the link is incorrect." />
@@ -234,10 +234,10 @@ export function ComplaintEditPage({ id }: { id: string }) {
     return (
       <PageShell
         backLabel="Back to complaint"
-        backHref={`#/complaints/${encodeURIComponent(complaint.id)}`}
+        backHref={`/complaints/${encodeURIComponent(complaint.id)}`}
         crumbs={[
-          { label: "Complaints", href: "#/complaints" },
-          { label: complaint.code, href: `#/complaints/${encodeURIComponent(complaint.id)}` },
+          { label: "Complaints", href: "/complaints" },
+          { label: complaint.code, href: `/complaints/${encodeURIComponent(complaint.id)}` },
           { label: "Edit" },
         ]}
         title="Edit complaint"
@@ -255,10 +255,10 @@ export function ComplaintEditPage({ id }: { id: string }) {
   return (
     <PageShell
       backLabel="Back to complaint"
-      backHref={`#/complaints/${encodeURIComponent(complaint.id)}`}
+      backHref={`/complaints/${encodeURIComponent(complaint.id)}`}
       crumbs={[
-        { label: "Complaints", href: "#/complaints" },
-        { label: complaint.code, href: `#/complaints/${encodeURIComponent(complaint.id)}` },
+        { label: "Complaints", href: "/complaints" },
+        { label: complaint.code, href: `/complaints/${encodeURIComponent(complaint.id)}` },
         { label: "Edit" },
       ]}
       title={`Edit ${complaint.code}`}

@@ -28,8 +28,8 @@
 //                      (aggregates vs. list rows differences are documented
 //                      in the KPI report — e.g. collected includes partial
 //                      payments on PARTIALLY_PAID invoices).
-//   expenses         = expense ledger → finance "Expenses" tab
-//                      (#/finance/expenses — existing route).
+// expenses         = expense ledger → finance "Expenses" tab
+  //                      (/finance/expenses — existing route).
 
 import { navigateTo } from "@/lib/hms/router";
 import type { Permission } from "@/lib/hms/constants";
@@ -40,7 +40,7 @@ import { hasPerm } from "@/components/hms/session";
 export type KpiNavTarget = {
   /** Destination module key (registry). */
   module: string;
-  /** Hash segments (e.g. ["expenses"] → #/finance/expenses). */
+  /** Path segments (e.g. ["expenses"] → /finance/expenses). */
   seg?: string[];
   /** Canonical filter params applied by the destination page. */
   query?: Record<string, string>;
@@ -63,7 +63,7 @@ export const KPI_NAV: Record<string, KpiNavTarget> = {
   collected: { module: "invoices", query: { status: "PAID" }, permission: PERMISSIONS.invoices_read },
   outstanding: { module: "invoices", query: { status: "outstanding" }, permission: PERMISSIONS.invoices_read },
   expenses: { module: "finance", seg: ["expenses"], permission: PERMISSIONS.finance_read },
-  // ── IRMS inspection KPIs (destination: #/irms/reports?status=…) ──
+  // ── IRMS inspection KPIs (destination: /irms/reports?status=…) ──
   irmsCompleted: { module: "irms", seg: ["reports"], query: { status: "APPROVED" }, permission: PERMISSIONS.irms_read },
   irmsPending: { module: "irms", seg: ["reports"], query: { status: "SUBMITTED,IN_REVIEW,MANAGER_APPROVAL,CLIENT_REVIEW" }, permission: PERMISSIONS.irms_read },
   irmsDrafts: { module: "irms", seg: ["reports"], query: { status: "DRAFT,REJECTED" }, permission: PERMISSIONS.irms_read },
@@ -71,7 +71,7 @@ export const KPI_NAV: Record<string, KpiNavTarget> = {
   irmsOverdue: { module: "irms", seg: ["reports"], query: { overdue: "1" }, permission: PERMISSIONS.irms_read },
 };
 
-/** Resolved hash href for a KPI, or undefined when the user lacks permission. */
+/** Resolved path href for a KPI, or undefined when the user lacks permission. */
 export function kpiHref(kpi: string, user: SessionUser | null): string | undefined {
   const t = KPI_NAV[kpi];
   if (!t) return undefined;
@@ -79,11 +79,11 @@ export function kpiHref(kpi: string, user: SessionUser | null): string | undefin
   return buildHref(t);
 }
 
-/** Build the hash href for a target (pure; no navigation). */
+/** Build the path href for a target (pure; no navigation). */
 export function buildHref(t: KpiNavTarget): string {
   const seg = (t.seg ?? []).filter(Boolean).map(encodeURIComponent).join("/");
   const qs = t.query ? new URLSearchParams(t.query).toString() : "";
-  return `#/${t.module}${seg ? `/${seg}` : ""}${qs ? `?${qs}` : ""}`;
+  return `/${t.module}${seg ? `/${seg}` : ""}${qs ? `?${qs}` : ""}`;
 }
 
 /** Programmatic navigation for KPI targets (banners, buttons). */

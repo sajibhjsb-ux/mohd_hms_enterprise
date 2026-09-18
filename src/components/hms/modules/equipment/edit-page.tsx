@@ -120,7 +120,7 @@ export function EquipmentEditPage({ id }: { id: string }) {
 
   if (!canUpdate) {
     return (
-      <PageShell backLabel="Back to Equipment" backHref="#/equipment" title="Edit equipment">
+      <PageShell backLabel="Back to Equipment" backHref="/equipment" title="Edit equipment">
         <EmptyState
           title="You don't have permission to edit equipment"
           hint="Asset editing is limited to authorized roles. Contact your administrator if you believe this is a mistake."
@@ -131,7 +131,7 @@ export function EquipmentEditPage({ id }: { id: string }) {
 
   if (loading && !row) {
     return (
-      <PageShell backLabel="Back to Equipment" backHref="#/equipment" title="Edit equipment">
+      <PageShell backLabel="Back to Equipment" backHref="/equipment" title="Edit equipment">
         <LoadingState label="Loading equipment…" rows={4} />
       </PageShell>
     );
@@ -139,7 +139,7 @@ export function EquipmentEditPage({ id }: { id: string }) {
 
   if (loadError && !row) {
     return (
-      <PageShell backLabel="Back to Equipment" backHref="#/equipment" title="Edit equipment">
+      <PageShell backLabel="Back to Equipment" backHref="/equipment" title="Edit equipment">
         <ErrorState message={loadError} onRetry={load} />
       </PageShell>
     );
@@ -157,10 +157,10 @@ export function EquipmentEditPage({ id }: { id: string }) {
   return (
     <PageShell
       backLabel="Back to Equipment"
-      backHref={`#/equipment/${encodeURIComponent(id)}`}
+      backHref={`/equipment/${encodeURIComponent(id)}`}
       crumbs={[
-        { label: "Equipment", href: "#/equipment" },
-        { label: row?.assetTag ?? id, href: `#/equipment/${encodeURIComponent(id)}` },
+        { label: "Equipment", href: "/equipment" },
+        { label: row?.assetTag ?? id, href: `/equipment/${encodeURIComponent(id)}` },
         { label: "Edit" },
       ]}
       title={`Edit ${row?.assetTag ?? ""}`}

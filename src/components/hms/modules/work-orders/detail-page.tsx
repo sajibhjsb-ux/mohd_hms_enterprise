@@ -239,7 +239,7 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
 
   if (loading && !detail) {
     return (
-      <PageShell backLabel="Back to Work Orders" backHref="#/work-orders" title="Work order details">
+      <PageShell backLabel="Back to Work Orders" backHref="/work-orders" title="Work order details">
         <LoadingState label="Loading work order…" rows={4} />
       </PageShell>
     );
@@ -247,7 +247,7 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
 
   if (loadError && !detail) {
     return (
-      <PageShell backLabel="Back to Work Orders" backHref="#/work-orders" title="Work order details">
+      <PageShell backLabel="Back to Work Orders" backHref="/work-orders" title="Work order details">
         <ErrorState message={loadError} onRetry={load} />
       </PageShell>
     );
@@ -255,7 +255,7 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
 
   if (!detail) {
     return (
-      <PageShell backLabel="Back to Work Orders" backHref="#/work-orders" title="Work order details">
+      <PageShell backLabel="Back to Work Orders" backHref="/work-orders" title="Work order details">
         <EmptyState title="Work order not found" hint="It may have been removed or the link is incorrect." />
       </PageShell>
     );
@@ -264,8 +264,8 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
   return (
     <PageShell
       backLabel="Back to Work Orders"
-      backHref="#/work-orders"
-      crumbs={[{ label: "Work Orders", href: "#/work-orders" }, { label: detail.code }]}
+      backHref="/work-orders"
+      crumbs={[{ label: "Work Orders", href: "/work-orders" }, { label: detail.code }]}
       title={detail.title}
       description={`${detail.customer?.companyName ?? "—"}${detail.equipment ? ` · ${detail.equipment.name} (${detail.equipment.assetTag})` : ""} · Created ${fmtDateTime(detail.createdAt)}`}
       actions={
@@ -285,7 +285,7 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
               <span className="font-mono text-muted-foreground">{detail.code}</span>
               {detail.complaint ? (
                 <a
-                  href={`#/complaints/${encodeURIComponent(detail.complaint.id)}`}
+                  href={`/complaints/${encodeURIComponent(detail.complaint.id)}`}
                   className="text-xs text-muted-foreground hover:text-foreground hover:underline underline-offset-2"
                 >
                   Complaint {detail.complaint.code}

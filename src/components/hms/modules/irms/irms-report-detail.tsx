@@ -1,7 +1,7 @@
 "use client";
 
 // MOHD.HMS ENTERPRISE — dedicated Inspection Report detail page (rewrite).
-// Routing: #/irms/reports/{id} (canonical) and legacy #/irms/{id} deep links.
+// Routing: /irms/reports/{id} (canonical) and legacy /irms/{id} deep links.
 //
 // PageShell with back-to-Reports; header shows code + StatusBadge +
 // PriorityBadge + "Rev N" + customer-visibility badge; header actions: Edit
@@ -141,21 +141,21 @@ export function IrmsReportDetailPage({ id }: { id: string }) {
 
   if (loading && !detail) {
     return (
-      <PageShell backLabel="Back to Reports" backHref="#/irms/reports" title="Inspection report">
+      <PageShell backLabel="Back to Reports" backHref="/irms/reports" title="Inspection report">
         <LoadingState label="Loading report…" rows={4} />
       </PageShell>
     );
   }
   if (loadError && !detail) {
     return (
-      <PageShell backLabel="Back to Reports" backHref="#/irms/reports" title="Inspection report">
+      <PageShell backLabel="Back to Reports" backHref="/irms/reports" title="Inspection report">
         <ErrorState message={loadError} onRetry={() => void load()} />
       </PageShell>
     );
   }
   if (!detail) {
     return (
-      <PageShell backLabel="Back to Reports" backHref="#/irms/reports" title="Inspection report">
+      <PageShell backLabel="Back to Reports" backHref="/irms/reports" title="Inspection report">
         <EmptyState title="Report not found" hint="It may have been removed or the link is incorrect." />
       </PageShell>
     );
@@ -171,10 +171,10 @@ export function IrmsReportDetailPage({ id }: { id: string }) {
     <div>
       <PageShell
         backLabel="Back to Reports"
-        backHref="#/irms/reports"
+        backHref="/irms/reports"
         crumbs={[
-          { label: "IRMS", href: "#/irms" },
-          { label: "Reports", href: "#/irms/reports" },
+          { label: "IRMS", href: "/irms" },
+          { label: "Reports", href: "/irms/reports" },
           { label: crumbTitle },
         ]}
         title={`${detail.code} — ${detail.title}`}

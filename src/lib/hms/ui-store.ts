@@ -2,10 +2,10 @@
 
 // MOHD.HMS ENTERPRISE — UI store.
 // activeModule: which module is mounted. pages: per-module "page route" as raw
-// hash segments ([] = list view, ["new"], [id], [id, "edit"], …) so every
+// path segments ([] = list view, ["new"], [id], [id, "edit"], …) so every
 // business form/detail lives on its own dedicated full page (no popup CRUD).
-// The hash router (lib/hms/router.ts) keeps pages in sync with location.hash
-// so browser Back/Forward and direct URLs work.
+// The path router (lib/hms/router.ts) keeps pages in sync with the URL
+// pathname so browser Back/Forward and direct URLs work.
 
 import { create } from "zustand";
 

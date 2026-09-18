@@ -141,7 +141,7 @@ function InventoryList() {
   const { toast } = useToast();
   const canManage = hasPerm(user, PERMISSIONS.inventory_manage satisfies Permission);
 
-  // KPI drill-down (e.g. #/inventory?view=items&stock=low): validated against
+  // KPI drill-down (e.g. /inventory?view=items&stock=low): validated against
   // the module's tabs / filter options, then applied once on mount.
   const dq = useModuleQuery("inventory");
   const viewParam = ["items", "movements", "suppliers"].find((v) => v === dq.params.view?.toLowerCase());

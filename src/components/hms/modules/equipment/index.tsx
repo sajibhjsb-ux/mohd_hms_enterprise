@@ -115,7 +115,7 @@ function EquipmentList() {
   const canUpdate = hasPerm(user, PERMISSIONS.equipment_update);
   const canDelete = hasPerm(user, PERMISSIONS.equipment_delete);
 
-  // KPI drill-down (e.g. #/equipment?status=UNDER_MAINTENANCE): validated
+  // KPI drill-down (e.g. /equipment?status=UNDER_MAINTENANCE): validated
   // against the table's filter option values, then applied once on mount.
   const dq = useModuleQuery("equipment");
   const STATUS_VALUES = ["ACTIVE", "UNDER_MAINTENANCE", "RETIRED"];

@@ -165,8 +165,8 @@ export function ItemNewPage() {
   return (
     <PageShell
       backLabel="Back to Inventory"
-      backHref="#/inventory"
-      crumbs={[{ label: "Inventory", href: "#/inventory" }, { label: "Add Item" }]}
+      backHref="/inventory"
+      crumbs={[{ label: "Inventory", href: "/inventory" }, { label: "Add Item" }]}
       title="Add inventory item"
       description="SKU is generated automatically (ITM-…) when left blank. Opening stock creates the first movement."
       actions={

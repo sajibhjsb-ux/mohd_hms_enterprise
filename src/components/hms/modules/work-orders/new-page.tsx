@@ -209,8 +209,8 @@ export function WorkOrderNewPage() {
   return (
     <PageShell
       backLabel="Back to Work Orders"
-      backHref="#/work-orders"
-      crumbs={[{ label: "Work Orders", href: "#/work-orders" }, { label: "New Work Order" }]}
+      backHref="/work-orders"
+      crumbs={[{ label: "Work Orders", href: "/work-orders" }, { label: "New Work Order" }]}
       title="New Work Order"
       description="Dispatch a job to a technician. Checklist lines and materials can also be added later."
       actions={<div className="hidden sm:flex items-center gap-2 no-print">{actions}</div>}

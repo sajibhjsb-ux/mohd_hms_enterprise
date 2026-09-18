@@ -1,14 +1,14 @@
 "use client";
 
-// MOHD.HMS ENTERPRISE — hash router for dedicated full pages.
+// MOHD.HMS ENTERPRISE — path router for dedicated full pages.
 //
-// The application is a single-route SPA ("/" per platform architecture); every
-// business form, detail and management view is a DEDICATED PAGE addressed by a
-// hash route that stays in sync with the ui-store. This gives us, without new
-// Next.js routes:
-//   • visible URL per page          → #/complaints, #/complaints/new,
-//                                     #/complaints/{id}, #/complaints/{id}/edit
-//   • browser Back / Forward        → native history + hashchange
+// The application is a single-route SPA served by a catch-all Next.js route
+// (app/[[...slug]]); every business form, detail and management view is a
+// DEDICATED PAGE addressed by a clean path URL that stays in sync with the
+// ui-store. This gives us:
+//   • visible URL per page          → /complaints, /complaints/new,
+//                                     /complaints/{id}, /complaints/{id}/edit
+//   • browser Back / Forward        → native history + popstate
 //   • direct URLs (deep links)      → parsed on shell mount after auth
 //
 // Segment conventions:
@@ -21,12 +21,15 @@
 
 import { useUi } from "@/lib/hms/ui-store";
 
-/** Suffix views addressed as #/module/{id}/{view}. */
+/** Suffix views addressed as /module/{id}/{view}. */
 export const SUFFIX_VIEWS = new Set(["edit", "assign", "adjust", "payment", "label", "complete"]);
+
+/** Custom event fired on the window after a path change (nav / Back / Forward). */
+export const ROUTE_EVENT = "hms:route";
 
 export type ModulePageInfo = { view: "list" | "new" | "detail" | (string & {}); id?: string };
 
-/** Interpret raw hash segments for a module. */
+/** Interpret raw path segments for a module. */
 export function pageFromSeg(seg: string[]): ModulePageInfo {
   const [a, b, c] = seg;
   if (!a) return { view: "list" };
@@ -39,13 +42,13 @@ export function pageFromSeg(seg: string[]): ModulePageInfo {
 }
 
 /**
- * Canonical hash href for a module page. `query` renders as URL query params
- * after the path (e.g. #/complaints?status=active) — used for KPI drill-down.
+ * Canonical path href for a module page. `query` renders as URL query params
+ * after the path (e.g. /complaints?status=active) — used for KPI drill-down.
  */
 export function hrefFor(module: string, seg: string[] = [], query?: Record<string, string>): string {
   const clean = seg.filter((s) => s !== "").map(encodeURIComponent);
   const qs = canonicalQuery(query);
-  return `#/${module}${clean.length ? `/${clean.join("/")}` : ""}${qs ? `?${qs}` : ""}`;
+  return `/${module}${clean.length ? `/${clean.join("/")}` : ""}${qs ? `?${qs}` : ""}`;
 }
 
 /** Encode a query object into a canonical URLSearchParams string (stable order/encoding). */
@@ -64,11 +67,14 @@ export function parseQueryParams(query: string): Record<string, string> {
   return Object.fromEntries(new URLSearchParams(query));
 }
 
-/** Parse a location.hash into a route target (null when absent/unparsable).
- *  Query params after "?" are returned raw (path segments never contain "?"). */
-export function parseHash(hash: string): { module: string; seg: string[]; query: string } | null {
-  const h = hash.replace(/^#\/?/, "").trim();
+/** Parse a location pathname (or legacy "#/..." hash) into a route target
+ *  (null when absent/unparsable). Query params after "?" are returned raw
+ *  (path segments never contain "?"). */
+export function parsePath(input: string): { module: string; seg: string[]; query: string } | null {
+  let h = (input ?? "").trim();
   if (!h) return null;
+  if (h.startsWith("#")) h = h.startsWith("#/") ? h.slice(2) : h.slice(1);
+  else h = h.replace(/^\//, "");
   const [path, query = ""] = h.split("?");
   const parts = path.split("/").map(decodeURIComponent).filter((s) => s !== "");
   if (parts.length === 0) return null;
@@ -77,38 +83,47 @@ export function parseHash(hash: string): { module: string; seg: string[]; query:
   return { module, seg, query };
 }
 
-/** Navigate by assigning location.hash — pushes a history entry (Back works). */
+const currentPath = () => window.location.pathname + window.location.search;
+
+/** Navigate by pushing a history entry (Back works); re-runs route handlers. */
 export function navigateTo(module: string, seg: string[] = [], query?: Record<string, string>): void {
   if (typeof window === "undefined") return;
   const next = hrefFor(module, seg, query);
-  if (window.location.hash === next) {
+  if (currentPath() === next) {
     // Same URL. Still re-run the route handler so the dirty-form guard can
     // (re)open when the user insists on leaving a dirty page.
     if (useUi.getState().pageDirty) dispatchRoute();
     return;
   }
-  window.location.hash = next;
+  try {
+    window.history.pushState(null, "", next);
+  } catch {
+    // sandboxed iframes / unusual contexts — fall back to direct assignment.
+    window.location.pathname = next.split("?")[0];
+    window.location.search = next.includes("?") ? next.slice(next.indexOf("?")) : "";
+  }
+  dispatchRoute();
 }
 
-/** Re-run hashchange handlers for the current URL. */
+/** Re-run route-change handlers for the current URL. */
 export function dispatchRoute(): void {
   if (typeof window === "undefined") return;
-  try {
-    window.dispatchEvent(new HashChangeEvent("hashchange"));
-  } catch {
-    window.dispatchEvent(new Event("hashchange"));
-  }
+  window.dispatchEvent(new CustomEvent(ROUTE_EVENT));
 }
 
-/** Replace the hash without adding a history entry or firing hashchange. */
-export function replaceHash(href: string): void {
+/** Replace the current path without adding a history entry or firing handlers. */
+export function replacePath(path: string): void {
   if (typeof window === "undefined") return;
   try {
-    window.history.replaceState(null, "", href.startsWith("#") ? href : `#${href}`);
+    window.history.replaceState(null, "", path);
   } catch {
     // Older browsers / sandboxed iframes — safe to ignore.
   }
 }
+
+/** Legacy aliases (hash-era names) so old callers keep working. */
+export const parseHash = parsePath;
+export const replaceHash = replacePath;
 
 /** Notification resourceType → dedicated detail page route (server resource ids). */
 export const RESOURCE_ROUTES: Record<string, { module: string; seg: (id: string) => string[] }> = {

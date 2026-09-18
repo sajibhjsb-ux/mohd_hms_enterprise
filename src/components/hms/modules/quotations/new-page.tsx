@@ -158,8 +158,8 @@ export function QuotationNewPage() {
     return (
       <PageShell
         backLabel="Back to Quotations"
-        backHref="#/quotations"
-        crumbs={[{ label: "Quotations", href: "#/quotations" }, { label: "New Quotation" }]}
+        backHref="/quotations"
+        crumbs={[{ label: "Quotations", href: "/quotations" }, { label: "New Quotation" }]}
         title="New Quotation"
         description="Professional quotation with line items, totals and terms."
       >
@@ -180,8 +180,8 @@ export function QuotationNewPage() {
   return (
     <PageShell
       backLabel="Back to Quotations"
-      backHref="#/quotations"
-      crumbs={[{ label: "Quotations", href: "#/quotations" }, { label: "New Quotation" }]}
+      backHref="/quotations"
+      crumbs={[{ label: "Quotations", href: "/quotations" }, { label: "New Quotation" }]}
       title="New Quotation"
       description="Professional quotation with line items, totals and terms."
       actions={

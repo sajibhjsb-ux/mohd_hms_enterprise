@@ -61,7 +61,7 @@ function InvoicesList() {
   const { user } = useSession();
   const canManage = hasPerm(user, PERMISSIONS.invoices_manage);
 
-  // KPI drill-down (e.g. #/invoices?status=outstanding|PAID): validated against
+  // KPI drill-down (e.g. /invoices?status=outstanding|PAID): validated against
   // the status filter options, then applied once on mount.
   const dq = useModuleQuery("invoices");
   const statusParam = STATUS_OPTIONS.find((o) => o.value.toLowerCase() === dq.params.status?.toLowerCase())?.value;

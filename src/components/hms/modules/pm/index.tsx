@@ -123,7 +123,7 @@ function PmList() {
   const [tasks, setTasks] = useState<PmTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  // KPI drill-down: #/pm?view=tasks&status=overdue|active — validated below.
+  // KPI drill-down: /pm?view=tasks&status=overdue|active — validated below.
   const dq = useModuleQuery("pm");
   const viewParam = ["tasks", "plans"].find((v) => v === dq.params.view?.toLowerCase());
   const taskStatusParam = TASK_STATUS_FILTERS.find((f) => f.value === dq.params.status?.toLowerCase() || f.value === dq.params.status?.toUpperCase())?.value;
@@ -347,7 +347,7 @@ function PmList() {
                     <Play className="h-3.5 w-3.5 mr-1" /> Start
                   </Button>
                 ) : null}
-                {/* Complete → dedicated full page (#/pm/{taskId}/complete) */}
+                {/* Complete → dedicated full page (/pm/{taskId}/complete) */}
                 {active ? (
                   <Button
                     variant="outline" size="sm"

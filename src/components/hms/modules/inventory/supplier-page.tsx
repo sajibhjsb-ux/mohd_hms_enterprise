@@ -2,8 +2,8 @@
 
 // MOHD.HMS ENTERPRISE — Supplier create/edit (dedicated full page, inventory/suppliers view).
 // Replaces the former supplier dialog (the Suppliers tab stays a LIST tab).
-//   #/inventory/suppliers/new      → create (pageFromSeg → { view: "suppliers", id: "new" })
-//   #/inventory/suppliers/{id}     → edit   (pageFromSeg → { view: "suppliers", id })
+//   /inventory/suppliers/new      → create (pageFromSeg → { view: "suppliers", id: "new" })
+//   /inventory/suppliers/{id}     → edit   (pageFromSeg → { view: "suppliers", id })
 // Same POST /api/v1/suppliers and PATCH /api/v1/suppliers/{id} payloads and
 // validation. Codes are generated automatically for new suppliers.
 //
@@ -145,14 +145,14 @@ export function SupplierPage({ supplierId }: { supplierId?: string }) {
   }
 
   const crumbs = [
-    { label: "Inventory", href: "#/inventory" },
-    { label: "Suppliers", href: "#/inventory" },
+    { label: "Inventory", href: "/inventory" },
+    { label: "Suppliers", href: "/inventory" },
     isEdit ? { label: "Edit Supplier" } : { label: "New Supplier" },
   ];
 
   if (loading) {
     return (
-      <PageShell backLabel="Back to Inventory" backHref="#/inventory" crumbs={crumbs} title={isEdit ? "Edit supplier" : "New supplier"}>
+      <PageShell backLabel="Back to Inventory" backHref="/inventory" crumbs={crumbs} title={isEdit ? "Edit supplier" : "New supplier"}>
         <LoadingState label="Loading supplier…" rows={4} />
       </PageShell>
     );
@@ -160,7 +160,7 @@ export function SupplierPage({ supplierId }: { supplierId?: string }) {
 
   if (loadError) {
     return (
-      <PageShell backLabel="Back to Inventory" backHref="#/inventory" crumbs={crumbs} title={isEdit ? "Edit supplier" : "New supplier"}>
+      <PageShell backLabel="Back to Inventory" backHref="/inventory" crumbs={crumbs} title={isEdit ? "Edit supplier" : "New supplier"}>
         <EmptyState title="Could not load this supplier" hint={loadError} />
       </PageShell>
     );
@@ -168,7 +168,7 @@ export function SupplierPage({ supplierId }: { supplierId?: string }) {
 
   if (isEdit && !supplier) {
     return (
-      <PageShell backLabel="Back to Inventory" backHref="#/inventory" crumbs={crumbs} title="Edit supplier">
+      <PageShell backLabel="Back to Inventory" backHref="/inventory" crumbs={crumbs} title="Edit supplier">
         <EmptyState title="Supplier not found" hint="It may have been removed or the link is incorrect." />
       </PageShell>
     );
@@ -177,7 +177,7 @@ export function SupplierPage({ supplierId }: { supplierId?: string }) {
   return (
     <PageShell
       backLabel="Back to Inventory"
-      backHref="#/inventory"
+      backHref="/inventory"
       crumbs={crumbs}
       title={isEdit && supplier ? `Edit ${supplier.name}` : "Add supplier"}
       description={isEdit ? "Update the supplier's contact details." : "Code is generated automatically for new suppliers."}

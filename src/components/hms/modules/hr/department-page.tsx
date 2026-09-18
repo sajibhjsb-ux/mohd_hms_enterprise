@@ -1,7 +1,7 @@
 "use client";
 
 // MOHD.HMS ENTERPRISE — dedicated New Department page (hr/departments view).
-// Replaces the former department dialog. Routing: #/hr/departments/new.
+// Replaces the former department dialog. Routing: /hr/departments/new.
 // POST /api/v1/hr/departments (names must be unique — server enforces) — no new APIs.
 
 import { useEffect, useMemo, useState } from "react";
@@ -68,8 +68,8 @@ export function HrDepartmentNewPage() {
   if (!canManage) {
     return (
       <PageShell
-        backLabel="Back to HR" backHref="#/hr"
-        crumbs={[{ label: "HR", href: "#/hr" }, { label: "Departments" }, { label: "New Department" }]}
+        backLabel="Back to HR" backHref="/hr"
+        crumbs={[{ label: "HR", href: "/hr" }, { label: "Departments" }, { label: "New Department" }]}
         title="New Department"
       >
         <EmptyState
@@ -90,8 +90,8 @@ export function HrDepartmentNewPage() {
   return (
     <div>
       <PageShell
-        backLabel="Back to HR" backHref="#/hr"
-        crumbs={[{ label: "HR", href: "#/hr" }, { label: "Departments" }, { label: "New Department" }]}
+        backLabel="Back to HR" backHref="/hr"
+        crumbs={[{ label: "HR", href: "/hr" }, { label: "Departments" }, { label: "New Department" }]}
         title="New Department"
         description="Department names must be unique."
         actions={<div className="hidden sm:flex items-center gap-2 no-print">{createButton}</div>}

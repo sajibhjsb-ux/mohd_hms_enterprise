@@ -64,8 +64,8 @@ export function EmployeeNewPage() {
     return (
       <PageShell
         backLabel="Back to Employees"
-        backHref="#/employees"
-        crumbs={[{ label: "Employees", href: "#/employees" }, { label: "New Employee" }]}
+        backHref="/employees"
+        crumbs={[{ label: "Employees", href: "/employees" }, { label: "New Employee" }]}
         title="New Employee"
       >
         <EmptyState
@@ -88,8 +88,8 @@ export function EmployeeNewPage() {
   return (
     <PageShell
       backLabel="Back to Employees"
-      backHref="#/employees"
-      crumbs={[{ label: "Employees", href: "#/employees" }, { label: "New Employee" }]}
+      backHref="/employees"
+      crumbs={[{ label: "Employees", href: "/employees" }, { label: "New Employee" }]}
       title="New Employee"
       description="Employee number is generated automatically (EMP-YYYY-NNNN)."
       actions={<div className="hidden sm:flex items-center gap-2 no-print">{actions}</div>}

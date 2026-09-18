@@ -1,6 +1,6 @@
 "use client";
 
-// MOHD.HMS ENTERPRISE — Customer Detail (dedicated full page, #/customers/{id}).
+// MOHD.HMS ENTERPRISE — Customer Detail (dedicated full page, /customers/{id}).
 // Replaces the former detail dialog. In-page TABS (no popups): Overview,
 // Equipment, Complaints, Work Orders, Quotations, Invoices — each tab is a
 // lazy-loaded list that links to the record's dedicated page via the hash
@@ -136,7 +136,7 @@ export function CustomerDetailPage({ id }: { id: string }) {
 
   if (loading && !detail) {
     return (
-      <PageShell backLabel="Back to Customers" backHref="#/customers" title="Customer details">
+      <PageShell backLabel="Back to Customers" backHref="/customers" title="Customer details">
         <LoadingState label="Loading customer…" rows={4} />
       </PageShell>
     );
@@ -144,7 +144,7 @@ export function CustomerDetailPage({ id }: { id: string }) {
 
   if (loadError && !detail) {
     return (
-      <PageShell backLabel="Back to Customers" backHref="#/customers" title="Customer details">
+      <PageShell backLabel="Back to Customers" backHref="/customers" title="Customer details">
         <ErrorState message={loadError} onRetry={load} />
       </PageShell>
     );
@@ -152,7 +152,7 @@ export function CustomerDetailPage({ id }: { id: string }) {
 
   if (!detail) {
     return (
-      <PageShell backLabel="Back to Customers" backHref="#/customers" title="Customer details">
+      <PageShell backLabel="Back to Customers" backHref="/customers" title="Customer details">
         <EmptyState title="Customer not found" hint="It may have been removed or the link is incorrect." />
       </PageShell>
     );
@@ -161,8 +161,8 @@ export function CustomerDetailPage({ id }: { id: string }) {
   return (
     <PageShell
       backLabel="Back to Customers"
-      backHref="#/customers"
-      crumbs={[{ label: "Customers", href: "#/customers" }, { label: detail.companyName }]}
+      backHref="/customers"
+      crumbs={[{ label: "Customers", href: "/customers" }, { label: detail.companyName }]}
       title={detail.companyName}
       description={`${detail.code} · ${detail.contactPerson} · ${detail.email} · ${detail.phone}`}
       actions={
@@ -237,7 +237,7 @@ export function CustomerDetailPage({ id }: { id: string }) {
               emptyTitle="No equipment registered"
               emptyHint="Units installed for this customer will appear here."
               row={(eq) => (
-                <RowLink href={`#/equipment/${encodeURIComponent(eq.id)}`}>
+                <RowLink href={`/equipment/${encodeURIComponent(eq.id)}`}>
                   <span className="font-mono text-xs text-muted-foreground w-24 shrink-0">{eq.assetTag}</span>
                   <span className="flex-1 min-w-0 truncate">{eq.name}</span>
                   <span className="hidden sm:inline text-xs text-muted-foreground">{eq.category}</span>
@@ -256,7 +256,7 @@ export function CustomerDetailPage({ id }: { id: string }) {
               emptyTitle="No complaints logged"
               emptyHint="Complaints for this customer will appear here."
               row={(c) => (
-                <RowLink href={`#/complaints/${encodeURIComponent(c.id)}`}>
+                <RowLink href={`/complaints/${encodeURIComponent(c.id)}`}>
                   <span className="font-mono text-xs text-muted-foreground w-24 shrink-0">{c.code}</span>
                   <span className="flex-1 min-w-0 truncate">{c.title}</span>
                   <StatusBadge status={c.priority} />
@@ -275,7 +275,7 @@ export function CustomerDetailPage({ id }: { id: string }) {
               emptyTitle="No work orders"
               emptyHint="Work orders raised for this customer will appear here."
               row={(w) => (
-                <RowLink href={`#/work-orders/${encodeURIComponent(w.id)}`}>
+                <RowLink href={`/work-orders/${encodeURIComponent(w.id)}`}>
                   <span className="font-mono text-xs text-muted-foreground w-24 shrink-0">{w.code}</span>
                   <span className="flex-1 min-w-0 truncate">{w.title}</span>
                   {w.scheduledDate ? <span className="hidden sm:inline text-xs text-muted-foreground">{fmtDate(w.scheduledDate)}</span> : null}
@@ -294,7 +294,7 @@ export function CustomerDetailPage({ id }: { id: string }) {
               emptyTitle="No quotations"
               emptyHint="Quotations prepared for this customer will appear here."
               row={(q) => (
-                <RowLink href={`#/quotations/${encodeURIComponent(q.id)}`}>
+                <RowLink href={`/quotations/${encodeURIComponent(q.id)}`}>
                   <span className="font-mono text-xs text-muted-foreground w-24 shrink-0">{q.code}</span>
                   <span className="flex-1 min-w-0 truncate">{fmtDate(q.quotationDate)}</span>
                   <span className="text-xs">{money(q.totalCents)}</span>
@@ -313,7 +313,7 @@ export function CustomerDetailPage({ id }: { id: string }) {
               emptyTitle="No invoices issued"
               emptyHint="Invoices for this customer will appear here."
               row={(inv) => (
-                <RowLink href={`#/invoices/${encodeURIComponent(inv.id)}`}>
+                <RowLink href={`/invoices/${encodeURIComponent(inv.id)}`}>
                   <span className="font-mono text-xs text-muted-foreground w-24 shrink-0">{inv.code}</span>
                   <span className="flex-1 min-w-0 truncate">{fmtDateTime(inv.invoiceDate)}</span>
                   <span className="text-xs">{money(inv.totalCents)} <span className="text-muted-foreground">({money(inv.paidCents)} paid)</span></span>

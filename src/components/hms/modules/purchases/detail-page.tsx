@@ -143,7 +143,7 @@ export function PurchaseDetailPage({ id }: { id: string }) {
 
   if (loading && !detail) {
     return (
-      <PageShell backLabel="Back to Purchases" backHref="#/purchases" crumbs={[{ label: "Purchases", href: "#/purchases" }, { label: "Purchase order" }]} title="Purchase order">
+      <PageShell backLabel="Back to Purchases" backHref="/purchases" crumbs={[{ label: "Purchases", href: "/purchases" }, { label: "Purchase order" }]} title="Purchase order">
         <LoadingState label="Loading purchase order…" rows={5} />
       </PageShell>
     );
@@ -151,7 +151,7 @@ export function PurchaseDetailPage({ id }: { id: string }) {
 
   if (loadError) {
     return (
-      <PageShell backLabel="Back to Purchases" backHref="#/purchases" crumbs={[{ label: "Purchases", href: "#/purchases" }, { label: "Purchase order" }]} title="Purchase order">
+      <PageShell backLabel="Back to Purchases" backHref="/purchases" crumbs={[{ label: "Purchases", href: "/purchases" }, { label: "Purchase order" }]} title="Purchase order">
         <ErrorState message={loadError} onRetry={load} />
       </PageShell>
     );
@@ -159,7 +159,7 @@ export function PurchaseDetailPage({ id }: { id: string }) {
 
   if (!detail) {
     return (
-      <PageShell backLabel="Back to Purchases" backHref="#/purchases" crumbs={[{ label: "Purchases", href: "#/purchases" }, { label: "Purchase order" }]} title="Purchase order">
+      <PageShell backLabel="Back to Purchases" backHref="/purchases" crumbs={[{ label: "Purchases", href: "/purchases" }, { label: "Purchase order" }]} title="Purchase order">
         <EmptyState title="Purchase order not found" hint="It may have been removed or the link is incorrect." />
       </PageShell>
     );
@@ -168,8 +168,8 @@ export function PurchaseDetailPage({ id }: { id: string }) {
   return (
     <PageShell
       backLabel="Back to Purchases"
-      backHref="#/purchases"
-      crumbs={[{ label: "Purchases", href: "#/purchases" }, { label: detail.code }]}
+      backHref="/purchases"
+      crumbs={[{ label: "Purchases", href: "/purchases" }, { label: detail.code }]}
       title={detail.code}
       description={
         `${detail.supplier?.name ?? "—"} · ordered ${fmtDate(detail.orderDate)}` +

@@ -94,8 +94,8 @@ export function EmployeeEditPage({ id }: { id: string }) {
     return (
       <PageShell
         backLabel="Back to Employees"
-        backHref="#/employees"
-        crumbs={[{ label: "Employees", href: "#/employees" }, { label: "Edit" }]}
+        backHref="/employees"
+        crumbs={[{ label: "Employees", href: "/employees" }, { label: "Edit" }]}
         title="Edit Employee"
       >
         <EmptyState
@@ -110,7 +110,7 @@ export function EmployeeEditPage({ id }: { id: string }) {
 
   if (loading && !row) {
     return (
-      <PageShell backLabel="Back to Employees" backHref="#/employees" title="Edit Employee">
+      <PageShell backLabel="Back to Employees" backHref="/employees" title="Edit Employee">
         <LoadingState label="Loading employee…" rows={4} />
       </PageShell>
     );
@@ -118,7 +118,7 @@ export function EmployeeEditPage({ id }: { id: string }) {
 
   if (loadError && !row) {
     return (
-      <PageShell backLabel="Back to Employees" backHref="#/employees" title="Edit Employee">
+      <PageShell backLabel="Back to Employees" backHref="/employees" title="Edit Employee">
         <ErrorState message={loadError} onRetry={load} />
       </PageShell>
     );
@@ -126,7 +126,7 @@ export function EmployeeEditPage({ id }: { id: string }) {
 
   if (!row || !form) {
     return (
-      <PageShell backLabel="Back to Employees" backHref="#/employees" title="Edit Employee">
+      <PageShell backLabel="Back to Employees" backHref="/employees" title="Edit Employee">
         <EmptyState title="Employee not found" hint="It may have been removed or the link is incorrect." />
       </PageShell>
     );
@@ -144,9 +144,9 @@ export function EmployeeEditPage({ id }: { id: string }) {
   return (
     <PageShell
       backLabel="Back to Employees"
-      backHref="#/employees"
+      backHref="/employees"
       crumbs={[
-        { label: "Employees", href: "#/employees" },
+        { label: "Employees", href: "/employees" },
         { label: row.employeeNo || displayName },
         { label: "Edit" },
       ]}

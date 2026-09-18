@@ -1,7 +1,7 @@
 "use client";
 
 // MOHD.HMS ENTERPRISE — dedicated New Inspection Report page (irms/reports view).
-// Routing: #/irms/reports/new. Replaces the former report-create dialog.
+// Routing: /irms/reports/new. Replaces the former report-create dialog.
 // Keeps the existing draft architecture (useDraft "irms.report.create") with a
 // restore banner, the exact validation rules (project + title required, no
 // empty finding rows) and the ref degradation behavior (equipment options fall
@@ -161,7 +161,7 @@ export function IrmsReportNewPage() {
   // ── RBAC guard ──
   if (!canManage) {
     return (
-      <PageShell backLabel="Back to IRMS" backHref="#/irms" title="New Inspection Report">
+      <PageShell backLabel="Back to IRMS" backHref="/irms" title="New Inspection Report">
         <EmptyState
           title="You don't have permission to create inspection reports"
           hint="Creating reports requires the irms.manage permission. Contact your administrator if you believe this is a mistake."
@@ -180,8 +180,8 @@ export function IrmsReportNewPage() {
   return (
     <div>
       <PageShell
-        backLabel="Back to IRMS" backHref="#/irms"
-        crumbs={[{ label: "IRMS", href: "#/irms" }, { label: "New Inspection Report" }]}
+        backLabel="Back to IRMS" backHref="/irms"
+        crumbs={[{ label: "IRMS", href: "/irms" }, { label: "New Inspection Report" }]}
         title="New Inspection Report"
         description="Reports start as DRAFT and go through submit → approve."
         actions={<div className="hidden sm:flex items-center gap-2 no-print">{createButton}</div>}

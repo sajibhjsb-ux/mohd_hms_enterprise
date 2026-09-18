@@ -119,7 +119,7 @@ export function PmCompleteTaskPage({ id }: { id: string }) {
   }
 
   const backLabel = "Back to Preventive Maintenance";
-  const backHref = "#/pm";
+  const backHref = "/pm";
 
   if (!canExecute) {
     return (
@@ -163,8 +163,8 @@ export function PmCompleteTaskPage({ id }: { id: string }) {
       backLabel={backLabel}
       backHref={backHref}
       crumbs={[
-        { label: "Preventive Maintenance", href: "#/pm" },
-        { label: "Tasks", href: "#/pm" },
+        { label: "Preventive Maintenance", href: "/pm" },
+        { label: "Tasks", href: "/pm" },
         { label: taskLabel },
         { label: "Complete" },
       ]}

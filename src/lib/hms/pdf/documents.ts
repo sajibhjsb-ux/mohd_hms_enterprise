@@ -313,7 +313,7 @@ const inspectionReport: DocumentDef = {
     }
 
     // QR — same absolute URL as the QR endpoint (§16).
-    const qrUrl = `${origin || "http://localhost:3000"}/#/irms/reports/${id}`;
+    const qrUrl = `${origin || "http://localhost:3000"}/irms/reports/${id}`;
     let qrPng: Buffer | null = null;
     try {
       qrPng = await QRCode.toBuffer(qrUrl, { width: 256, margin: 1, errorCorrectionLevel: "M" });

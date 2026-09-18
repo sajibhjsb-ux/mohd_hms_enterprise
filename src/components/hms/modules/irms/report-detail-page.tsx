@@ -1,7 +1,7 @@
 "use client";
 
 // MOHD.HMS ENTERPRISE — dedicated Inspection Report detail page (irms view).
-// Routing: #/irms/{id} (list row click / post-create) or #/irms/reports/{id}.
+// Routing: /irms/{id} (list row click / post-create) or /irms/reports/{id}.
 // Replaces the former detail dialog: same data (GET /api/v1/irms/reports/{id}),
 // same workflow (POST …/{id}/transition submit|approve), same print-only
 // document + scoping CSS (moved to page level), and Delete Draft now uses an
@@ -119,21 +119,21 @@ export function IrmsReportDetailPage({ id }: { id: string }) {
   // ── Load states ──
   if (loading && !detail) {
     return (
-      <PageShell backLabel="Back to IRMS" backHref="#/irms" title="Inspection report">
+      <PageShell backLabel="Back to IRMS" backHref="/irms" title="Inspection report">
         <LoadingState label="Loading report…" rows={4} />
       </PageShell>
     );
   }
   if (loadError && !detail) {
     return (
-      <PageShell backLabel="Back to IRMS" backHref="#/irms" title="Inspection report">
+      <PageShell backLabel="Back to IRMS" backHref="/irms" title="Inspection report">
         <ErrorState message={loadError} onRetry={() => void load()} />
       </PageShell>
     );
   }
   if (!detail) {
     return (
-      <PageShell backLabel="Back to IRMS" backHref="#/irms" title="Inspection report">
+      <PageShell backLabel="Back to IRMS" backHref="/irms" title="Inspection report">
         <EmptyState title="Report not found" hint="It may have been removed or the link is incorrect." />
       </PageShell>
     );
@@ -194,8 +194,8 @@ export function IrmsReportDetailPage({ id }: { id: string }) {
       </div>
 
       <PageShell
-        backLabel="Back to IRMS" backHref="#/irms"
-        crumbs={[{ label: "IRMS", href: "#/irms" }, { label: crumbTitle }]}
+        backLabel="Back to IRMS" backHref="/irms"
+        crumbs={[{ label: "IRMS", href: "/irms" }, { label: crumbTitle }]}
         title={`${detail.code} — ${detail.title}`}
         description={`${detail.project ? `${detail.project.code} · ${detail.project.name}` : "Unlinked"} · ${humanize(detail.type)}`}
         actions={

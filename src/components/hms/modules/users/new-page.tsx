@@ -120,8 +120,8 @@ export function UserNewPage() {
     return (
       <PageShell
         backLabel="Back to Users"
-        backHref="#/users"
-        crumbs={[{ label: "Users", href: "#/users" }, { label: "New User" }]}
+        backHref="/users"
+        crumbs={[{ label: "Users", href: "/users" }, { label: "New User" }]}
         title="New User"
       >
         <EmptyState
@@ -144,8 +144,8 @@ export function UserNewPage() {
   return (
     <PageShell
       backLabel="Back to Users"
-      backHref="#/users"
-      crumbs={[{ label: "Users", href: "#/users" }, { label: "New User" }]}
+      backHref="/users"
+      crumbs={[{ label: "Users", href: "/users" }, { label: "New User" }]}
       title="New User"
       description="The user signs in with this email and password immediately."
       actions={<div className="hidden sm:flex items-center gap-2 no-print">{createButton}</div>}

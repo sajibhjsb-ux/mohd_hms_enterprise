@@ -173,8 +173,8 @@ export function ItemEditPage({ id }: { id: string }) {
     return (
       <PageShell
         backLabel="Back to Inventory"
-        backHref="#/inventory"
-        crumbs={[{ label: "Inventory", href: "#/inventory" }, { label: heading }, { label: "Edit" }]}
+        backHref="/inventory"
+        crumbs={[{ label: "Inventory", href: "/inventory" }, { label: heading }, { label: "Edit" }]}
         title="Edit item"
       >
         <LoadingState label="Loading item…" rows={4} />
@@ -186,8 +186,8 @@ export function ItemEditPage({ id }: { id: string }) {
     return (
       <PageShell
         backLabel="Back to Inventory"
-        backHref="#/inventory"
-        crumbs={[{ label: "Inventory", href: "#/inventory" }, { label: heading }, { label: "Edit" }]}
+        backHref="/inventory"
+        crumbs={[{ label: "Inventory", href: "/inventory" }, { label: heading }, { label: "Edit" }]}
         title="Edit item"
       >
         <EmptyState title="Could not load this item" hint={loadError} />
@@ -199,8 +199,8 @@ export function ItemEditPage({ id }: { id: string }) {
     return (
       <PageShell
         backLabel="Back to Inventory"
-        backHref="#/inventory"
-        crumbs={[{ label: "Inventory", href: "#/inventory" }, { label: "Edit" }]}
+        backHref="/inventory"
+        crumbs={[{ label: "Inventory", href: "/inventory" }, { label: "Edit" }]}
         title="Edit item"
       >
         <EmptyState title="Item not found" hint="It may have been removed or the link is incorrect." />
@@ -211,8 +211,8 @@ export function ItemEditPage({ id }: { id: string }) {
   return (
     <PageShell
       backLabel="Back to Inventory"
-      backHref="#/inventory"
-      crumbs={[{ label: "Inventory", href: "#/inventory" }, { label: item.sku || item.name }, { label: "Edit" }]}
+      backHref="/inventory"
+      crumbs={[{ label: "Inventory", href: "/inventory" }, { label: item.sku || item.name }, { label: "Edit" }]}
       title={`Edit item ${item.sku}`}
       description="Stock quantity is changed via stock movements, not here — use Stock Adjustment on the list row."
       actions={

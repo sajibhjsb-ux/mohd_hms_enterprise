@@ -2,9 +2,9 @@
 
 // MOHD.HMS ENTERPRISE — dedicated IRMS project pages (create + edit).
 // Routing (hash router):
-//   #/irms/projects/new         → create  (pageFromSeg: prefix view "projects", id "new")
-//   #/irms/{id}/edit            → edit    (2-seg suffix → view "edit")
-//   #/irms/projects/{id}/edit   → edit    (3-seg form → view "projects-edit")
+//   /irms/projects/new         → create  (pageFromSeg: prefix view "projects", id "new")
+//   /irms/{id}/edit            → edit    (2-seg suffix → view "edit")
+//   /irms/projects/{id}/edit   → edit    (3-seg form → view "projects-edit")
 //
 // ONE shared field set + payload builder (no duplicate form logic):
 //   • create keeps the existing draft architecture (useDraft
@@ -183,8 +183,8 @@ function ProjectPageScaffold({ title, description, primary, children }: {
   return (
     <div>
       <PageShell
-        backLabel="Back to IRMS" backHref="#/irms"
-        crumbs={[{ label: "IRMS", href: "#/irms" }, { label: "Projects" }, { label: title }]}
+        backLabel="Back to IRMS" backHref="/irms"
+        crumbs={[{ label: "IRMS", href: "/irms" }, { label: "Projects" }, { label: title }]}
         title={title}
         description={description}
         actions={<div className="hidden sm:flex items-center gap-2 no-print">{primary}</div>}
@@ -259,7 +259,7 @@ export function IrmsProjectNewPage() {
 
   if (!canManage) {
     return (
-      <PageShell backLabel="Back to IRMS" backHref="#/irms" title="New Inspection Project">
+      <PageShell backLabel="Back to IRMS" backHref="/irms" title="New Inspection Project">
         <EmptyState
           title="You don't have permission to manage inspection projects"
           hint="Creating projects requires the irms.manage permission. Contact your administrator if you believe this is a mistake."
@@ -403,7 +403,7 @@ export function IrmsProjectEditPage({ id }: { id: string }) {
 
   if (!canManage) {
     return (
-      <PageShell backLabel="Back to IRMS" backHref="#/irms" title="Edit Project">
+      <PageShell backLabel="Back to IRMS" backHref="/irms" title="Edit Project">
         <EmptyState
           title="You don't have permission to manage inspection projects"
           hint="Editing projects requires the irms.manage permission. Contact your administrator if you believe this is a mistake."
@@ -414,21 +414,21 @@ export function IrmsProjectEditPage({ id }: { id: string }) {
 
   if (loading && !form) {
     return (
-      <PageShell backLabel="Back to IRMS" backHref="#/irms" title="Edit Project">
+      <PageShell backLabel="Back to IRMS" backHref="/irms" title="Edit Project">
         <LoadingState label="Loading project…" rows={3} />
       </PageShell>
     );
   }
   if (loadError && !form) {
     return (
-      <PageShell backLabel="Back to IRMS" backHref="#/irms" title="Edit Project">
+      <PageShell backLabel="Back to IRMS" backHref="/irms" title="Edit Project">
         <ErrorState message={loadError} onRetry={() => void load()} />
       </PageShell>
     );
   }
   if (!form || !detail) {
     return (
-      <PageShell backLabel="Back to IRMS" backHref="#/irms" title="Edit Project">
+      <PageShell backLabel="Back to IRMS" backHref="/irms" title="Edit Project">
         <EmptyState title="Project not found" hint="It may have been removed or the link is incorrect." />
       </PageShell>
     );

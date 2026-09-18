@@ -2,8 +2,8 @@
 
 // MOHD.HMS ENTERPRISE — IRMS full-page report builder (NEW + EDIT).
 //
-// Routes: #/irms/reports/new           → IrmsReportBuilder (new)
-//         #/irms/reports/{id}/edit     → IrmsReportBuilder (edit)
+// Routes: /irms/reports/new           → IrmsReportBuilder (new)
+//         /irms/reports/{id}/edit     → IrmsReportBuilder (edit)
 //
 // 5 shadcn Tabs per the contract: DETAILS / WORK DETAILS / PHOTOS / SIGNATURES /
 // APPROVAL. NEW reports keep PHOTOS/SIGNATURES/APPROVAL as friendly
@@ -269,7 +269,7 @@ export function IrmsReportBuilder({ reportId }: { reportId?: string }) {
 
   useEffect(() => { void loadDetail(); }, [loadDetail]);
 
-  // ── NEW: prefill inspection date from calendar deep link (#/irms/reports/new?date=…) ──
+  // ── NEW: prefill inspection date from calendar deep link (/irms/reports/new?date=…) ──
   useEffect(() => {
     if (reportId) return;
     const d = moduleQuery.params.date;
@@ -441,7 +441,7 @@ export function IrmsReportBuilder({ reportId }: { reportId?: string }) {
   // ── RBAC guard ──
   if (!canCreate) {
     return (
-      <PageShell backLabel="Back to IRMS" backHref="#/irms" title={isNew ? "New Inspection Report" : "Edit Report"}>
+      <PageShell backLabel="Back to IRMS" backHref="/irms" title={isNew ? "New Inspection Report" : "Edit Report"}>
         <EmptyState
           title="You don't have permission to create inspection reports"
           hint="Creating reports requires the irms.create permission. Contact your administrator if you believe this is a mistake."
@@ -452,7 +452,7 @@ export function IrmsReportBuilder({ reportId }: { reportId?: string }) {
 
   if (initializing) {
     return (
-      <PageShell backLabel="Back to Reports" backHref="#/irms/reports" title={isNew ? "New Inspection Report" : "Edit Report"}>
+      <PageShell backLabel="Back to Reports" backHref="/irms/reports" title={isNew ? "New Inspection Report" : "Edit Report"}>
         <LoadingState label="Loading report…" rows={4} />
       </PageShell>
     );
@@ -460,7 +460,7 @@ export function IrmsReportBuilder({ reportId }: { reportId?: string }) {
 
   if (loadError) {
     return (
-      <PageShell backLabel="Back to Reports" backHref="#/irms/reports" title={isNew ? "New Inspection Report" : "Edit Report"}>
+      <PageShell backLabel="Back to Reports" backHref="/irms/reports" title={isNew ? "New Inspection Report" : "Edit Report"}>
         <ErrorState message={loadError} onRetry={() => void loadDetail()} />
       </PageShell>
     );
@@ -522,10 +522,10 @@ export function IrmsReportBuilder({ reportId }: { reportId?: string }) {
     <div>
       <PageShell
         backLabel={isNew ? "Back to Reports" : "Back to Report"}
-        backHref={isNew ? "#/irms/reports" : `#/irms/reports/${reportId}`}
+        backHref={isNew ? "/irms/reports" : `/irms/reports/${reportId}`}
         crumbs={[
-          { label: "IRMS", href: "#/irms" },
-          { label: "Reports", href: "#/irms/reports" },
+          { label: "IRMS", href: "/irms" },
+          { label: "Reports", href: "/irms/reports" },
           { label: isNew ? "New report" : `Edit ${detail?.code ?? ""}` },
         ]}
         title={isNew ? "New Inspection Report" : `Edit ${detail?.code ?? ""}`}

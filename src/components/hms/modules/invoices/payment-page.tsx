@@ -109,13 +109,13 @@ export function InvoicePaymentPage({ id }: { id: string }) {
     }
   }
 
-  const backHref = `#/invoices/${encodeURIComponent(id)}`;
+  const backHref = `/invoices/${encodeURIComponent(id)}`;
   const chrome = (children: ReactNode) => (
     <PageShell
       backLabel="Back to Invoice"
       backHref={backHref}
       crumbs={[
-        { label: "Invoices", href: "#/invoices" },
+        { label: "Invoices", href: "/invoices" },
         { label: detail?.code ?? "Invoice", href: backHref },
         { label: "Record Payment" },
       ]}

@@ -109,8 +109,8 @@ export function QuotationDetailPage({ id }: { id: string }) {
       <div className="print:hidden">
         <PageShell
           backLabel="Back to Quotations"
-          backHref="#/quotations"
-          crumbs={[{ label: "Quotations", href: "#/quotations" }, { label: detail?.code ?? "Quotation" }]}
+          backHref="/quotations"
+          crumbs={[{ label: "Quotations", href: "/quotations" }, { label: detail?.code ?? "Quotation" }]}
           title={detail ? `Quotation ${detail.code}` : "Quotation"}
           description={detail?.customer ? `${detail.customer.companyName} · Issued ${fmtDate(detail.quotationDate)}` : "Document preview and workflow actions"}
           actions={

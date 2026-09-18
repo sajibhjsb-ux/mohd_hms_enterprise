@@ -3,7 +3,7 @@
 // MOHD.HMS ENTERPRISE — Complaint Detail (dedicated full page).
 // Replaces the former detail dialog: same data, same workflow actions, same
 // APIs (GET /complaints/{id}, POST /complaints/{id}/transition) — no popup.
-// Technician assignment lives on its own page (#/complaints/{id}/assign).
+// Technician assignment lives on its own page (/complaints/{id}/assign).
 
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/hms/api-client";
@@ -117,7 +117,7 @@ export function ComplaintDetailPage({ id }: { id: string }) {
 
   if (loading && !detail) {
     return (
-      <PageShell backLabel="Back to Complaints" backHref="#/complaints" title="Complaint details">
+      <PageShell backLabel="Back to Complaints" backHref="/complaints" title="Complaint details">
         <LoadingState label="Loading complaint…" rows={4} />
       </PageShell>
     );
@@ -125,7 +125,7 @@ export function ComplaintDetailPage({ id }: { id: string }) {
 
   if (loadError && !detail) {
     return (
-      <PageShell backLabel="Back to Complaints" backHref="#/complaints" title="Complaint details">
+      <PageShell backLabel="Back to Complaints" backHref="/complaints" title="Complaint details">
         <ErrorState message={loadError} onRetry={load} />
       </PageShell>
     );
@@ -133,7 +133,7 @@ export function ComplaintDetailPage({ id }: { id: string }) {
 
   if (!detail) {
     return (
-      <PageShell backLabel="Back to Complaints" backHref="#/complaints" title="Complaint details">
+      <PageShell backLabel="Back to Complaints" backHref="/complaints" title="Complaint details">
         <EmptyState title="Complaint not found" hint="It may have been removed or the link is incorrect." />
       </PageShell>
     );
@@ -142,8 +142,8 @@ export function ComplaintDetailPage({ id }: { id: string }) {
   return (
     <PageShell
       backLabel="Back to Complaints"
-      backHref="#/complaints"
-      crumbs={[{ label: "Complaints", href: "#/complaints" }, { label: detail.code }]}
+      backHref="/complaints"
+      crumbs={[{ label: "Complaints", href: "/complaints" }, { label: detail.code }]}
       title={detail.title}
       description={`${detail.customer?.companyName ?? "—"}${detail.equipment ? ` · ${detail.equipment.name} (${detail.equipment.assetTag})` : ""} · Logged ${fmtDateTime(detail.createdAt)}`}
       actions={
@@ -224,7 +224,7 @@ export function ComplaintDetailPage({ id }: { id: string }) {
                 {detail.workOrders.map((w) => (
                   <a
                     key={w.id}
-                    href={`#/work-orders/${encodeURIComponent(w.id)}`}
+                    href={`/work-orders/${encodeURIComponent(w.id)}`}
                     className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs hover:bg-accent transition-colors"
                   >
                     <span className="font-mono">{w.code}</span>

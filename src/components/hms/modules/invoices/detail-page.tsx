@@ -4,7 +4,7 @@
 // Replaces the former detail dialog: same DocumentPreview (incl. Paid /
 // Balance-due rows), source attribution, payments table and workflow actions
 // (GET /invoices/{id}, POST /{id}/transition, DELETE) — no popup.
-// Record Payment lives on its own page (#/invoices/{id}/payment).
+// Record Payment lives on its own page (/invoices/{id}/payment).
 
 import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
@@ -107,8 +107,8 @@ export function InvoiceDetailPage({ id }: { id: string }) {
       <div className="print:hidden">
         <PageShell
           backLabel="Back to Invoices"
-          backHref="#/invoices"
-          crumbs={[{ label: "Invoices", href: "#/invoices" }, { label: detail?.code ?? "Invoice" }]}
+          backHref="/invoices"
+          crumbs={[{ label: "Invoices", href: "/invoices" }, { label: detail?.code ?? "Invoice" }]}
           title={detail ? `Invoice ${detail.code}` : "Invoice"}
           description={detail?.customer ? `${detail.customer.companyName} · Issued ${fmtDate(detail.invoiceDate)}` : "Document preview, payments and workflow actions"}
           actions={
@@ -159,7 +159,7 @@ export function InvoiceDetailPage({ id }: { id: string }) {
             <div className="flex flex-wrap gap-2">
               {detail.quotation ? (
                 <a
-                  href={`#/quotations/${encodeURIComponent(detail.quotation.id)}`}
+                  href={`/quotations/${encodeURIComponent(detail.quotation.id)}`}
                   className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs hover:bg-accent transition-colors"
                 >
                   From quotation <span className="font-mono font-medium">{detail.quotation.code}</span>
@@ -168,7 +168,7 @@ export function InvoiceDetailPage({ id }: { id: string }) {
               {detail.workOrders.map((w) => (
                 <a
                   key={w.id}
-                  href={`#/work-orders/${encodeURIComponent(w.id)}`}
+                  href={`/work-orders/${encodeURIComponent(w.id)}`}
                   className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs hover:bg-accent transition-colors"
                 >
                   From work order <span className="font-mono font-medium">{w.code}</span> — {w.title}

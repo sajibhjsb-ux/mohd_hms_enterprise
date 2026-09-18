@@ -196,8 +196,8 @@ export function InvoiceNewPage() {
     return (
       <PageShell
         backLabel="Back to Invoices"
-        backHref="#/invoices"
-        crumbs={[{ label: "Invoices", href: "#/invoices" }, { label: "New Invoice" }]}
+        backHref="/invoices"
+        crumbs={[{ label: "Invoices", href: "/invoices" }, { label: "New Invoice" }]}
         title="New Invoice"
         description="Billing, payments and collections"
       >
@@ -218,8 +218,8 @@ export function InvoiceNewPage() {
   return (
     <PageShell
       backLabel="Back to Invoices"
-      backHref="#/invoices"
-      crumbs={[{ label: "Invoices", href: "#/invoices" }, { label: "New Invoice" }]}
+      backHref="/invoices"
+      crumbs={[{ label: "Invoices", href: "/invoices" }, { label: "New Invoice" }]}
       title="New Invoice"
       description={source === "manual"
         ? "Totals are computed server-side from the line items below."

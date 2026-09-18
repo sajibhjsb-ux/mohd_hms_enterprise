@@ -7,9 +7,9 @@
 // NAVIGATION ARCHITECTURE (no popup CRUD): customer create / detail / edit are
 // DEDICATED PAGES routed by the hash router (ui-store pages["customers"]):
 //   []            → this list page
-//   ["new"]       → CustomerNewPage   (#/customers/new)
-//   [id]          → CustomerDetailPage (#/customers/{id})
-//   [id, "edit"]  → CustomerEditPage   (#/customers/{id}/edit)
+//   ["new"]       → CustomerNewPage   (/customers/new)
+//   [id]          → CustomerDetailPage (/customers/{id})
+//   [id, "edit"]  → CustomerEditPage   (/customers/{id}/edit)
 // Only the delete confirmation remains an AlertDialog (confirm-only dialog,
 // allowed by the navigation contract).
 

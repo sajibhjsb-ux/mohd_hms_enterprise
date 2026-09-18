@@ -408,7 +408,7 @@ export function IrmsReportsList() {
             {rows.map((r) => (
               <li key={r.id}>
                 <a
-                  href={`#/irms/reports/${r.id}`}
+                  href={`/irms/reports/${r.id}`}
                   className="block rounded-xl border bg-card p-3.5 transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   aria-label={`Open report ${r.code} — ${r.title}`}
                 >

@@ -45,7 +45,7 @@ export function IrmsModule() {
     if (page.id === "projects") return <IrmsProjectsSection />;
     if (page.id === "calendar") return <IrmsCalendarPage />;
     if (page.id === "analytics") return <IrmsAnalyticsPage />;
-    return <IrmsReportDetailPage id={page.id} />; // #/irms/{reportId} deep link
+    return <IrmsReportDetailPage id={page.id} />; // /irms/{reportId} deep link
   }
 
   // Reports

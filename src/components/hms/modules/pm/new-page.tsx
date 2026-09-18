@@ -139,7 +139,7 @@ export function PmNewPage() {
 
   if (!canManage) {
     return (
-      <PageShell backLabel="Back to Preventive Maintenance" backHref="#/pm" title="New PM Plan">
+      <PageShell backLabel="Back to Preventive Maintenance" backHref="/pm" title="New PM Plan">
         <EmptyState
           title="You don't have permission to create PM plans"
           hint="Plan creation is limited to supervisors, admins and super admins. Contact your administrator if you believe this is a mistake."
@@ -158,8 +158,8 @@ export function PmNewPage() {
   return (
     <PageShell
       backLabel="Back to Preventive Maintenance"
-      backHref="#/pm"
-      crumbs={[{ label: "Preventive Maintenance", href: "#/pm" }, { label: "New Plan" }]}
+      backHref="/pm"
+      crumbs={[{ label: "Preventive Maintenance", href: "/pm" }, { label: "New Plan" }]}
       title="New PM Plan"
       description="Schedule recurring maintenance for an equipment. Your draft is auto-saved as you type."
       actions={<div className="hidden sm:flex items-center gap-2 no-print">{actions}</div>}

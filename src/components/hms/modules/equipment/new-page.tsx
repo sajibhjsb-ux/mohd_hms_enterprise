@@ -94,7 +94,7 @@ export function EquipmentNewPage() {
 
   if (!canCreate) {
     return (
-      <PageShell backLabel="Back to Equipment" backHref="#/equipment" title="Register equipment">
+      <PageShell backLabel="Back to Equipment" backHref="/equipment" title="Register equipment">
         <EmptyState
           title="You don't have permission to register equipment"
           hint="Asset registration is limited to authorized roles. Contact your administrator if you believe this is a mistake."
@@ -118,8 +118,8 @@ export function EquipmentNewPage() {
   return (
     <PageShell
       backLabel="Back to Equipment"
-      backHref="#/equipment"
-      crumbs={[{ label: "Equipment", href: "#/equipment" }, { label: "New Equipment" }]}
+      backHref="/equipment"
+      crumbs={[{ label: "Equipment", href: "/equipment" }, { label: "New Equipment" }]}
       title="Register equipment"
       description="Asset tag (EQ-…) and QR token are generated automatically."
       actions={<div className="hidden sm:flex items-center gap-2">{actions}</div>}

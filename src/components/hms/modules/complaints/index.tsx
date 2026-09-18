@@ -92,7 +92,7 @@ function ComplaintsList() {
   const canCreate = hasPerm(user, PERMISSIONS.complaints_create);
   const isStaffUser = !!user && user.role !== "CUSTOMER";
 
-  // KPI drill-down (e.g. #/complaints?status=active&priority=URGENT): validated
+  // KPI drill-down (e.g. /complaints?status=active&priority=URGENT): validated
   // case-insensitively against the canonical tab keys / priority values, then
   // applied once on mount.
   const dq = useModuleQuery("complaints");

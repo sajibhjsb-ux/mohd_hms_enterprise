@@ -17,7 +17,7 @@ export function requestOrigin(req: NextRequest): string {
 }
 
 /**
- * 16. GET /api/v1/irms/reports/[id]/qr — PNG QR encoding `${origin}/#/irms/reports/{id}`.
+ * 16. GET /api/v1/irms/reports/[id]/qr — PNG QR encoding `${origin}/irms/reports/{id}`.
  * STAFF_READ, or the same portal authorization as the photos file route.
  * The QR never bypasses auth (§34) — RBAC still applies on arrival.
  */
@@ -42,7 +42,7 @@ export const GET = async (req: NextRequest, ctx: { params: Promise<{ id: string 
       if (!staffAllowed && !portalAllowed) throw Errors.notFound("Inspection report not found.");
 
       const origin = requestOrigin(request);
-      const url = `${origin}/#/irms/reports/${id}`;
+      const url = `${origin}/irms/reports/${id}`;
       const png = await QRCode.toBuffer(url, { width: 256, margin: 1, errorCorrectionLevel: "M" });
 
       return new NextResponse(new Uint8Array(png), {

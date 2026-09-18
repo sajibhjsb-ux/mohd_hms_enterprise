@@ -6,7 +6,7 @@
 // contract §12). Day cells carry report chips: code + truncated title + status
 // color dot (STATUS_TONE map) + a red ring for URGENT priority. Chip click →
 // dedicated report detail. "New inspection" deep-links the builder with the
-// pre-filled date (#/irms/reports/new?date=YYYY-MM-DD, read via the module
+// pre-filled date (/irms/reports/new?date=YYYY-MM-DD, read via the module
 // query). On <640px a compact list-per-day replaces the grid. Responsive,
 // keyboard accessible, honest loading/error/empty states.
 

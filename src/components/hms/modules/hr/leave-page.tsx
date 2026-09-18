@@ -1,7 +1,7 @@
 "use client";
 
 // MOHD.HMS ENTERPRISE — dedicated New Leave Request page (hr/leave view).
-// Replaces the former leave dialog. Routing: #/hr/leave/new.
+// Replaces the former leave dialog. Routing: /hr/leave/new.
 // canFileForOthers logic kept exactly: managers/admins may file for any
 // employee (or leave the employee blank to file for themselves); everyone else
 // files against their own employee record. POST /api/v1/hr/leave — no new APIs.
@@ -139,8 +139,8 @@ export function HrLeaveNewPage() {
   return (
     <div>
       <PageShell
-        backLabel="Back to HR" backHref="#/hr"
-        crumbs={[{ label: "HR", href: "#/hr" }, { label: "Leave" }, { label: "New Leave Request" }]}
+        backLabel="Back to HR" backHref="/hr"
+        crumbs={[{ label: "HR", href: "/hr" }, { label: "Leave" }, { label: "New Leave Request" }]}
         title="New Leave Request"
         description={
           canFileForOthers

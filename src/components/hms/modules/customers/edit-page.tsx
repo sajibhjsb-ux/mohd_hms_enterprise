@@ -149,8 +149,8 @@ export function CustomerEditPage({ id }: { id: string }) {
     return (
       <PageShell
         backLabel="Back to Customers"
-        backHref="#/customers"
-        crumbs={[{ label: "Customers", href: "#/customers" }, { label: "Edit" }]}
+        backHref="/customers"
+        crumbs={[{ label: "Customers", href: "/customers" }, { label: "Edit" }]}
         title="Edit customer"
       >
         <EmptyState
@@ -165,8 +165,8 @@ export function CustomerEditPage({ id }: { id: string }) {
     return (
       <PageShell
         backLabel="Back to Customers"
-        backHref="#/customers"
-        crumbs={[{ label: "Customers", href: "#/customers" }, { label: "Edit" }]}
+        backHref="/customers"
+        crumbs={[{ label: "Customers", href: "/customers" }, { label: "Edit" }]}
         title="Edit customer"
       >
         <LoadingState label="Loading customer…" rows={4} />
@@ -178,8 +178,8 @@ export function CustomerEditPage({ id }: { id: string }) {
     return (
       <PageShell
         backLabel="Back to Customers"
-        backHref="#/customers"
-        crumbs={[{ label: "Customers", href: "#/customers" }, { label: "Edit" }]}
+        backHref="/customers"
+        crumbs={[{ label: "Customers", href: "/customers" }, { label: "Edit" }]}
         title="Edit customer"
       >
         <ErrorState message={loadError} onRetry={load} />
@@ -191,8 +191,8 @@ export function CustomerEditPage({ id }: { id: string }) {
     return (
       <PageShell
         backLabel="Back to Customers"
-        backHref="#/customers"
-        crumbs={[{ label: "Customers", href: "#/customers" }, { label: "Edit" }]}
+        backHref="/customers"
+        crumbs={[{ label: "Customers", href: "/customers" }, { label: "Edit" }]}
         title="Edit customer"
       >
         <EmptyState title="Customer not found" hint="It may have been removed or the link is incorrect." />
@@ -205,10 +205,10 @@ export function CustomerEditPage({ id }: { id: string }) {
   return (
     <PageShell
       backLabel="Back to Customer"
-      backHref={`#/customers/${encodeURIComponent(customer.id)}`}
+      backHref={`/customers/${encodeURIComponent(customer.id)}`}
       crumbs={[
-        { label: "Customers", href: "#/customers" },
-        { label: customer.companyName, href: `#/customers/${encodeURIComponent(customer.id)}` },
+        { label: "Customers", href: "/customers" },
+        { label: customer.companyName, href: `/customers/${encodeURIComponent(customer.id)}` },
         { label: "Edit" },
       ]}
       title={`Edit ${customer.companyName}`}

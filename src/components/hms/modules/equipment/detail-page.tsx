@@ -71,7 +71,7 @@ export function EquipmentDetailPage({ id }: { id: string }) {
 
   if (loading && !detail) {
     return (
-      <PageShell backLabel="Back to Equipment" backHref="#/equipment" title="Equipment details">
+      <PageShell backLabel="Back to Equipment" backHref="/equipment" title="Equipment details">
         <LoadingState label="Loading equipment…" rows={4} />
       </PageShell>
     );
@@ -79,7 +79,7 @@ export function EquipmentDetailPage({ id }: { id: string }) {
 
   if (loadError && !detail) {
     return (
-      <PageShell backLabel="Back to Equipment" backHref="#/equipment" title="Equipment details">
+      <PageShell backLabel="Back to Equipment" backHref="/equipment" title="Equipment details">
         <ErrorState message={loadError} onRetry={load} />
       </PageShell>
     );
@@ -87,7 +87,7 @@ export function EquipmentDetailPage({ id }: { id: string }) {
 
   if (!detail) {
     return (
-      <PageShell backLabel="Back to Equipment" backHref="#/equipment" title="Equipment details">
+      <PageShell backLabel="Back to Equipment" backHref="/equipment" title="Equipment details">
         <EmptyState title="Equipment not found" hint="It may have been removed or the link is incorrect." />
       </PageShell>
     );
@@ -96,11 +96,11 @@ export function EquipmentDetailPage({ id }: { id: string }) {
   // History rows: complaints and work orders have dedicated detail pages → link.
   const complaints: HistoryItem[] = detail.history.complaints.map((c) => ({
     id: c.id, code: c.code, primary: c.title, badge: c.status,
-    secondary: fmtDate(c.createdAt), badge2: c.priority, href: `#/complaints/${encodeURIComponent(c.id)}`,
+    secondary: fmtDate(c.createdAt), badge2: c.priority, href: `/complaints/${encodeURIComponent(c.id)}`,
   }));
   const workOrders: HistoryItem[] = detail.history.workOrders.map((w) => ({
     id: w.id, code: w.code, primary: w.title, badge: w.status,
-    secondary: fmtDate(w.createdAt), badge2: w.priority, href: `#/work-orders/${encodeURIComponent(w.id)}`,
+    secondary: fmtDate(w.createdAt), badge2: w.priority, href: `/work-orders/${encodeURIComponent(w.id)}`,
   }));
   const pmTasks: HistoryItem[] = detail.history.pmTasks.map((p) => ({
     id: p.id, code: p.code, primary: `Due ${fmtDate(p.dueDate)}`, badge: p.status,
@@ -117,8 +117,8 @@ export function EquipmentDetailPage({ id }: { id: string }) {
   return (
     <PageShell
       backLabel="Back to Equipment"
-      backHref="#/equipment"
-      crumbs={[{ label: "Equipment", href: "#/equipment" }, { label: detail.assetTag }]}
+      backHref="/equipment"
+      crumbs={[{ label: "Equipment", href: "/equipment" }, { label: detail.assetTag }]}
       title={detail.name}
       description={`${detail.assetTag} · ${[detail.manufacturer, detail.model].filter(Boolean).join(" ") || "No model info"}`}
       actions={

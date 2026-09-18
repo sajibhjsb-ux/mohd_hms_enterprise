@@ -126,8 +126,8 @@ export function TechnicianEditPage({ id }: { id: string }) {
     return (
       <PageShell
         backLabel="Back to Technicians"
-        backHref="#/technicians"
-        crumbs={[{ label: "Technicians", href: "#/technicians" }, { label: "Edit Skills & Rate" }]}
+        backHref="/technicians"
+        crumbs={[{ label: "Technicians", href: "/technicians" }, { label: "Edit Skills & Rate" }]}
         title="Edit Skills & Rate"
       >
         <EmptyState
@@ -142,7 +142,7 @@ export function TechnicianEditPage({ id }: { id: string }) {
 
   if (loading && !tech) {
     return (
-      <PageShell backLabel="Back to Technicians" backHref="#/technicians" title="Edit Skills & Rate">
+      <PageShell backLabel="Back to Technicians" backHref="/technicians" title="Edit Skills & Rate">
         <LoadingState label="Loading technician…" rows={3} />
       </PageShell>
     );
@@ -150,7 +150,7 @@ export function TechnicianEditPage({ id }: { id: string }) {
 
   if (loadError && !tech) {
     return (
-      <PageShell backLabel="Back to Technicians" backHref="#/technicians" title="Edit Skills & Rate">
+      <PageShell backLabel="Back to Technicians" backHref="/technicians" title="Edit Skills & Rate">
         <ErrorState message={loadError} onRetry={load} />
       </PageShell>
     );
@@ -158,7 +158,7 @@ export function TechnicianEditPage({ id }: { id: string }) {
 
   if (!tech || !form) {
     return (
-      <PageShell backLabel="Back to Technicians" backHref="#/technicians" title="Edit Skills & Rate">
+      <PageShell backLabel="Back to Technicians" backHref="/technicians" title="Edit Skills & Rate">
         <EmptyState title="Technician profile not found" hint="It may have been removed or the link is incorrect." />
       </PageShell>
     );
@@ -176,9 +176,9 @@ export function TechnicianEditPage({ id }: { id: string }) {
   return (
     <PageShell
       backLabel="Back to Technicians"
-      backHref="#/technicians"
+      backHref="/technicians"
       crumbs={[
-        { label: "Technicians", href: "#/technicians" },
+        { label: "Technicians", href: "/technicians" },
         { label: displayName },
         { label: "Edit Skills & Rate" },
       ]}

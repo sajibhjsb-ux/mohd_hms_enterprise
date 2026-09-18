@@ -85,7 +85,7 @@ function WorkOrdersList() {
   const { user } = useSession();
   const canCreate = hasPerm(user, PERMISSIONS.work_orders_create);
 
-  // KPI drill-down (e.g. #/work-orders?status=active): validated case-insensitively
+  // KPI drill-down (e.g. /work-orders?status=active): validated case-insensitively
   // against the canonical tab keys, then applied once on mount.
   const dq = useModuleQuery("work-orders");
   const statusTab = STATUS_TABS.find((t) => t.key === dq.params.status?.toUpperCase());
