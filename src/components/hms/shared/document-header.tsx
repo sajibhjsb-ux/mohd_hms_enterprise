@@ -94,7 +94,9 @@ export function DocumentHeader({
           />
           <div className="min-w-0">
             <div className="text-base font-bold text-primary leading-snug break-words">{company.name}</div>
-            {company.address ? <div className="text-xs text-muted-foreground mt-0.5 leading-snug break-words">{company.address}</div> : null}
+            {/* whitespace-pre-line renders explicit line breaks exactly like the
+                PDF engine's physical-line header (preview == generated PDF). */}
+            {company.address ? <div className="text-xs text-muted-foreground mt-0.5 leading-snug break-words whitespace-pre-line">{company.address}</div> : null}
             {contact ? <div className="text-xs text-muted-foreground mt-0.5 leading-snug break-words">{contact}</div> : null}
           </div>
         </div>

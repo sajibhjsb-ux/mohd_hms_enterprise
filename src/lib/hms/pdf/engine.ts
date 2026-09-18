@@ -56,6 +56,15 @@ export function pdfText(input: string | null | undefined): string {
   return out.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, " ");
 }
 
+/** Flatten to ONE physical line: explicit line breaks and collapsed whitespace
+ *  become single spaces. Use for text that must occupy exactly one row
+ *  (titles, numbers, metadata values, captions). pdf-lib's
+ *  widthOfTextAtSize() THROWS on "\n" (WinAnsi cannot encode 0x0A), so any
+ *  string that reaches a measuring call must be single-line or pre-split. */
+export function singleLine(input: string | null | undefined): string {
+  return pdfText(input).replace(/\s+/g, " ").trim();
+}
+
 export class PdfGenerationError extends Error {
   detail: string;
   constructor(message: string, detail: string) {
@@ -135,8 +144,18 @@ export class PdfDoc {
     this.y = this.bodyTop;
   }
 
-  /** Truncate to a pixel width (never mid-glyph overflow); adds an ellipsis. */
+  /** Truncate to a pixel width (never mid-glyph overflow); adds an ellipsis.
+   *  Newline-safe: each physical line is fitted independently — pdf-lib's
+   *  widthOfTextAtSize() throws on "\n", so a multi-line input is measured
+   *  and fitted line by line (drawText renders the joined result correctly). */
   private fitText(text: string, font: PDFFont, size: number, maxW: number): string {
+    return text
+      .split("\n")
+      .map((ln) => this.fitSingleLine(ln, font, size, maxW))
+      .join("\n");
+  }
+
+  private fitSingleLine(text: string, font: PDFFont, size: number, maxW: number): string {
     if (font.widthOfTextAtSize(text, size) <= maxW) return text;
     let line = text;
     while (line.length > 1 && font.widthOfTextAtSize(line + "\u2026", size) > maxW) line = line.slice(0, -1);
@@ -169,7 +188,12 @@ export class PdfDoc {
     const CONTACT_SIZE = 7.6;
     const COMPANY_LH = 15;
     const CONTACT_LH = 10.6;
-    const contact = h.contactLines.map((l) => pdfText(l).trim()).filter(Boolean).slice(0, 3);
+    // Flatten into PHYSICAL lines: an address saved with explicit line breaks
+    // ("line1\nline2") must occupy two rows and grow the header, so every
+    // contactLines entry may itself contain newlines. No cap — every address
+    // line the user saved is rendered (nothing silently dropped); the measured
+    // container below keeps the rule and the body below the real height.
+    const contact = h.contactLines.flatMap((l) => pdfText(l).split("\n")).map((l) => l.trim()).filter(Boolean);
     const leftH = COMPANY_LH + contact.length * CONTACT_LH;
 
     // ── RIGHT block: document identity ──────────────────────────────
@@ -180,14 +204,14 @@ export class PdfDoc {
     const NUM_LH = 13.5;
     const META_LH = 11.4;
     const meta: [string, string][] = [];
-    const dl = pdfText(h.docDateLabel).trim();
+    const dl = singleLine(h.docDateLabel);
     if (dl) {
       // docDateLabel is built as "<Verb> <date>" (Dated/Issued/Received/…) —
       // render it as the first column-aligned metadata row.
       const sp = dl.indexOf(" ");
       meta.push(sp > 0 ? [dl.slice(0, sp), dl.slice(sp + 1).trim()] : [dl, ""]);
     }
-    for (const [k, v] of (h.meta ?? []).slice(0, 4)) meta.push([pdfText(k).trim(), pdfText(v ?? "").trim()]);
+    for (const [k, v] of (h.meta ?? []).slice(0, 4)) meta.push([singleLine(k), singleLine(v ?? "")]);
     const rightH = TITLE_LH + NUM_LH + meta.length * META_LH;
 
     // ── Shared container — all three blocks vertically centered ─────
@@ -222,7 +246,7 @@ export class PdfDoc {
     const leftMaxW = valueX - META_LABEL_GAP - textX - 24;
     const leftTop = centerY + leftH / 2;
     let ly = leftTop - 10.8; // company baseline
-    p.drawText(this.fitText(pdfText(h.company).slice(0, 42), this.bold, COMPANY_SIZE, leftMaxW), {
+    p.drawText(this.fitText(singleLine(h.company).slice(0, 42), this.bold, COMPANY_SIZE, leftMaxW), {
       x: textX,
       y: ly,
       size: COMPANY_SIZE,
@@ -239,10 +263,10 @@ export class PdfDoc {
     // column-aligned "Label : Value" block anchored to the page margin.
     const rightTop = centerY + rightH / 2;
     let ry = rightTop - 12.8; // title baseline
-    const title = this.fitText(pdfText(h.docTitle).toUpperCase(), this.bold, TITLE_SIZE, leftMaxW + LOGO_BOX + 12);
+    const title = this.fitText(singleLine(h.docTitle).toUpperCase(), this.bold, TITLE_SIZE, leftMaxW + LOGO_BOX + 12);
     p.drawText(title, { x: A4W - MARGIN - this.bold.widthOfTextAtSize(title, TITLE_SIZE), y: ry, size: TITLE_SIZE, font: this.bold, color: INK });
     ry -= NUM_LH;
-    const num = pdfText(h.docNumber);
+    const num = singleLine(h.docNumber);
     p.drawText(num, { x: A4W - MARGIN - this.bold.widthOfTextAtSize(num, NUM_SIZE), y: ry, size: NUM_SIZE, font: this.bold, color: GREEN_INK });
     ry -= 12;
     metaRows.forEach((r, i) => {
@@ -351,7 +375,7 @@ export class PdfDoc {
       const hH = 19;
       this.page.drawRectangle({ x: MARGIN, y: this.y - hH, width: this.contentW, height: hH, color: HEADER_BG });
       columns.forEach((c, i) => {
-        const label = pdfText(c.header);
+        const label = singleLine(c.header);
         const w = this.bold.widthOfTextAtSize(label, 8);
         const x = c.align === "right" ? colX[i] + colW[i] - w - 6 : c.align === "center" ? colX[i] + (colW[i] - w) / 2 : colX[i] + 6;
         this.page.drawText(label, { x, y: this.y - hH + 6, size: 8, font: this.bold, color: WHITE });
@@ -418,9 +442,10 @@ export class PdfDoc {
       }
       const size = isLast ? 10 : 9;
       const f = isLast ? this.bold : this.font;
-      const vw = f.widthOfTextAtSize(pdfText(value), size);
-      this.page.drawText(pdfText(label), { x: x0, y: this.y - 12, size, font: f, color: isLast ? GREEN_INK : MUTED });
-      this.page.drawText(pdfText(value), { x: x0 + blockW - vw, y: this.y - 12, size, font: f, color: isLast ? GREEN_INK : INK });
+      const v = singleLine(value);
+      const vw = f.widthOfTextAtSize(v, size);
+      this.page.drawText(singleLine(label), { x: x0, y: this.y - 12, size, font: f, color: isLast ? GREEN_INK : MUTED });
+      this.page.drawText(v, { x: x0 + blockW - vw, y: this.y - 12, size, font: f, color: isLast ? GREEN_INK : INK });
       this.y -= isLast ? 22 : 16;
     });
   }
@@ -437,7 +462,7 @@ export class PdfDoc {
       height: h,
       color: tone === "green" ? GREEN_SOFT : tone === "danger" ? rgb(0.96, 0.92, 0.92) : rgb(0.95, 0.95, 0.955),
     });
-    this.page.drawText(pdfText(text), {
+    this.page.drawText(singleLine(text), {
       x: MARGIN + 8,
       y: this.y - 8.5 + 4,
       size: 8.8,
@@ -493,7 +518,7 @@ export class PdfDoc {
     this.page.drawImage(img, { x: MARGIN, y: this.y, width: dim.width, height: dim.height });
     if (opts.caption) {
       this.y -= 12;
-      this.page.drawText(pdfText(opts.caption).slice(0, 90), { x: MARGIN, y: this.y, size: 7.5, font: this.font, color: MUTED });
+      this.page.drawText(singleLine(opts.caption).slice(0, 90), { x: MARGIN, y: this.y, size: 7.5, font: this.font, color: MUTED });
     }
     this.y -= 6;
   }
@@ -568,9 +593,9 @@ export class PdfDoc {
 
         // Number (bold) + caption in the strip under the cell.
         const capY = yTop - cellH + 14;
-        this.page.drawText(pdfText(cell.number).slice(0, 12), { x: x + 6, y: capY, size: 8, font: this.bold, color: GREEN_INK });
-        const numW = this.bold.widthOfTextAtSize(pdfText(cell.number).slice(0, 12), 8) + 6;
-        const caption = pdfText(cell.caption || "—");
+        this.page.drawText(singleLine(cell.number).slice(0, 12), { x: x + 6, y: capY, size: 8, font: this.bold, color: GREEN_INK });
+        const numW = this.bold.widthOfTextAtSize(singleLine(cell.number).slice(0, 12), 8) + 6;
+        const caption = singleLine(cell.caption || "—");
         const maxCw = cellW - numW - 14;
         let line = caption.slice(0, 60);
         while (line.length > 1 && this.font.widthOfTextAtSize(line, 7.5) > maxCw) line = line.slice(0, -1);
@@ -593,7 +618,7 @@ export class PdfDoc {
     page.drawRectangle({ x: x - 3, y: y - 3, width: size + 6, height: size + 6, color: WHITE, borderColor: LINE, borderWidth: 0.6 });
     page.drawImage(img, { x, y, width: size, height: size });
     if (opts?.caption) {
-      const caption = pdfText(opts.caption).slice(0, 44);
+      const caption = singleLine(opts.caption).slice(0, 44);
       const tw = this.font.widthOfTextAtSize(caption, 7);
       page.drawText(caption, { x: x - 8 - tw, y: y + 22, size: 7, font: this.font, color: FAINT });
     }

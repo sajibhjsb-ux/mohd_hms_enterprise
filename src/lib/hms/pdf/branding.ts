@@ -57,6 +57,12 @@ export async function getBranding(): Promise<Branding> {
   } catch {
     // Settings unavailable — fall back to the canonical company identity.
   }
-  const contactLines = [address, [phone, email].filter(Boolean).join("  ·  ")].filter(Boolean);
+  // The address may contain explicit line breaks (multi-line company address —
+  // fully supported). Split into physical lines so every saved line renders as
+  // its own header row; the engine measures the result and moves the brand rule
+  // / body down automatically. The engine additionally flattens defensively,
+  // but contactLines being one-line-per-entry keeps the header math exact.
+  const addressLines = address.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+  const contactLines = [...addressLines, [phone, email].filter(Boolean).join("  ·  ")].filter(Boolean);
   return { company, address, phone, email, country, contactLines, logoBytes: loadLogo() };
 }
