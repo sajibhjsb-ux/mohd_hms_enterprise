@@ -569,3 +569,17 @@ Work Log:
 Stage Summary:
 - Floating nav is now a slim 44px capsule proportionate to the 64px header; all interactions (arrows, drag, wheel, click) preserved; more modules visible per width; mobile bottom-nav unaffected
 - Files changed: src/components/hms/shell/floating-nav.tsx (only)
+
+---
+Task ID: 13
+Agent: Z.ai Code (main)
+Task: Narrow the desktop floating navigation — user feedback: "the menu bar is too long, make it little small"
+
+Work Log:
+- Changed pill max-width max-w-[1500px] → max-w-[1080px] (centered capsule, no longer edge-to-edge)
+- Browser verification (agent-browser, admin): pill measured 1080px wide / 44px tall, horizontally centered (±2px), strip still scrollable; right arrow scrolls 0→539; click "Customers" after scroll → #/customers renders Customers page; page errors empty; lint clean; mobile (<lg) unaffected (nav hidden, bottom nav used)
+
+Stage Summary:
+- Floating nav is now a compact 1080px centered capsule under the header; all scroll/drag/click behavior intact; more overflow handled by arrows/drag/wheel as before
+- Files changed: src/components/hms/shell/floating-nav.tsx (one className edit)
+- Note: one flaky eval during testing (click mid smooth-scroll did not land); clean retry passed — not an app defect

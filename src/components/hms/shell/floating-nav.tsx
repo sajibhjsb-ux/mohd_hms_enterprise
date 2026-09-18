@@ -131,7 +131,7 @@ export function FloatingNav({ visible, activeModule, onSelect }: Props) {
   return (
     <div className="hidden lg:block sticky top-[68px] z-30 mt-2 px-4 sm:px-6 no-print" data-testid="floating-nav">
       <div
-        className="relative mx-auto max-w-[1500px] h-11 rounded-full border border-border/60 bg-background/85 backdrop-blur-xl shadow-[0_8px_24px_-10px_rgb(0_0_0/0.12)]"
+        className="relative mx-auto max-w-[1080px] h-11 rounded-full border border-border/60 bg-background/85 backdrop-blur-xl shadow-[0_8px_24px_-10px_rgb(0_0_0/0.12)]"
         role="navigation"
         aria-label="Primary modules"
       >
