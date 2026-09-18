@@ -25,6 +25,7 @@ import {
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { CheckCheck, Printer, Send, Trash2 } from "lucide-react";
+import { PdfButtons } from "@/components/hms/shared/pdf-buttons";
 
 // ── Types ──
 
@@ -208,6 +209,7 @@ export function IrmsReportDetailPage({ id }: { id: string }) {
             <Button variant="outline" size="sm" onClick={() => window.print()}>
               <Printer className="h-4 w-4 mr-1.5" /> Print
             </Button>
+            <PdfButtons type="inspection-report" id={detail.id} label={`Inspection report ${detail.code}`} />
             {detail.status === "DRAFT" ? (
               <Button size="sm" disabled={busy} onClick={() => void transition("submit")}>
                 <Send className="h-4 w-4 mr-1.5" /> {busy ? "Submitting…" : "Submit for Approval"}

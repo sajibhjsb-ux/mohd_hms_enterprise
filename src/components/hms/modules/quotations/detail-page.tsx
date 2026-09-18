@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Check, Clock, Printer, Repeat, Send, Trash2, X } from "lucide-react";
 import { DocumentPreview, FALLBACK_COMPANY, loadCompanyName, type QuotationDetail, type QuotationRow } from "./shared";
+import { PdfButtons } from "@/components/hms/shared/pdf-buttons";
 
 function errMessage(e: unknown): string {
   return e instanceof ClientApiError ? e.message : "Something went wrong. Please try again.";
@@ -113,11 +114,12 @@ export function QuotationDetailPage({ id }: { id: string }) {
           title={detail ? `Quotation ${detail.code}` : "Quotation"}
           description={detail?.customer ? `${detail.customer.companyName} · Issued ${fmtDate(detail.quotationDate)}` : "Document preview and workflow actions"}
           actions={
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {detail ? <StatusBadge status={detail.status} /> : null}
               <Button variant="outline" onClick={() => window.print()} disabled={!detail}>
                 <Printer className="h-4 w-4 mr-1.5" /> Print
               </Button>
+              {detail ? <PdfButtons type="quotation" id={detail.id} label={`Quotation ${detail.code}`} showPreview /> : null}
             </div>
           }
         >

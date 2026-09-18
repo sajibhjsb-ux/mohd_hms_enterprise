@@ -12,6 +12,7 @@ import { navigateTo } from "@/lib/hms/router";
 import { PageShell } from "@/components/hms/shared/page-shell";
 import { PriorityBadge, StatusBadge, LoadingState, EmptyState, ErrorState } from "@/components/hms/shared/ui-bits";
 import { WorkflowTimeline } from "@/components/hms/shared/workflow-timeline";
+import { PdfButtons } from "@/components/hms/shared/pdf-buttons";
 import { PERMISSIONS, humanize } from "@/lib/hms/constants";
 import { fmtDateTime } from "@/lib/hms/format";
 import { useToast } from "@/hooks/use-toast";
@@ -138,7 +139,7 @@ export function ComplaintDetailPage({ id }: { id: string }) {
       title={detail.title}
       description={`${detail.customer?.companyName ?? "—"}${detail.equipment ? ` · ${detail.equipment.name} (${detail.equipment.assetTag})` : ""} · Logged ${fmtDateTime(detail.createdAt)}`}
       actions={
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {status === "NEW" && (canUpdate || isPortalOwner) ? (
             <Button variant="outline" size="sm" onClick={() => navigateTo("complaints", [detail.id, "edit"])}>
               <Pencil className="h-4 w-4 mr-1.5" /> Edit
@@ -146,6 +147,7 @@ export function ComplaintDetailPage({ id }: { id: string }) {
           ) : null}
           <StatusBadge status={detail.status} />
           <PriorityBadge priority={detail.priority} />
+          <PdfButtons type="complaint" id={detail.id} label={`Complaint ${detail.code}`} />
         </div>
       }
     >

@@ -15,6 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 import { PageShell } from "@/components/hms/shared/page-shell";
 import { StatusBadge, LoadingState, EmptyState, ErrorState } from "@/components/hms/shared/ui-bits";
 import { WorkflowTimeline } from "@/components/hms/shared/workflow-timeline";
+import { PdfButtons } from "@/components/hms/shared/pdf-buttons";
 import { PERMISSIONS } from "@/lib/hms/constants";
 import { fmtDate, money } from "@/lib/hms/format";
 import { Button } from "@/components/ui/button";
@@ -34,6 +35,7 @@ export function InvoiceDetailPage({ id }: { id: string }) {
   const { toast } = useToast();
   const canManage = hasPerm(user, PERMISSIONS.invoices_manage);
   const canRecord = hasPerm(user, PERMISSIONS.payments_record);
+  const canReceipt = hasPerm(user, PERMISSIONS.payments_read);
 
   const [detail, setDetail] = useState<InvoiceDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -103,11 +105,12 @@ export function InvoiceDetailPage({ id }: { id: string }) {
           title={detail ? `Invoice ${detail.code}` : "Invoice"}
           description={detail?.customer ? `${detail.customer.companyName} · Issued ${fmtDate(detail.invoiceDate)}` : "Document preview, payments and workflow actions"}
           actions={
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {detail ? <StatusBadge status={detail.status} /> : null}
               <Button variant="outline" onClick={() => window.print()} disabled={!detail}>
                 <Printer className="h-4 w-4 mr-1.5" /> Print
               </Button>
+              {detail ? <PdfButtons type="invoice" id={detail.id} label={`Invoice ${detail.code}`} showPreview /> : null}
             </div>
           }
         >
@@ -182,6 +185,7 @@ export function InvoiceDetailPage({ id }: { id: string }) {
                     <th className="px-2 py-2 font-medium">Method</th>
                     <th className="px-2 py-2 font-medium hidden sm:table-cell">Reference</th>
                     <th className="px-2 py-2 font-medium text-right">Amount</th>
+                    {canReceipt ? <th className="px-2 py-2 font-medium text-right">Receipt</th> : null}
                   </tr>
                 </thead>
                 <tbody>
@@ -192,6 +196,11 @@ export function InvoiceDetailPage({ id }: { id: string }) {
                       <td className="px-2 py-2">{p.method.replaceAll("_", " ")}</td>
                       <td className="px-2 py-2 hidden sm:table-cell">{p.reference || "—"}</td>
                       <td className="px-2 py-2 text-right tabular-nums">{money(p.amountCents)}</td>
+                      {canReceipt ? (
+                        <td className="px-2 py-2 text-right">
+                          <PdfButtons type="payment-receipt" id={p.id} label={`Receipt ${p.code}`} iconOnly />
+                        </td>
+                      ) : null}
                     </tr>
                   ))}
                 </tbody>

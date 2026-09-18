@@ -22,6 +22,7 @@ import { Separator } from "@/components/ui/separator";
 import {
   AlertTriangle, Check, CheckCheck, ClipboardCheck, X,
 } from "lucide-react";
+import { PdfButtons } from "@/components/hms/shared/pdf-buttons";
 import { cn } from "@/lib/utils";
 
 // ── Types ──
@@ -175,7 +176,12 @@ export function PurchaseDetailPage({ id }: { id: string }) {
         (detail.expectedDate ? ` · expected ${fmtDate(detail.expectedDate)}` : "") +
         (detail.receivedAt ? ` · received ${fmtDate(detail.receivedAt)}` : "")
       }
-      actions={<StatusBadge status={detail.status} />}
+      actions={
+        <div className="flex flex-wrap items-center gap-2">
+          <StatusBadge status={detail.status} />
+          <PdfButtons type="purchase-order" id={detail.id} label={`Purchase order ${detail.code}`} />
+        </div>
+      }
     >
       <div className="space-y-4 max-w-4xl">
         {/* Supplier / dates summary */}

@@ -11,6 +11,7 @@ import { hasPerm, useSession } from "@/components/hms/session";
 import { PageShell } from "@/components/hms/shared/page-shell";
 import { PriorityBadge, StatusBadge, LoadingState, EmptyState, ErrorState } from "@/components/hms/shared/ui-bits";
 import { WorkflowTimeline } from "@/components/hms/shared/workflow-timeline";
+import { PdfButtons } from "@/components/hms/shared/pdf-buttons";
 import { PERMISSIONS, humanize } from "@/lib/hms/constants";
 import { money, fmtDate, fmtDateTime, toCents } from "@/lib/hms/format";
 import { useToast } from "@/hooks/use-toast";
@@ -260,9 +261,10 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
       title={detail.title}
       description={`${detail.customer?.companyName ?? "—"}${detail.equipment ? ` · ${detail.equipment.name} (${detail.equipment.assetTag})` : ""} · Created ${fmtDateTime(detail.createdAt)}`}
       actions={
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <StatusBadge status={detail.status} />
           <PriorityBadge priority={detail.priority} />
+          <PdfButtons type="work-order" id={detail.id} label={`Work order ${detail.code}`} />
         </div>
       }
     >

@@ -18,6 +18,7 @@ import {
 import { api, qs } from "@/lib/hms/api-client";
 import { fmtDate } from "@/lib/hms/format";
 import { PERMISSIONS, humanize } from "@/lib/hms/constants";
+import { PdfButtons } from "@/components/hms/shared/pdf-buttons";
 import { hasPerm, useSession } from "@/components/hms/session";
 import { useUi } from "@/lib/hms/ui-store";
 import { navigateTo, pageFromSeg } from "@/lib/hms/router";
@@ -329,10 +330,9 @@ function PmList() {
           key: "taskActions", header: "Actions", sortable: false,
           render: (t: PmTask) => {
             const active = ["SCHEDULED", "OVERDUE", "IN_PROGRESS"].includes(t.status);
-            if (!active) return <span className="text-xs text-muted-foreground">—</span>;
             return (
               <div className="flex items-center gap-1.5">
-                {t.status !== "IN_PROGRESS" ? (
+                {active && t.status !== "IN_PROGRESS" ? (
                   <Button
                     variant="outline" size="sm"
                     disabled={busyTaskId === t.id}
@@ -343,15 +343,17 @@ function PmList() {
                   </Button>
                 ) : null}
                 {/* Complete → dedicated full page (#/pm/{taskId}/complete) */}
-                <Button
-                  variant="outline" size="sm"
-                  disabled={busyTaskId === t.id}
-                  onClick={() => navigateTo("pm", [t.id, "complete"])}
-                  aria-label={`Complete ${t.code}`}
-                >
-                  <CheckCircle2 className="h-3.5 w-3.5 mr-1" /> Complete
-                </Button>
-                {canManage ? (
+                {active ? (
+                  <Button
+                    variant="outline" size="sm"
+                    disabled={busyTaskId === t.id}
+                    onClick={() => navigateTo("pm", [t.id, "complete"])}
+                    aria-label={`Complete ${t.code}`}
+                  >
+                    <CheckCircle2 className="h-3.5 w-3.5 mr-1" /> Complete
+                  </Button>
+                ) : null}
+                {active && canManage ? (
                   <Button
                     variant="ghost" size="sm"
                     disabled={busyTaskId === t.id}
@@ -361,6 +363,8 @@ function PmList() {
                     <CircleOff className="h-3.5 w-3.5 mr-1" /> Skip
                   </Button>
                 ) : null}
+                {!active ? <span className="text-xs text-muted-foreground">—</span> : null}
+                <PdfButtons type="pm-task" id={t.id} label={`PM task ${t.code}`} iconOnly />
               </div>
             );
           },

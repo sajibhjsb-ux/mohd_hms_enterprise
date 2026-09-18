@@ -25,6 +25,7 @@ import {
   Archive, CalendarClock, FileText, Pencil, QrCode, SearchCheck, Wrench,
 } from "lucide-react";
 import { HistorySection, type EquipmentDetail, type HistoryItem } from "./shared";
+import { PdfButtons } from "@/components/hms/shared/pdf-buttons";
 
 export function EquipmentDetailPage({ id }: { id: string }) {
   const { user } = useSession();
@@ -131,6 +132,7 @@ export function EquipmentDetailPage({ id }: { id: string }) {
           <Button variant="outline" onClick={() => navigateTo("equipment", [detail.id, "label"])}>
             <QrCode className="h-4 w-4 mr-1.5" /> QR Label
           </Button>
+          <PdfButtons type="equipment-report" id={detail.id} label={`Equipment report ${detail.assetTag}`} />
           {canRetire ? (
             <Button variant="outline" className="text-destructive hover:text-destructive" onClick={() => setConfirmRetire(true)}>
               <Archive className="h-4 w-4 mr-1.5" /> Retire
