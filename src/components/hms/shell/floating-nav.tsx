@@ -2,9 +2,9 @@
 
 // MOHD.HMS ENTERPRISE — desktop floating navigation (premium reference design).
 // One authoritative nav source (MODULES registry, RBAC-filtered upstream).
-// Same pill size as before, but overflow is now a scrollable + slidable strip:
-// hidden scrollbar, drag-to-slide with the mouse, wheel-to-slide, and circular
-// edge arrow buttons (reference design) — never wraps, never overflows.
+// Compact slim capsule (44px) that sits proportionally under the header.
+// Overflow is a scrollable + slidable strip: hidden scrollbar, drag-to-slide
+// with the mouse, wheel-to-slide, and circular edge arrows — never wraps.
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { type ModuleDef } from "@/components/hms/registry";
@@ -129,9 +129,9 @@ export function FloatingNav({ visible, activeModule, onSelect }: Props) {
   };
 
   return (
-    <div className="hidden lg:block sticky top-[72px] z-30 mt-3 px-4 sm:px-6 no-print" data-testid="floating-nav">
+    <div className="hidden lg:block sticky top-[68px] z-30 mt-2 px-4 sm:px-6 no-print" data-testid="floating-nav">
       <div
-        className="relative mx-auto max-w-[1500px] h-16 rounded-3xl border border-border/60 bg-background/80 backdrop-blur-xl shadow-[0_12px_40px_-12px_rgb(0_0_0/0.14)]"
+        className="relative mx-auto max-w-[1500px] h-11 rounded-full border border-border/60 bg-background/85 backdrop-blur-xl shadow-[0_8px_24px_-10px_rgb(0_0_0/0.12)]"
         role="navigation"
         aria-label="Primary modules"
       >
@@ -145,7 +145,7 @@ export function FloatingNav({ visible, activeModule, onSelect }: Props) {
           onPointerLeave={endDrag}
           onClickCapture={onClickCapture}
           className={cn(
-            "h-full rounded-3xl flex items-center gap-1 px-3 overflow-x-auto no-scrollbar select-none outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
+            "h-full rounded-full flex items-center gap-0.5 px-2 overflow-x-auto no-scrollbar select-none outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
             grabbing ? "cursor-grabbing" : "cursor-default"
           )}
         >
@@ -159,13 +159,13 @@ export function FloatingNav({ visible, activeModule, onSelect }: Props) {
                 aria-current={active ? "page" : undefined}
                 title={m.label}
                 className={cn(
-                  "flex items-center gap-2 rounded-xl px-3.5 h-11 text-sm font-medium whitespace-nowrap transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  "flex items-center gap-1.5 rounded-full px-3 h-8 text-[13px] leading-none font-medium whitespace-nowrap transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-ring",
                   active
                     ? "bg-primary/10 text-primary font-semibold"
                     : "text-muted-foreground hover:bg-accent hover:text-foreground"
                 )}
               >
-                <m.icon className={cn("h-5 w-5 shrink-0", active ? "text-primary" : "text-muted-foreground/80")} aria-hidden />
+                <m.icon className={cn("h-4 w-4 shrink-0", active ? "text-primary" : "text-muted-foreground/80")} aria-hidden />
                 {m.label}
               </button>
             );
@@ -178,9 +178,9 @@ export function FloatingNav({ visible, activeModule, onSelect }: Props) {
             onClick={() => scrollByAmount(-1)}
             aria-label="Scroll modules left"
             title="Scroll left"
-            className="absolute left-1.5 top-1/2 -translate-y-1/2 z-10 h-9 w-9 rounded-full border border-border/70 bg-background shadow-md flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="absolute left-1 top-1/2 -translate-y-1/2 z-10 h-7 w-7 rounded-full border border-border/70 bg-background shadow-sm flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <ChevronLeft className="h-4.5 w-4.5" aria-hidden />
+            <ChevronLeft className="h-4 w-4" aria-hidden />
           </button>
         ) : null}
 
@@ -190,9 +190,9 @@ export function FloatingNav({ visible, activeModule, onSelect }: Props) {
             onClick={() => scrollByAmount(1)}
             aria-label="Scroll modules right"
             title="Scroll right"
-            className="absolute right-1.5 top-1/2 -translate-y-1/2 z-10 h-9 w-9 rounded-full border border-border/70 bg-background shadow-md flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="absolute right-1 top-1/2 -translate-y-1/2 z-10 h-7 w-7 rounded-full border border-border/70 bg-background shadow-sm flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <ChevronRight className="h-4.5 w-4.5" aria-hidden />
+            <ChevronRight className="h-4 w-4" aria-hidden />
           </button>
         ) : null}
       </div>

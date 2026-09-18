@@ -553,3 +553,19 @@ Work Log:
 Stage Summary:
 - Acceptance: business forms/details/creates/edits open as dedicated hash-routed pages; only confirms/utilities remain dialogs; no duplicate routes/flows; existing APIs/PostgreSQL/Redis/RBAC untouched; customer data still server-scoped; Back/Forward/direct URLs work; desktop + mobile verified; unsaved data protected (drafts + guard); no unexpected reloads.
 - All QA passed in a real browser. Final report delivered to user.
+
+---
+Task ID: 12
+Agent: Z.ai Code (main)
+Task: Slim down the desktop floating navigation — user feedback: "still the menu bar is too big, make it suitable for page"
+
+Work Log:
+- Resized pill from h-16 (64px) rounded-3xl to h-11 (44px) rounded-full capsule with lighter shadow
+- Shrunk nav buttons: h-11→h-8, px-3.5→px-3, text-sm→13px, gap-2→gap-1.5, icons h-5→h-4, strip gap-1→gap-0.5 px-3→px-2
+- Shrunk edge arrows: h-9 w-9→h-7 w-7, chevron 18px→16px, shadow-md→shadow-sm, inset 1.5→1
+- Adjusted spacing: sticky top-[72px]→top-[68px], mt-3→mt-2
+- Browser verification (agent-browser, admin login): pill=44px/radius=full, btn=32px/13px/16px icon; right arrow scroll 0→615; click "Inventory" after scroll → #/inventory renders; drag 300px slides strip to 915px; 375px viewport → floating nav hidden + no horizontal overflow; console clean (only React DevTools info + HMR log); lint clean
+
+Stage Summary:
+- Floating nav is now a slim 44px capsule proportionate to the 64px header; all interactions (arrows, drag, wheel, click) preserved; more modules visible per width; mobile bottom-nav unaffected
+- Files changed: src/components/hms/shell/floating-nav.tsx (only)
