@@ -37,6 +37,7 @@ model User {
 
   sessions           Session[]
   passwordResets     PasswordResetToken[]
+  pushSubscriptions  PushSubscription[]
   technicianProfile  TechnicianProfile?
   employee           Employee?
   notifications      Notification[]
@@ -72,6 +73,27 @@ model PasswordResetToken {
   createdAt DateTime  @default(now())
 
   @@index([userId])
+}
+
+// Web Push subscription (PWA push notifications). One user may register
+// several devices; endpoint is the provider-unique key. Revoked rows are kept
+// for audit and cleaned by expired-subscription pruning.
+model PushSubscription {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint   String    @unique
+  p256dh     String
+  auth       String
+  deviceName String?
+  platform   String?
+  browser    String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  lastSeenAt DateTime?
+  revokedAt  DateTime?
+
+  @@index([userId, revokedAt])
 }
 
 model TechnicianProfile {

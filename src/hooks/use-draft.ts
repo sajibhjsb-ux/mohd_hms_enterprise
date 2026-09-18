@@ -131,6 +131,26 @@ export function useDraft<T extends object>(opts: DraftOptions<T>): DraftState<T>
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [dirty]);
 
+  // PWA offline recovery (§9/§11): when connectivity returns (or Background
+  // Sync pings the page), re-flush the local draft to the server backup.
+  // localStorage is authoritative while offline; the server copy is a backup.
+  useEffect(() => {
+    const flush = () => {
+      if (!dirty && !localStorage.getItem(localKey)) return;
+      try {
+        const raw = localStorage.getItem(localKey);
+        const data = raw ? (JSON.parse(raw) as T) : valueRef.current;
+        api.post("/api/v1/drafts", { formKey, data: JSON.stringify(data) }).catch(() => undefined);
+      } catch { /* ignore */ }
+    };
+    window.addEventListener("online", flush);
+    window.addEventListener("hms:flush-drafts", flush);
+    return () => {
+      window.removeEventListener("online", flush);
+      window.removeEventListener("hms:flush-drafts", flush);
+    };
+  }, [dirty, localKey, formKey]);
+
   return { value, setValue, dirty, draftExists, restore, discard, reset, lastSavedAt, saveNow };
 }
 

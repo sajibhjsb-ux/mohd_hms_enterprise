@@ -5,6 +5,7 @@ import "server-only";
 import { db } from "@/lib/db";
 import { emit } from "@/lib/hms/workflows/bus";
 import { EVENT_TYPES } from "@/lib/hms/workflows/types";
+import { sendPushToUser } from "./push-server";
 
 export type AuditInput = {
   actorId?: string | null;
@@ -81,10 +82,19 @@ export async function notify(input: NotifyInput) {
         });
         notificationId = row.id;
       } else {
-        // Outbound channels are logged for the delivery pipeline (provider integration point).
+        // Outbound EMAIL/WHATSAPP are logged for the delivery pipeline
+        // (provider integration point in production).
         console.log(JSON.stringify({ ts: new Date().toISOString(), level: "info", channel, to: input.userId, title: input.title, queued: true }));
       }
     }
+    // Web Push (PWA): deliver the same business notification the user already
+    // receives in-app to their registered devices. Best-effort, never blocking.
+    void sendPushToUser(input.userId, {
+      title: input.title,
+      body: input.message,
+      resourceType: input.resourceType,
+      resourceId: input.resourceId,
+    });
     // Realtime delivery (STEP 17): the persisted notification becomes an outbox
     // event so the recipient's badge/panel/toast update without any refresh.
     if (notificationId) {

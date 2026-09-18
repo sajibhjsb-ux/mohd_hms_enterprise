@@ -23,8 +23,9 @@ import { onRealtimeState, type RealtimeState } from "@/lib/hms/realtime/bus";
 import { useRealtimeEvent } from "@/lib/hms/realtime/hooks";
 import { RT } from "@/lib/hms/realtime/matrix";
 import { useToast } from "@/hooks/use-toast";
+import { PushNotificationRow, startInstall, useInstallable } from "./pwa-menu";
 import {
-  AlertTriangle, Bell, CheckCircle2, CheckCheck, ChevronDown, Globe, Info, KeyRound, Loader2,
+  AlertTriangle, Bell, CheckCircle2, CheckCheck, ChevronDown, Download, Globe, Info, KeyRound, Loader2,
   LogOut, Moon, QrCode, Search, Sun,
 } from "lucide-react";
 
@@ -105,7 +106,7 @@ export function TopHeader({ onOpenSearch, onOpenQr, onSelectModule, onOpenChange
 
   return (
     <TooltipProvider delayDuration={250}>
-      <header className="sticky top-0 z-40 border-b border-border/50 bg-background/85 backdrop-blur-xl no-print">
+      <header className="sticky top-0 z-40 border-b border-border/50 bg-background/85 backdrop-blur-xl no-print pt-[env(safe-area-inset-top)]">
         <div className="mx-auto max-w-[1500px] px-4 sm:px-6 h-16 md:h-[72px] flex items-center gap-2 sm:gap-4">
           {/* Branding — canonical logo + wordmark (same source as login/PWA).
               Wordmark hides below sm so the search pill never overlaps it. */}
@@ -306,6 +307,8 @@ function NotifMenu({ notifs, unread, onOpen, markAllRead, markRead }: {
             ))
           )}
         </div>
+        {/* Web Push opt-in for this device (real state only, §41) */}
+        <PushNotificationRow />
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -321,6 +324,7 @@ function ProfileMenu({ onToggleTheme, themeMounted, themeDark, onSignOut, onOpen
 }) {
   const { user } = useSession();
   const [signingOut, setSigningOut] = useState(false);
+  const installable = useInstallable();
   if (!user) return <span className="h-8 w-8 rounded-full bg-muted animate-pulse" aria-hidden />;
 
   return (
@@ -342,6 +346,11 @@ function ProfileMenu({ onToggleTheme, themeMounted, themeDark, onSignOut, onOpen
           <Badge variant="outline" className="mt-1.5 bg-primary/5 text-primary border-primary/20">{humanize(user.role)}</Badge>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
+        {installable ? (
+          <DropdownMenuItem onClick={() => { void startInstall(); }}>
+            <Download className="h-4 w-4 mr-2" aria-hidden /> Install app
+          </DropdownMenuItem>
+        ) : null}
         <DropdownMenuItem onClick={onToggleTheme}>
           {themeMounted && themeDark ? <Sun className="h-4 w-4 mr-2" aria-hidden /> : <Moon className="h-4 w-4 mr-2" aria-hidden />}
           {themeMounted && themeDark ? "Light mode" : "Dark mode"}
