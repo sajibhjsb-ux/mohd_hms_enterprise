@@ -4,9 +4,10 @@
 // monolithic index.tsx): API mirror types, form factories, company-name loader
 // and the printable DocumentPreview. Consumed by the list/new/detail pages.
 
-import { api } from "@/lib/hms/api-client";
 import { fmtDate, money } from "@/lib/hms/format";
 import { Separator } from "@/components/ui/separator";
+import { humanize } from "@/lib/hms/constants";
+import { DocumentHeader, FALLBACK_IDENTITY, loadCompanyIdentity, type CompanyIdentity } from "@/components/hms/shared/document-header";
 
 // ── Types (mirror API responses) ──
 
@@ -42,51 +43,31 @@ export type QForm = {
   notes: string; terms: string; items: FormItem[];
 };
 
-export const FALLBACK_COMPANY = "MOHD.HMS Enterprise";
+export const FALLBACK_COMPANY = FALLBACK_IDENTITY.name;
 
 export const emptyItem = (): FormItem => ({ kind: "MATERIAL", itemId: "", description: "", quantity: "1", unit: "pcs", unitPrice: "", discountPercent: "0", taxPercent: "0" });
 export const emptyForm = (): QForm => ({ customerId: "", validUntil: "", discount: "0", shipping: "0", notes: "", terms: "", items: [emptyItem()] });
 
-/** Resolve the company label from /api/v1/settings with a graceful fallback. */
-export async function loadCompanyName(): Promise<string> {
-  try {
-    const res = await api.get<unknown>("/api/v1/settings");
-    const d = res.data;
-    if (Array.isArray(d)) {
-      const row = d.find((r) => (r as { key?: string })?.key === "company_name") as { value?: string } | undefined;
-      if (row?.value) return row.value;
-    } else if (d && typeof d === "object") {
-      const obj = d as Record<string, unknown>;
-      if (typeof obj.company_name === "string") return obj.company_name;
-      if (obj.company && typeof obj.company === "object" && typeof (obj.company as Record<string, unknown>).name === "string") {
-        return String((obj.company as Record<string, unknown>).name);
-      }
-    }
-  } catch {
-    /* settings API not available yet — fallback label */
-  }
-  return FALLBACK_COMPANY;
-}
+/** Canonical company identity (settings-backed, graceful fallback). */
+export { loadCompanyIdentity };
+export type { CompanyIdentity };
 
 // ── Document preview (screen card + print-only container) ──
 
-export function DocumentPreview({ q, company }: { q: QuotationDetail; company: string }) {
+export function DocumentPreview({ q, company }: { q: QuotationDetail; company: CompanyIdentity }) {
   return (
     <div className="text-sm">
-      <div className="flex flex-col sm:flex-row justify-between gap-4 pb-4">
-        <div>
-          <div className="text-base font-semibold text-primary">{company}</div>
-          <div className="text-xs text-muted-foreground mt-1">Facility Maintenance &amp; Engineering Services</div>
-        </div>
-        <div className="sm:text-right">
-          <div className="text-lg font-semibold">QUOTATION</div>
-          <div className="text-xs text-muted-foreground">{q.code}</div>
-          <div className="text-xs text-muted-foreground mt-1">Currency: BND</div>
-          <div className="text-xs text-muted-foreground mt-1">Date: {fmtDate(q.quotationDate)}</div>
-          <div className="text-xs text-muted-foreground">Valid until: {fmtDate(q.validUntil)}</div>
-        </div>
-      </div>
-      <Separator className="mb-4" />
+      <DocumentHeader
+        company={company}
+        title="QUOTATION"
+        number={q.code}
+        meta={[
+          { label: "Currency", value: "BND" },
+          { label: "Dated", value: fmtDate(q.quotationDate) },
+          { label: "Status", value: humanize(q.status) },
+          { label: "Valid Until", value: q.validUntil ? fmtDate(q.validUntil) : "—" },
+        ]}
+      />
       <div className="mb-4">
         <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Bill to</div>
         <div className="font-medium">{q.customer?.companyName}</div>

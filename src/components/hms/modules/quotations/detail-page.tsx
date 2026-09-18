@@ -22,7 +22,7 @@ import {
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Check, Clock, Printer, Repeat, Send, Trash2, X } from "lucide-react";
-import { DocumentPreview, FALLBACK_COMPANY, loadCompanyName, type QuotationDetail, type QuotationRow } from "./shared";
+import { DocumentPreview, loadCompanyIdentity, type CompanyIdentity, type QuotationDetail, type QuotationRow } from "./shared";
 import { PdfButtons } from "@/components/hms/shared/pdf-buttons";
 
 function errMessage(e: unknown): string {
@@ -39,11 +39,11 @@ export function QuotationDetailPage({ id }: { id: string }) {
   const [detail, setDetail] = useState<QuotationDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [company, setCompany] = useState(FALLBACK_COMPANY);
+  const [company, setCompany] = useState<CompanyIdentity>({ name: "MOHD.HMS Enterprise", address: "", phone: "", email: "" });
   const [busy, setBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
-  useEffect(() => { loadCompanyName().then(setCompany); }, []);
+  useEffect(() => { loadCompanyIdentity().then(setCompany); }, []);
 
   const load = useCallback(async () => {
     setLoading(true);

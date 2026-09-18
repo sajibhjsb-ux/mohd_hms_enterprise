@@ -5,9 +5,10 @@
 // company-name loader and the printable DocumentPreview (incl. Paid /
 // Balance-due rows). Consumed by the list/new/detail/payment pages.
 
-import { api } from "@/lib/hms/api-client";
 import { fmtDate, money } from "@/lib/hms/format";
 import { Separator } from "@/components/ui/separator";
+import { humanize } from "@/lib/hms/constants";
+import { DocumentHeader, FALLBACK_IDENTITY, loadCompanyIdentity, type CompanyIdentity } from "@/components/hms/shared/document-header";
 
 // ── Types (mirror API responses) ──
 
@@ -53,51 +54,31 @@ export type IForm = {
 };
 
 export const METHODS = ["CASH", "BANK_TRANSFER", "CARD", "CHEQUE", "ONLINE"] as const;
-export const FALLBACK_COMPANY = "MOHD.HMS Enterprise";
+export const FALLBACK_COMPANY = FALLBACK_IDENTITY.name;
 
 export const emptyItem = (): FormItem => ({ kind: "MATERIAL", itemId: "", description: "", quantity: "1", unit: "pcs", unitPrice: "", discountPercent: "0", taxPercent: "0" });
 export const emptyForm = (): IForm => ({ customerId: "", dueDate: "", discount: "0", shipping: "0", notes: "", terms: "", items: [emptyItem()] });
 
-/** Resolve the company label from /api/v1/settings with a graceful fallback. */
-export async function loadCompanyName(): Promise<string> {
-  try {
-    const res = await api.get<unknown>("/api/v1/settings");
-    const d = res.data;
-    if (Array.isArray(d)) {
-      const row = d.find((r) => (r as { key?: string })?.key === "company_name") as { value?: string } | undefined;
-      if (row?.value) return row.value;
-    } else if (d && typeof d === "object") {
-      const obj = d as Record<string, unknown>;
-      if (typeof obj.company_name === "string") return obj.company_name;
-      if (obj.company && typeof obj.company === "object" && typeof (obj.company as Record<string, unknown>).name === "string") {
-        return String((obj.company as Record<string, unknown>).name);
-      }
-    }
-  } catch {
-    /* settings API not available yet — fallback label */
-  }
-  return FALLBACK_COMPANY;
-}
+/** Canonical company identity (settings-backed, graceful fallback). */
+export { loadCompanyIdentity };
+export type { CompanyIdentity };
 
 // ── Invoice document preview (screen card + print-only container) ──
 
-export function DocumentPreview({ inv, company }: { inv: InvoiceDetail; company: string }) {
+export function DocumentPreview({ inv, company }: { inv: InvoiceDetail; company: CompanyIdentity }) {
   return (
     <div className="text-sm">
-      <div className="flex flex-col sm:flex-row justify-between gap-4 pb-4">
-        <div>
-          <div className="text-base font-semibold text-primary">{company}</div>
-          <div className="text-xs text-muted-foreground mt-1">Facility Maintenance &amp; Engineering Services</div>
-        </div>
-        <div className="sm:text-right">
-          <div className="text-lg font-semibold">INVOICE</div>
-          <div className="text-xs text-muted-foreground">{inv.code}</div>
-          <div className="text-xs text-muted-foreground mt-1">Currency: BND</div>
-          <div className="text-xs text-muted-foreground mt-1">Invoice date: {fmtDate(inv.invoiceDate)}</div>
-          <div className="text-xs text-muted-foreground">Due date: {fmtDate(inv.dueDate)}</div>
-        </div>
-      </div>
-      <Separator className="mb-4" />
+      <DocumentHeader
+        company={company}
+        title="INVOICE"
+        number={inv.code}
+        meta={[
+          { label: "Currency", value: "BND" },
+          { label: "Issued", value: fmtDate(inv.invoiceDate) },
+          { label: "Status", value: humanize(inv.status) },
+          { label: "Due", value: inv.dueDate ? fmtDate(inv.dueDate) : "—" },
+        ]}
+      />
       <div className="mb-4">
         <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Bill to</div>
         <div className="font-medium">{inv.customer?.companyName}</div>

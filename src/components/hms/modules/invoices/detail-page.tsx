@@ -26,7 +26,7 @@ import {
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Ban, CircleDollarSign, Printer, Send, Trash2 } from "lucide-react";
-import { DocumentPreview, FALLBACK_COMPANY, loadCompanyName, type InvoiceDetail, type InvoiceRow } from "./shared";
+import { DocumentPreview, loadCompanyIdentity, type CompanyIdentity, type InvoiceDetail, type InvoiceRow } from "./shared";
 
 function errMessage(e: unknown): string {
   return e instanceof ClientApiError ? e.message : "Something went wrong. Please try again.";
@@ -42,11 +42,11 @@ export function InvoiceDetailPage({ id }: { id: string }) {
   const [detail, setDetail] = useState<InvoiceDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [company, setCompany] = useState(FALLBACK_COMPANY);
+  const [company, setCompany] = useState<CompanyIdentity>({ name: "MOHD.HMS Enterprise", address: "", phone: "", email: "" });
   const [busy, setBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
-  useEffect(() => { loadCompanyName().then(setCompany); }, []);
+  useEffect(() => { loadCompanyIdentity().then(setCompany); }, []);
 
   const load = useCallback(async () => {
     setLoading(true);

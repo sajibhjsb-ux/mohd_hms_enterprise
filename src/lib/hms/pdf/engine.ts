@@ -27,7 +27,15 @@ const DANGER = rgb(0.7, 0.15, 0.15);
 const WHITE = rgb(1, 1, 1);
 
 // Characters safe for the standard WinAnsi fonts; everything else is replaced.
-const WINANSI_SAFE = /^[\u0000-\u007F\u2018\u2019\u201A\u201C\u201D\u201E\u2013\u2014\u2020\u2021\u2022\u2026\u2030\u2039\u203A\u20AC\u2122\u0152\u0153\u0160\u0161\u0178\u017D\u017E\u0192\u02C6\u02DC]$/;
+// Unicode look-alikes that have WinAnsi equivalents are mapped (− → -, · kept,
+// non-breaking space → space) so values render professionally instead of "?".
+const WINANSI_SAFE = /^[\u0000-\u007F\u00A0\u00B7\u2018\u2019\u201A\u201C\u201D\u201E\u2013\u2014\u2020\u2021\u2022\u2026\u2030\u2039\u203A\u20AC\u2122\u0152\u0153\u0160\u0161\u0178\u017D\u017E\u0192\u02C6\u02DC]$/;
+const CHAR_MAP: Record<string, string> = {
+  "\u2212": "-", // minus sign → hyphen
+  "\u2011": "-", // non-breaking hyphen
+  "\u00A0": " ", // non-breaking space
+  "\u2010": "-",
+};
 
 export function pdfText(input: string | null | undefined): string {
   const raw = String(input ?? "");
@@ -37,6 +45,8 @@ export function pdfText(input: string | null | undefined): string {
       out += "  ";
     } else if (ch === "\n" || ch === "\r") {
       out += "\n";
+    } else if (CHAR_MAP[ch]) {
+      out += CHAR_MAP[ch];
     } else if (WINANSI_SAFE.test(ch)) {
       out += ch;
     } else {
@@ -74,7 +84,6 @@ export type DocHeaderInfo = {
 const A4W = 595.28;
 const A4H = 841.89;
 const MARGIN = 46;
-const HEADER_RULE_Y = A4H - 92;
 
 export class PdfDoc {
   private pdf!: PDFDocument;
@@ -85,6 +94,12 @@ export class PdfDoc {
   private y = 0;
   private logo: PDFImage | null = null;
   private footerLabel = "MOHD.HMS ENTERPRISE";
+  // Header geometry — measured by drawHeader() from the actual content, so the
+  // brand rule and the body start adapt to any content height (no fixed
+  // offsets that could let the rule overlap text). Defaults only apply until
+  // the first page's header has been measured.
+  private headerRuleY = A4H - 92;
+  private bodyTop = A4H - 116;
 
   readonly W = A4W;
   readonly H = A4H;
@@ -117,50 +132,137 @@ export class PdfDoc {
   private addPage(): void {
     this.page = this.pdf.addPage([A4W, A4H]);
     this.pages.push(this.page);
-    this.y = HEADER_RULE_Y - 24;
+    this.y = this.bodyTop;
   }
 
-  /** Brand header — drawn once per document on the first page (§17). */
+  /** Truncate to a pixel width (never mid-glyph overflow); adds an ellipsis. */
+  private fitText(text: string, font: PDFFont, size: number, maxW: number): string {
+    if (font.widthOfTextAtSize(text, size) <= maxW) return text;
+    let line = text;
+    while (line.length > 1 && font.widthOfTextAtSize(line + "\u2026", size) > maxW) line = line.slice(0, -1);
+    return line + "\u2026";
+  }
+
+  /**
+   * Brand header (§17) — a measured, flex-like layout (align-items: center):
+   *
+   *   [LOGO]  COMPANY NAME            DOC TITLE
+   *           address                  DOC-NUMBER
+   *           phone · email            Label : value
+   *                                    Label : value
+   *  ───────────────── green rule ───────────────────
+   *
+   * The rule is positioned BELOW the tallest of (logo, company block, document
+   * block) with a safe gap, so it can never overlap text regardless of how
+   * long the address, title, number, status or metadata become. The logo and
+   * both text blocks are vertically centered against one shared container.
+   */
   private drawHeader(h: DocHeaderInfo): void {
     const p = this.page;
-    // Logo (aspect preserved, fitted to a 44pt box) or a monogram block.
+    const TOP_PAD = 26; // page top edge → header content top
+    const RULE_GAP = 12; // lowest header content → green rule (never zero)
+    const BODY_GAP = 22; // green rule → first body content
+    const LOGO_BOX = 48; // official logo inside a 48pt square, aspect preserved
+
+    // ── LEFT block: company identity ────────────────────────────────
+    const COMPANY_SIZE = 12.5;
+    const CONTACT_SIZE = 7.6;
+    const COMPANY_LH = 15;
+    const CONTACT_LH = 10.6;
+    const contact = h.contactLines.map((l) => pdfText(l).trim()).filter(Boolean).slice(0, 3);
+    const leftH = COMPANY_LH + contact.length * CONTACT_LH;
+
+    // ── RIGHT block: document identity ──────────────────────────────
+    const TITLE_SIZE = 15;
+    const NUM_SIZE = 10.5;
+    const META_SIZE = 8.6;
+    const TITLE_LH = 18;
+    const NUM_LH = 13.5;
+    const META_LH = 11.4;
+    const meta: [string, string][] = [];
+    const dl = pdfText(h.docDateLabel).trim();
+    if (dl) {
+      // docDateLabel is built as "<Verb> <date>" (Dated/Issued/Received/…) —
+      // render it as the first column-aligned metadata row.
+      const sp = dl.indexOf(" ");
+      meta.push(sp > 0 ? [dl.slice(0, sp), dl.slice(sp + 1).trim()] : [dl, ""]);
+    }
+    for (const [k, v] of (h.meta ?? []).slice(0, 4)) meta.push([pdfText(k).trim(), pdfText(v ?? "").trim()]);
+    const rightH = TITLE_LH + NUM_LH + meta.length * META_LH;
+
+    // ── Shared container — all three blocks vertically centered ─────
+    const containerH = Math.max(leftH, rightH, LOGO_BOX);
+    const contentTop = A4H - TOP_PAD;
+    const centerY = contentTop - containerH / 2;
+    const contentBottom = contentTop - containerH;
+
+    // Right metadata geometry first — it defines how much width the left
+    // block may safely use (prevents any left/right collision).
+    const META_VALUE_MAX = 170;
+    const metaRows = meta.map(([k, v]) => ({
+      label: `${k} :`,
+      value: this.fitText(v, this.font, META_SIZE, META_VALUE_MAX),
+    }));
+    const maxValueW = metaRows.reduce((s, r) => Math.max(s, this.font.widthOfTextAtSize(r.value, META_SIZE)), 0);
+    const valueX = A4W - MARGIN - maxValueW; // value column left edge
+    const META_LABEL_GAP = 8;
+
+    // LOGO — vertically centered against the full header block.
     if (this.logo) {
-      const dim = this.logo.scaleToFit(44, 44);
-      p.drawImage(this.logo, { x: MARGIN, y: A4H - 58, width: dim.width, height: dim.height });
+      const dim = this.logo.scaleToFit(LOGO_BOX, LOGO_BOX);
+      p.drawImage(this.logo, { x: MARGIN, y: centerY - dim.height / 2, width: dim.width, height: dim.height });
     } else {
-      p.drawRectangle({ x: MARGIN, y: A4H - 62, width: 44, height: 44, color: GREEN });
-      p.drawText("MH", { x: MARGIN + 10, y: A4H - 46, size: 16, font: this.bold, color: WHITE });
+      p.drawRectangle({ x: MARGIN, y: centerY - 20, width: 40, height: 40, color: GREEN });
+      p.drawText("MH", { x: MARGIN + 9, y: centerY - 6, size: 15, font: this.bold, color: WHITE });
     }
 
-    // Company block (left).
-    let cy = A4H - 40;
-    p.drawText(pdfText(h.company).slice(0, 42), { x: MARGIN + 54, y: cy, size: 12.5, font: this.bold, color: GREEN_INK });
-    cy -= 13;
-    for (const line of h.contactLines.slice(0, 3)) {
-      const t = pdfText(line);
-      if (!t) continue;
-      p.drawText(t.slice(0, 70), { x: MARGIN + 54, y: cy, size: 7.6, font: this.font, color: MUTED });
-      cy -= 10;
+    // COMPANY TEXT — vertically centered, right of the logo, width-capped so
+    // it can never reach the document block.
+    const textX = MARGIN + LOGO_BOX + 12;
+    const leftMaxW = valueX - META_LABEL_GAP - textX - 24;
+    const leftTop = centerY + leftH / 2;
+    let ly = leftTop - 10.8; // company baseline
+    p.drawText(this.fitText(pdfText(h.company).slice(0, 42), this.bold, COMPANY_SIZE, leftMaxW), {
+      x: textX,
+      y: ly,
+      size: COMPANY_SIZE,
+      font: this.bold,
+      color: GREEN_INK,
+    });
+    ly -= 13;
+    for (const line of contact) {
+      p.drawText(this.fitText(line, this.font, CONTACT_SIZE, leftMaxW), { x: textX, y: ly, size: CONTACT_SIZE, font: this.font, color: MUTED });
+      ly -= CONTACT_LH;
     }
 
-    // Document identity (right-aligned).
-    const right = (text: string, size: number, f: PDFFont, color = INK) => {
-      const w = f.widthOfTextAtSize(text, size);
-      p.drawText(text, { x: A4W - MARGIN - w, y: cy2, size, font: f, color });
-    };
-    let cy2 = A4H - 40;
-    right(pdfText(h.docTitle).toUpperCase(), 14.5, this.bold, INK);
-    cy2 -= 16;
-    right(pdfText(h.docNumber), 10.5, this.bold, GREEN_INK);
-    cy2 -= 13;
-    right(pdfText(h.docDateLabel), 8.5, this.font, MUTED);
-    for (const [k, v] of (h.meta ?? []).slice(0, 3)) {
-      cy2 -= 11;
-      right(pdfText(`${k}: ${v}`).slice(0, 46), 8.5, this.font, MUTED);
-    }
+    // DOCUMENT TEXT — title + number right-aligned; metadata as a
+    // column-aligned "Label : Value" block anchored to the page margin.
+    const rightTop = centerY + rightH / 2;
+    let ry = rightTop - 12.8; // title baseline
+    const title = this.fitText(pdfText(h.docTitle).toUpperCase(), this.bold, TITLE_SIZE, leftMaxW + LOGO_BOX + 12);
+    p.drawText(title, { x: A4W - MARGIN - this.bold.widthOfTextAtSize(title, TITLE_SIZE), y: ry, size: TITLE_SIZE, font: this.bold, color: INK });
+    ry -= NUM_LH;
+    const num = pdfText(h.docNumber);
+    p.drawText(num, { x: A4W - MARGIN - this.bold.widthOfTextAtSize(num, NUM_SIZE), y: ry, size: NUM_SIZE, font: this.bold, color: GREEN_INK });
+    ry -= 12;
+    metaRows.forEach((r, i) => {
+      const baseline = ry - i * META_LH;
+      p.drawText(r.label, {
+        x: valueX - META_LABEL_GAP - this.font.widthOfTextAtSize(r.label, META_SIZE),
+        y: baseline,
+        size: META_SIZE,
+        font: this.font,
+        color: MUTED,
+      });
+      p.drawText(r.value, { x: valueX, y: baseline, size: META_SIZE, font: this.font, color: INK });
+    });
 
-    // Brand rule.
-    p.drawRectangle({ x: MARGIN, y: HEADER_RULE_Y, width: A4W - MARGIN * 2, height: 2.4, color: GREEN });
+    // GREEN BRAND RULE — below ALL header content, never inside it.
+    const ruleY = contentBottom - RULE_GAP;
+    p.drawRectangle({ x: MARGIN, y: ruleY, width: A4W - MARGIN * 2, height: 2.6, color: GREEN });
+    this.headerRuleY = ruleY;
+    this.bodyTop = ruleY - BODY_GAP;
+    this.y = this.bodyTop;
   }
 
   private ensure(h: number): void {
@@ -417,7 +519,7 @@ export class PdfDoc {
    * missing file renders a placeholder cell instead.
    */
   async photoGrid(pages: { caption: string; number: string; bytes: Buffer | Uint8Array | null }[][]): Promise<void> {
-    const usableTop = HEADER_RULE_Y - 24;
+    const usableTop = this.bodyTop;
     for (const cells of pages) {
       if (!cells || cells.length === 0) continue;
       // Continue on the current page only when it is still effectively fresh
