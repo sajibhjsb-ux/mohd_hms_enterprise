@@ -19,6 +19,7 @@ import { useToast } from "@/hooks/use-toast";
 import { PageShell } from "@/components/hms/shared/page-shell";
 import { LoadingState, EmptyState, ErrorState } from "@/components/hms/shared/ui-bits";
 import { PERMISSIONS, humanize, PRIORITIES } from "@/lib/hms/constants";
+import { customerLabel } from "@/lib/hms/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -43,7 +44,7 @@ type ComplaintEditable = {
   status: string;
   customerId: string;
   equipmentId: string | null;
-  customer?: { id: string; companyName: string } | null;
+  customer?: { id: string; companyName: string; contactPerson?: string } | null;
   equipment?: { id: string; name: string; assetTag: string } | null;
 };
 
@@ -262,7 +263,7 @@ export function ComplaintEditPage({ id }: { id: string }) {
         { label: "Edit" },
       ]}
       title={`Edit ${complaint.code}`}
-      description={`Reported by ${complaint.customer?.companyName ?? "the customer"} — editable while the complaint is NEW.`}
+      description={`Reported by ${complaint.customer ? customerLabel(complaint.customer) : "the customer"} — editable while the complaint is NEW.`}
       actions={
         <div className="flex items-center gap-2 no-print">
           <Button variant="outline" onClick={backToDetail}>Cancel</Button>
@@ -348,7 +349,7 @@ export function ComplaintEditPage({ id }: { id: string }) {
 
             <div className="space-y-1.5">
               <Label>Customer</Label>
-              <Input value={complaint.customer?.companyName ?? "—"} disabled aria-readonly />
+              <Input value={complaint.customer ? customerLabel(complaint.customer) : "—"} disabled aria-readonly />
               <p className="text-[11px] text-muted-foreground">The customer cannot be changed after a complaint is logged.</p>
             </div>
           </CardContent>

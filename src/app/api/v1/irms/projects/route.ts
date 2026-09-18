@@ -27,7 +27,7 @@ export const GET = handler(
       db.irmsProject.findMany({
         where,
         include: {
-          customer: { select: { id: true, companyName: true } },
+          customer: { select: { id: true, companyName: true, contactPerson: true } },
           _count: { select: { inspections: true } },
         },
         orderBy: { createdAt: dir },
@@ -79,7 +79,7 @@ export const POST = handler(
         startDate: start,
         endDate: end,
       },
-      include: { customer: { select: { id: true, companyName: true } }, _count: { select: { inspections: true } } },
+      include: { customer: { select: { id: true, companyName: true, contactPerson: true } }, _count: { select: { inspections: true } } },
     });
 
     await audit({

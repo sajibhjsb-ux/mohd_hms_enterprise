@@ -120,10 +120,14 @@ model TechnicianProfile {
 model Customer {
   id            String   @id @default(cuid())
   code          String   @unique
-  companyName   String
+  // Company name is OPTIONAL for customers — an account may be an individual,
+  // homeowner, tenant or corporate contact. Empty string = not provided.
+  companyName   String   @default("")
   contactPerson String
   email         String
-  phone         String
+  // Mobile number starts empty for self-provisioned (e.g. Google) customers and
+  // is completed during mandatory profile onboarding.
+  phone         String   @default("")
   address       String   @default("")
   city          String   @default("")
   country       String   @default("Brunei Darussalam")

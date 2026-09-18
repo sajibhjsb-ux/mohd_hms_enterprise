@@ -14,7 +14,7 @@ import { navigateTo } from "@/lib/hms/router";
 import { PageShell } from "@/components/hms/shared/page-shell";
 import { StatusBadge, LoadingState, EmptyState, ErrorState } from "@/components/hms/shared/ui-bits";
 import { PERMISSIONS } from "@/lib/hms/constants";
-import { fmtDate } from "@/lib/hms/format";
+import { customerLabel, fmtDate } from "@/lib/hms/format";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import {
@@ -145,7 +145,7 @@ export function EquipmentDetailPage({ id }: { id: string }) {
         {/* Attribute grid */}
         <div className="rounded-xl border bg-card shadow-sm p-4 sm:p-5">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
-            <div><p className="text-xs text-muted-foreground">Customer</p><p className="truncate">{detail.customer?.companyName ?? "—"}</p></div>
+            <div><p className="text-xs text-muted-foreground">Customer</p><p className="truncate">{customerLabel(detail.customer)}</p></div>
             <div><p className="text-xs text-muted-foreground">Location</p><p className="truncate">{detail.location?.name ?? "—"}</p></div>
             <div><p className="text-xs text-muted-foreground">Installed</p><p>{fmtDate(detail.installationDate)}</p></div>
             <div><p className="text-xs text-muted-foreground">Warranty</p><p>{fmtDate(detail.warrantyExpiry)}</p></div>

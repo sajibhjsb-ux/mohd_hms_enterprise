@@ -25,7 +25,7 @@ import { RT } from "@/lib/hms/realtime/matrix";
 import { useToast } from "@/hooks/use-toast";
 import { PushNotificationRow, startInstall, useInstallable } from "./pwa-menu";
 import {
-  AlertTriangle, Bell, CheckCircle2, CheckCheck, ChevronDown, Download, Globe, Info, KeyRound, Loader2,
+  AlertTriangle, Bell, CheckCircle2, CheckCheck, ChevronDown, CircleUserRound, Download, Globe, Info, KeyRound, Loader2,
   LogOut, Moon, QrCode, Search, Sun,
 } from "lucide-react";
 
@@ -346,6 +346,13 @@ function ProfileMenu({ onToggleTheme, themeMounted, themeDark, onSignOut, onOpen
           <Badge variant="outline" className="mt-1.5 bg-primary/5 text-primary border-primary/20">{humanize(user.role)}</Badge>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
+        {/* Customer profile entry lives in the existing account menu (spec §34) —
+            no duplicate top-level nav module. */}
+        {user.role === "CUSTOMER" ? (
+          <DropdownMenuItem onClick={() => navigateTo("profile")}>
+            <CircleUserRound className="h-4 w-4 mr-2" aria-hidden /> My Profile
+          </DropdownMenuItem>
+        ) : null}
         {installable ? (
           <DropdownMenuItem onClick={() => { void startInstall(); }}>
             <Download className="h-4 w-4 mr-2" aria-hidden /> Install app

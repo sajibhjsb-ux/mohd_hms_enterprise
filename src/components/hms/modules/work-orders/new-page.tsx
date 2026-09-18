@@ -15,7 +15,7 @@ import { useDraft } from "@/hooks/use-draft";
 import { PageShell } from "@/components/hms/shared/page-shell";
 import { EmptyState } from "@/components/hms/shared/ui-bits";
 import { PERMISSIONS, PRIORITIES, humanize } from "@/lib/hms/constants";
-import { fmtDateTime, money, toCents } from "@/lib/hms/format";
+import { customerLabel, fmtDateTime, money, toCents } from "@/lib/hms/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -27,9 +27,9 @@ import { AlertCircle, Loader2, Plus, Trash2, Wrench } from "lucide-react";
 // ── Types ──
 
 type TechOpt = { id: string; employeeNo?: string; specialty?: string; user?: { name?: string } | null };
-type CustomerOpt = { id: string; companyName?: string; name?: string };
+type CustomerOpt = { id: string; companyName?: string; name?: string; contactPerson?: string };
 type EquipmentOpt = { id: string; name?: string; assetTag?: string };
-type ComplaintOpt = { id: string; code: string; title: string; customer?: { id: string; companyName?: string } | null };
+type ComplaintOpt = { id: string; code: string; title: string; customer?: { id: string; companyName?: string; contactPerson?: string } | null };
 
 type WOMaterialForm = { name: string; qty: string; cost: string };
 type WOCreateForm = {
@@ -282,7 +282,7 @@ export function WorkOrderNewPage() {
                     <SelectValue placeholder={refsLoading ? "Loading customers…" : "Select customer…"} />
                   </SelectTrigger>
                   <SelectContent>
-                    {customers.map((c) => <SelectItem key={c.id} value={c.id}>{c.companyName ?? c.name ?? c.id}</SelectItem>)}
+                    {customers.map((c) => <SelectItem key={c.id} value={c.id}>{customerLabel(c)}</SelectItem>)}
                   </SelectContent>
                 </Select>
                 {errors.customerId ? <p className="text-xs text-destructive">{errors.customerId}</p> : null}
@@ -320,7 +320,7 @@ export function WorkOrderNewPage() {
                 <SelectContent>
                   {complaintOptions.map((c) => (
                     <SelectItem key={c.id} value={c.id}>
-                      {c.code} — {c.title}{c.customer?.companyName ? ` (${c.customer.companyName})` : ""}
+                      {c.code} — {c.title}{c.customer ? ` (${customerLabel(c.customer)})` : ""}
                     </SelectItem>
                   ))}
                 </SelectContent>

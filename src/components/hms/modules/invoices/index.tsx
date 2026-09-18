@@ -17,7 +17,7 @@ import { useSession, hasPerm } from "@/components/hms/session";
 import { useUi } from "@/lib/hms/ui-store";
 import { navigateTo, pageFromSeg } from "@/lib/hms/router";
 import { useModuleQuery } from "@/lib/hms/page-query";
-import { money, fmtDate } from "@/lib/hms/format";
+import { customerLabel, money, fmtDate } from "@/lib/hms/format";
 import { useRealtimeEvent } from "@/lib/hms/realtime/hooks";
 import { MODULE_EVENTS } from "@/lib/hms/realtime/matrix";
 import { PERMISSIONS, humanize } from "@/lib/hms/constants";
@@ -100,7 +100,7 @@ function InvoicesList() {
 
   const columns: Column<InvoiceRow>[] = [
     { key: "code", header: "Code", value: (r) => r.code, render: (r) => <span className="font-medium">{r.code}</span> },
-    { key: "customer", header: "Customer", value: (r) => r.customer?.companyName, className: "max-w-[160px] truncate" },
+    { key: "customer", header: "Customer", value: (r) => customerLabel(r.customer), className: "max-w-[160px] truncate" },
     { key: "invoiceDate", header: "Date", value: (r) => r.invoiceDate, render: (r) => fmtDate(r.invoiceDate), hideOnMobile: true },
     { key: "dueDate", header: "Due", value: (r) => r.dueDate, render: (r) => fmtDate(r.dueDate), hideOnMobile: true },
     { key: "totalCents", header: "Total", value: (r) => r.totalCents, render: (r) => <span className="tabular-nums">{money(r.totalCents)}</span> },

@@ -29,6 +29,9 @@ type UiState = {
   deepLink: { type: string; token: string } | null;
   setDeepLink: (l: { type: string; token: string } | null) => void;
   consumeDeepLink: () => { type: string; token: string } | null;
+  /** Open the shared Change Password dialog (header menu + profile page). */
+  changePwOpen: boolean;
+  setChangePwOpen: (o: boolean) => void;
 };
 
 export const useUi = create<UiState>((set, get) => ({
@@ -49,4 +52,6 @@ export const useUi = create<UiState>((set, get) => ({
     if (l) set({ deepLink: null });
     return l;
   },
+  changePwOpen: false,
+  setChangePwOpen: (o) => set({ changePwOpen: o }),
 }));

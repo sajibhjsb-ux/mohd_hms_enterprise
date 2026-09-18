@@ -16,7 +16,7 @@
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { api } from "@/lib/hms/api-client";
-import { fmtDate, fmtDateTime } from "@/lib/hms/format";
+import { customerLabel, fmtDate, fmtDateTime } from "@/lib/hms/format";
 import { hasPerm, useSession } from "@/components/hms/session";
 import { navigateTo } from "@/lib/hms/router";
 import { useToast } from "@/hooks/use-toast";
@@ -72,7 +72,7 @@ type ReportDetail = {
   materials?: string | null;
   labourHours?: number | null;
   completionPercent?: number | null;
-  project: { id: string; code: string; name: string; customer?: { id: string; companyName?: string | null } | null } | null;
+  project: { id: string; code: string; name: string; customer?: { id: string; companyName?: string | null; contactPerson?: string | null } | null } | null;
   equipment: { id: string; name: string; assetTag: string } | null;
   workOrder: { id: string; code: string; title?: string | null } | null;
   inspector: { id: string; employeeNo?: string; user?: { id?: string; name?: string | null } | null } | null;
@@ -238,7 +238,7 @@ export function IrmsReportDetailPage({ id }: { id: string }) {
                     </span>
                   ) : "—"}
                 />
-                <Kv label="Customer" value={detail.project?.customer?.companyName ?? "—"} />
+                <Kv label="Customer" value={detail.project?.customer ? customerLabel(detail.project.customer) : "—"} />
                 <Kv label="Equipment" value={detail.equipment ? `${detail.equipment.name} (${detail.equipment.assetTag})` : "—"} />
                 <Kv label="Work order" value={detail.workOrder?.code ?? "—"} />
                 <Kv label="Type" value={humanize(detail.type)} />

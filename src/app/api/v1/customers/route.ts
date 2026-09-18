@@ -74,7 +74,9 @@ export const GET = handler(
 );
 
 const createSchema = z.object({
-  companyName: z.string().min(1, "Company name is required.").max(200),
+  // Company name is OPTIONAL for customers — an account may be an individual,
+  // homeowner, tenant or corporate contact (spec §5/§27).
+  companyName: z.string().trim().max(200).optional().default(""),
   contactPerson: z.string().min(1, "Contact person is required.").max(120),
   email: z.string().email("Enter a valid email address.").max(200),
   phone: z.string().min(1, "Phone is required.").max(40),

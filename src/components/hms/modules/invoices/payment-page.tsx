@@ -15,7 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 import { PageShell } from "@/components/hms/shared/page-shell";
 import { StatusBadge, LoadingState, EmptyState, ErrorState } from "@/components/hms/shared/ui-bits";
 import { PERMISSIONS } from "@/lib/hms/constants";
-import { money, fromCents } from "@/lib/hms/format";
+import { customerLabel, money, fromCents } from "@/lib/hms/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -208,7 +208,7 @@ export function InvoicePaymentPage({ id }: { id: string }) {
           <p className="text-sm font-medium">Invoice summary</p>
           <div className="space-y-2 text-sm">
             <div className="flex justify-between gap-2"><span className="text-muted-foreground">Code</span><span className="font-mono">{detail.code}</span></div>
-            <div className="flex justify-between gap-2"><span className="text-muted-foreground">Customer</span><span className="text-right max-w-[60%] truncate" title={detail.customer?.companyName}>{detail.customer?.companyName ?? "—"}</span></div>
+            <div className="flex justify-between gap-2"><span className="text-muted-foreground">Customer</span><span className="text-right max-w-[60%] truncate" title={detail.customer ? customerLabel(detail.customer) : undefined}>{customerLabel(detail.customer)}</span></div>
             <div className="flex justify-between gap-2"><span className="text-muted-foreground">Total</span><span className="tabular-nums">{money(detail.totalCents)}</span></div>
             <div className="flex justify-between gap-2"><span className="text-muted-foreground">Paid</span><span className="tabular-nums text-emerald-700">-{money(detail.paidCents)}</span></div>
             <div className="flex justify-between gap-2 font-semibold"><span>Balance due</span><span className="tabular-nums">{money(detail.balanceCents)}</span></div>

@@ -17,6 +17,7 @@ import { useToast } from "@/hooks/use-toast";
 import { PageShell } from "@/components/hms/shared/page-shell";
 import { LoadingState, EmptyState, ErrorState } from "@/components/hms/shared/ui-bits";
 import { PERMISSIONS } from "@/lib/hms/constants";
+import { customerLabel } from "@/lib/hms/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -133,7 +134,7 @@ export function CustomerEditPage({ id }: { id: string }) {
         country: form.country || undefined,
         notes: form.notes || undefined,
       });
-      toast({ title: "Customer updated", description: `${form.companyName} saved.` });
+      toast({ title: "Customer updated", description: `${customerLabel(form)} saved.` });
       setPageDirty(false);
       navigateTo("customers", [customer.id]);
     } catch (e) {
@@ -208,10 +209,10 @@ export function CustomerEditPage({ id }: { id: string }) {
       backHref={`/customers/${encodeURIComponent(customer.id)}`}
       crumbs={[
         { label: "Customers", href: "/customers" },
-        { label: customer.companyName, href: `/customers/${encodeURIComponent(customer.id)}` },
+        { label: customerLabel(customer), href: `/customers/${encodeURIComponent(customer.id)}` },
         { label: "Edit" },
       ]}
-      title={`Edit ${customer.companyName}`}
+      title={`Edit ${customerLabel(customer)}`}
       description={`Code ${customer.code} · status and portal accounts are managed from the list.`}
       actions={
         <Button onClick={submitEdit} disabled={saving || !dirty} className="no-print">
@@ -227,7 +228,7 @@ export function CustomerEditPage({ id }: { id: string }) {
         <CardContent>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="sm:col-span-2">
-              <Label htmlFor="cus-e-name">Company name</Label>
+              <Label htmlFor="cus-e-name">Company name <span className="text-[11px] font-normal text-muted-foreground">(Optional)</span></Label>
               <Input id="cus-e-name" value={form.companyName} onChange={(e) => set({ companyName: e.target.value })} />
               <FieldError msg={fieldErrors.companyName} />
             </div>

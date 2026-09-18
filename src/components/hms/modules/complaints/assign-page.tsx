@@ -12,7 +12,7 @@ import { navigateTo } from "@/lib/hms/router";
 import { PageShell } from "@/components/hms/shared/page-shell";
 import { PriorityBadge, StatusBadge, LoadingState, EmptyState, ErrorState } from "@/components/hms/shared/ui-bits";
 import { PERMISSIONS, humanize } from "@/lib/hms/constants";
-import { fmtDateTime } from "@/lib/hms/format";
+import { customerLabel, fmtDateTime } from "@/lib/hms/format";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -29,7 +29,7 @@ type AssignableComplaint = {
   priority: string;
   status: string;
   createdAt: string;
-  customer?: { id: string; companyName: string } | null;
+  customer?: { id: string; companyName: string; contactPerson?: string } | null;
   equipment?: { id: string; name: string; assetTag: string } | null;
   assignedTechnician?: { id: string; user?: { name: string } | null } | null;
 };
@@ -176,7 +176,7 @@ export function ComplaintAssignPage({ id }: { id: string }) {
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1">
                 <p className="text-muted-foreground text-xs uppercase tracking-wide">Customer</p>
-                <p>{complaint.customer?.companyName ?? "—"}</p>
+                <p>{customerLabel(complaint.customer)}</p>
               </div>
               <div className="space-y-1">
                 <p className="text-muted-foreground text-xs uppercase tracking-wide">Equipment</p>

@@ -29,7 +29,7 @@ import { navigateTo, pageFromSeg } from "@/lib/hms/router";
 import { useToast } from "@/hooks/use-toast";
 import type { Permission } from "@/lib/hms/constants";
 import { humanize } from "@/lib/hms/constants";
-import { fmtDateTime } from "@/lib/hms/format";
+import { customerLabel, fmtDateTime } from "@/lib/hms/format";
 import { useRealtimeEvent } from "@/lib/hms/realtime/hooks";
 import { MODULE_EVENTS } from "@/lib/hms/realtime/matrix";
 import { EyeOff, Eye, KeyRound, Pencil, Plus, ShieldCheck, UserX } from "lucide-react";
@@ -41,7 +41,7 @@ import { UserEditPage } from "./edit-page";
 type UserRow = {
   id: string; email: string; name: string; phone: string | null; role: string; status: string;
   lastLoginAt: string | null; createdAt: string;
-  customer: { id: string; companyName: string; code: string } | null;
+  customer: { id: string; companyName: string; code: string; contactPerson?: string } | null;
   technicianProfile: { id: string; employeeNo: string; specialty: string; status: string } | null;
 };
 
@@ -165,8 +165,8 @@ function UsersList() {
     },
     { key: "phone", header: "Phone", value: (r) => r.phone ?? "", render: (r) => r.phone || "—", hideOnMobile: true },
     {
-      key: "customer", header: "Linked customer", value: (r) => r.customer?.companyName ?? "",
-      render: (r) => (r.customer ? <span className="text-xs">{r.customer.companyName}</span> : <span className="text-muted-foreground">—</span>),
+      key: "customer", header: "Linked customer", value: (r) => customerLabel(r.customer),
+      render: (r) => (r.customer ? <span className="text-xs">{customerLabel(r.customer)}</span> : <span className="text-muted-foreground">—</span>),
       hideOnMobile: true,
     },
     {

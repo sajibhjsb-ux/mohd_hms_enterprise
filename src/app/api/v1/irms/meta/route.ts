@@ -17,7 +17,7 @@ export const GET = handler(
           code: true,
           name: true,
           customerId: true,
-          customer: { select: { companyName: true } },
+          customer: { select: { companyName: true, contactPerson: true } },
           siteLocation: true,
         },
       }),

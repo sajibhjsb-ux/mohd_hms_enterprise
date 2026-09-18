@@ -15,7 +15,7 @@ import {
   Building2, CalendarDays, ClipboardCheck, FileText, Pencil, Plus, Send, Trash2, TrendingUp, UserCheck,
 } from "lucide-react";
 import { api, qs } from "@/lib/hms/api-client";
-import { fmtDate } from "@/lib/hms/format";
+import { customerLabel, fmtDate } from "@/lib/hms/format";
 import { useRealtimeEventDebounced } from "@/lib/hms/realtime/hooks";
 import { MODULE_EVENTS } from "@/lib/hms/realtime/matrix";
 import { humanize, PERMISSIONS, STATUS_TONE } from "@/lib/hms/constants";
@@ -258,7 +258,7 @@ export function IrmsDashboardPage() {
 
 // ── Projects section (existing list UX, dedicated routes for create/edit) ──
 
-type CustomerRef = { id: string; companyName: string } | null;
+type CustomerRef = { id: string; companyName: string; contactPerson?: string } | null;
 
 export type IrmsProject = {
   id: string;
@@ -324,8 +324,8 @@ export function IrmsProjectsSection() {
     { key: "name", header: "Project", value: (p) => p.name },
     {
       key: "customer", header: "Customer", hideOnMobile: true,
-      value: (p) => p.customer?.companyName ?? "",
-      render: (p) => p.customer?.companyName ?? <span className="text-muted-foreground">Internal</span>,
+      value: (p) => (p.customer ? customerLabel(p.customer) : ""),
+      render: (p) => (p.customer ? customerLabel(p.customer) : <span className="text-muted-foreground">Internal</span>),
     },
     { key: "siteLocation", header: "Site", value: (p) => p.siteLocation, hideOnMobile: true },
     {

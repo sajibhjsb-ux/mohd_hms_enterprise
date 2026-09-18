@@ -15,7 +15,7 @@ import { PageShell } from "@/components/hms/shared/page-shell";
 import { StatusBadge, LoadingState, EmptyState, ErrorState } from "@/components/hms/shared/ui-bits";
 import { WorkflowTimeline } from "@/components/hms/shared/workflow-timeline";
 import { PERMISSIONS } from "@/lib/hms/constants";
-import { fmtDate, money } from "@/lib/hms/format";
+import { customerLabel, fmtDate, money } from "@/lib/hms/format";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
@@ -112,7 +112,7 @@ export function QuotationDetailPage({ id }: { id: string }) {
           backHref="/quotations"
           crumbs={[{ label: "Quotations", href: "/quotations" }, { label: detail?.code ?? "Quotation" }]}
           title={detail ? `Quotation ${detail.code}` : "Quotation"}
-          description={detail?.customer ? `${detail.customer.companyName} · Issued ${fmtDate(detail.quotationDate)}` : "Document preview and workflow actions"}
+          description={detail?.customer ? `${customerLabel(detail.customer)} · Issued ${fmtDate(detail.quotationDate)}` : "Document preview and workflow actions"}
           actions={
             <div className="flex flex-wrap items-center gap-2">
               {detail ? <StatusBadge status={detail.status} /> : null}

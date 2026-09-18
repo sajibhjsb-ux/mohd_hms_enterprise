@@ -1,9 +1,17 @@
 // GET /api/v1/auth/google/callback — Google OAuth redirect target.
 // Validates state (single-use cookies), exchanges the code (PKCE), resolves
-// the verified Google identity, links it to an EXISTING active account by
-// googleId/email, opens a DB session (same primitive as password login) and
-// lands the user in the app. Every failure path redirects to the login
-// screen with ?googleError=<code> which the UI maps to a friendly message.
+// the verified Google identity, then:
+//   • Existing account  → link by googleId / verified email, preserve role +
+//     customer relationship (never duplicate, never overwrite role).
+//   • New person        → transactionally provision a CUSTOMER account AND its
+//     canonical Customer identity (company name optional, mobile/address to be
+//     completed during mandatory onboarding), then open the session.
+//   • Legacy CUSTOMER user without a Customer record → repaired on sign-in so
+//     every customer session has a valid customer identity (idempotent).
+// Customers with an incomplete profile (missing mobile/address) land on the
+// dedicated profile-completion page; everyone else lands on the dashboard.
+// Every failure path redirects to the login screen with ?googleError=<code>
+// which the UI maps to a friendly message.
 
 import { NextRequest, NextResponse } from "next/server";
 import { randomBytes } from "crypto";
@@ -11,6 +19,7 @@ import { db } from "@/lib/db";
 import { createSession, SESSION_COOKIE } from "@/lib/hms/auth";
 import { clientIp, rateLimit } from "@/lib/hms/rate-limit";
 import { audit } from "@/lib/hms/services";
+import { customerProfileState, createCustomerRecord, newCustomerCode } from "@/lib/hms/customer-profile";
 import {
   exchangeCodeForTokens,
   externalOrigin,
@@ -22,6 +31,12 @@ import {
   OAUTH_VERIFIER_COOKIE,
   safeEqual,
 } from "@/lib/hms/google-auth";
+
+/** Landing page after sign-in: onboard incomplete customers, rest → dashboard. */
+function landingFor(role: string, state: { profileComplete: boolean }): string {
+  if (role === "CUSTOMER" && !state.profileComplete) return "/profile/complete";
+  return "/dashboard";
+}
 
 export async function GET(req: NextRequest) {
   const ip = clientIp(req);
@@ -80,32 +95,68 @@ export async function GET(req: NextRequest) {
   if (!profile) return fail("profile_failed");
   if (!profile.emailVerified) return fail("email_unverified", { email: profile.email });
 
-  // Link existing account by googleId then by verified email; otherwise the
-  // FIRST Google sign-in auto-provisions a customer/client account (no prior
-  // password — login is Google-only for that account).
+  // Identity chain: verified Google identity → googleId → verified email.
+  // Never rely on display names; never create duplicates for a known email.
   let provisioned = false;
+  let customerCreated = false;
   let user = await db.user.findUnique({ where: { googleId: profile.sub } });
   if (!user) user = await db.user.findUnique({ where: { email: profile.email } });
 
   if (!user) {
+    // First sign-in auto-provisions a CUSTOMER account (no prior password —
+    // login is Google-only for that account) together with its canonical
+    // Customer identity, atomically. On a unique-email race the loser
+    // re-resolves and continues down the existing-user path.
     provisioned = true;
+    const customerCode = await newCustomerCode();
+    const name = profile.name?.trim() || profile.email.split("@")[0];
     try {
-      user = await db.user.create({
-        data: {
-          email: profile.email,
-          passwordHash: randomBytes(32).toString("hex"),
-          name: profile.name?.trim() || profile.email.split("@")[0],
-          role: "CUSTOMER",
-          status: "ACTIVE",
-          emailVerified: new Date(),
-          googleId: profile.sub,
-          avatarUrl: profile.picture ?? undefined,
-          lastLoginAt: new Date(),
-        },
+      user = await db.$transaction(async (tx) => {
+        const customer = await createCustomerRecord(tx, customerCode, { name, email: profile.email });
+        return tx.user.create({
+          data: {
+            email: profile.email,
+            passwordHash: randomBytes(32).toString("hex"),
+            name,
+            role: "CUSTOMER",
+            status: "ACTIVE",
+            emailVerified: new Date(),
+            googleId: profile.sub,
+            avatarUrl: profile.picture ?? undefined,
+            lastLoginAt: new Date(),
+            customerId: customer.id,
+          },
+        });
       });
+      customerCreated = true;
     } catch {
       user = await db.user.findUnique({ where: { googleId: profile.sub } });
       if (!user) user = await db.user.findUnique({ where: { email: profile.email } });
+    }
+  }
+
+  if (!user) return fail("no_account", { email: profile.email });
+  if (user.status !== "ACTIVE") return fail("account_disabled", { email: profile.email });
+
+  // Existing CUSTOMER user without a canonical Customer record (e.g. created
+  // before identity provisioning existed) — repair idempotently so the
+  // session always carries a valid customer identity. Never touches staff
+  // roles, never re-links a user that already has a customer.
+  if (user.role === "CUSTOMER" && !user.customerId) {
+    const current = user; // captured non-null reference for the tx closure
+    const customerCode = await newCustomerCode();
+    try {
+      user = await db.$transaction(async (tx) => {
+        const customer = await createCustomerRecord(tx, customerCode, { name: current.name, email: current.email });
+        return tx.user.update({
+          where: { id: current.id },
+          data: { customerId: customer.id },
+        });
+      });
+      customerCreated = true;
+    } catch {
+      // Another concurrent sign-in repaired it first — re-read and continue.
+      user = await db.user.findUnique({ where: { id: current.id } });
     }
   }
 
@@ -123,16 +174,24 @@ export async function GET(req: NextRequest) {
   });
 
   const { token, expiresAt } = await createSession(user.id, ip, req.headers.get("user-agent") ?? undefined);
+
+  // Landing decision from the DERIVED profile state (authoritative, not guessed).
+  const profileState = await customerProfileState(user);
+
   await audit({
     actorId: user.id,
     actorEmail: user.email,
     action: "LOGIN_GOOGLE",
     resourceType: "AUTH",
     ip,
-    metadata: provisioned ? { provisioned: true } : undefined,
+    metadata: {
+      ...(provisioned ? { provisioned: true } : {}),
+      ...(customerCreated ? { customerCreated: true } : {}),
+      profileComplete: profileState.profileComplete,
+    },
   });
 
-  const res = NextResponse.redirect(new URL("/dashboard", externalOrigin(req)));
+  const res = NextResponse.redirect(new URL(landingFor(user.role, profileState), externalOrigin(req)));
   res.cookies.set(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",

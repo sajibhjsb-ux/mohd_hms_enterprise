@@ -13,13 +13,13 @@ import { api, ClientApiError } from "@/lib/hms/api-client";
 import { useSession } from "@/components/hms/session";
 import { navigateTo } from "@/lib/hms/router";
 import { kpiHref, kpiNavigate } from "@/lib/hms/kpi-nav";
-import { money, fmtDate, fmtDateTime } from "@/lib/hms/format";
+import { customerLabel, money, fmtDate, fmtDateTime } from "@/lib/hms/format";
 import { useRealtimeEventDebounced } from "@/lib/hms/realtime/hooks";
 import { MODULE_EVENTS } from "@/lib/hms/realtime/matrix";
 import { humanize } from "@/lib/hms/constants";
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis, PieChart, Pie, Legend } from "recharts";
 import {
-  AlertTriangle, Boxes, CalendarClock, ClipboardList, FileWarning,
+  AlertTriangle, Boxes, CalendarClock, CheckCircle2, CircleUserRound, ClipboardList, FileWarning,
   HardHat, Receipt, Wrench, TrendingUp, Wallet,
 } from "lucide-react";
 
@@ -29,8 +29,8 @@ type Dash = {
   dailyComplaints: { date: string; count: number }[];
   technicianWorkload: { name: string; open: number; completed: number }[];
   financial: { invoiced: number; collected: number; outstanding: number; expenses: number } | null;
-  recentComplaints: { id: string; code: string; title: string; status: string; priority: string; createdAt: string; customer: { companyName: string } }[];
-  recentWorkOrders: { id: string; code: string; title: string; status: string; technician: { user: { name: string } } | null; customer: { companyName: string } }[];
+  recentComplaints: { id: string; code: string; title: string; status: string; priority: string; createdAt: string; customer: { companyName: string; contactPerson?: string } }[];
+  recentWorkOrders: { id: string; code: string; title: string; status: string; technician: { user: { name: string } } | null; customer: { companyName: string; contactPerson?: string } }[];
   upcomingPm: { id: string; code: string; dueDate: string; status: string; equipment: { name: string; assetTag: string } }[];
   equipmentStatusGroups: { status: string; _count: { status: number } }[];
   mine: { workOrders: number; pmTasks: number } | null;
@@ -79,6 +79,43 @@ export function DashboardModule() {
         subtitle={`${humanize(user?.role)} workspace — live operational overview`}
         actions={<Button variant="outline" size="sm" onClick={load}>Refresh</Button>}
       />
+
+      {/* Profile completion (customers only, spec §21) — hidden once complete. */}
+      {user?.role === "CUSTOMER" && user.profileComplete === false ? (
+        <Card className="border-amber-200 bg-amber-50/60">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <CircleUserRound className="h-5 w-5 text-amber-600" aria-hidden /> Profile Completion
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-4 pt-0">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm">
+              <div className="flex items-center gap-2">
+                {user.missingFields?.includes("mobile") ? (
+                  <><AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" aria-hidden /><span>Mobile Number — <strong>Required</strong></span></>
+                ) : (
+                  <><CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" aria-hidden /><span>Mobile Number — Completed</span></>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                {user.missingFields?.includes("address") ? (
+                  <><AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" aria-hidden /><span>Address — <strong>Required</strong></span></>
+                ) : (
+                  <><CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" aria-hidden /><span>Address — Completed</span></>
+                )}
+              </div>
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <CircleUserRound className="h-4 w-4 shrink-0" aria-hidden /><span>Company Name — Optional</span>
+              </div>
+            </div>
+            <div className="mt-3">
+              <Button size="sm" onClick={() => go("profile", ["complete"])}>
+                <CircleUserRound className="h-4 w-4 mr-1.5" aria-hidden /> Complete Profile
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
 
       {/* KPI row — every card drills down to its feature page (kpi-nav.ts); no popups. */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -167,7 +204,7 @@ export function DashboardModule() {
                   <button key={c.id} onClick={() => go("complaints", [c.id])} className="w-full text-left py-2.5 flex items-center gap-3 hover:bg-accent/40 rounded-md px-1.5">
                     <div className="min-w-0 flex-1">
                       <div className="text-sm font-medium truncate">{c.title}</div>
-                      <div className="text-xs text-muted-foreground truncate">{c.code} · {c.customer.companyName} · {fmtDateTime(c.createdAt)}</div>
+                      <div className="text-xs text-muted-foreground truncate">{c.code} · {customerLabel(c.customer)} · {fmtDateTime(c.createdAt)}</div>
                     </div>
                     <StatusBadge status={c.priority} />
                     <StatusBadge status={c.status} />
@@ -261,7 +298,7 @@ export function DashboardModule() {
                   <button key={w.id} onClick={() => go("work-orders", [w.id])} className="w-full text-left py-2.5 flex items-center gap-3 hover:bg-accent/40 rounded-md px-1.5">
                     <div className="min-w-0 flex-1">
                       <div className="text-sm font-medium truncate">{w.title}</div>
-                      <div className="text-xs text-muted-foreground truncate">{w.code} · {w.customer.companyName} · {w.technician?.user.name ?? "Unassigned"}</div>
+                      <div className="text-xs text-muted-foreground truncate">{w.code} · {customerLabel(w.customer)} · {w.technician?.user.name ?? "Unassigned"}</div>
                     </div>
                     <StatusBadge status={w.status} />
                   </button>

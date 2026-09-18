@@ -16,7 +16,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/hms/api-client";
-import { toDateInput, fmtDateTime } from "@/lib/hms/format";
+import { customerLabel, toDateInput, fmtDateTime } from "@/lib/hms/format";
 import { hasPerm, useSession } from "@/components/hms/session";
 import { useUi } from "@/lib/hms/ui-store";
 import { navigateTo } from "@/lib/hms/router";
@@ -95,7 +95,7 @@ const EMPTY_FORM: FormState = {
 };
 
 type IrmsMeta = {
-  projects: { id: string; code: string; name: string; customerId: string | null; customer?: { companyName: string } | null; siteLocation?: string | null }[];
+  projects: { id: string; code: string; name: string; customerId: string | null; customer?: { companyName: string; contactPerson?: string } | null; siteLocation?: string | null }[];
   workOrders: { id: string; code: string; title: string; description?: string | null; equipmentId?: string | null; equipment?: { name: string; assetTag: string } | null }[];
   equipment: { id: string; name: string; assetTag: string; serialNumber?: string | null; manufacturer?: string | null; model?: string | null; category?: string | null; location?: { name: string } | null }[];
   customers: { id: string; companyName: string }[];
@@ -626,13 +626,13 @@ export function IrmsReportBuilder({ reportId }: { reportId?: string }) {
                               {(meta?.projects ?? []).map((p) => (
                                 <CommandItem
                                   key={p.id}
-                                  value={`${p.code} ${p.name} ${p.customer?.companyName ?? ""}`}
+                                  value={`${p.code} ${p.name} ${p.customer ? customerLabel(p.customer) : ""}`}
                                   onSelect={() => { onProjectSelect(p.id); setProjOpen(false); }}
                                 >
                                   <CheckCheck className={cn("mr-2 h-4 w-4", v.projectId === p.id ? "opacity-100" : "opacity-0")} aria-hidden />
                                   <span className="min-w-0">
                                     <span className="block truncate font-medium">{p.code} — {p.name}</span>
-                                    {p.customer?.companyName ? <span className="block truncate text-xs text-muted-foreground">{p.customer.companyName}</span> : null}
+                                    {p.customer ? <span className="block truncate text-xs text-muted-foreground">{customerLabel(p.customer)}</span> : null}
                                   </span>
                                 </CommandItem>
                               ))}
@@ -642,10 +642,10 @@ export function IrmsReportBuilder({ reportId }: { reportId?: string }) {
                       </PopoverContent>
                     </Popover>
                     {/* Read-only customer chip */}
-                    {selectedProject?.customer?.companyName ? (
+                    {selectedProject?.customer ? (
                       <p className="flex items-center gap-1.5 rounded-md bg-muted/50 px-2 py-1.5 text-xs text-muted-foreground">
                         <Building2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                        Customer: {selectedProject.customer.companyName}
+                        Customer: {customerLabel(selectedProject.customer)}
                         {selectedProject.siteLocation ? ` · Site: ${selectedProject.siteLocation}` : ""}
                       </p>
                     ) : null}

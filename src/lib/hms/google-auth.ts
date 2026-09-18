@@ -11,10 +11,12 @@
 //     optional endpoint overrides (defaults are Google's official endpoints;
 //     useful for private deployments and local testing doubles).
 //
-// Sign-in policy: Google sign-in works for EXISTING accounts only. The
-// Google-verified email is matched against the User table and the account is
-// linked on first use (googleId). There is deliberately NO open
-// self-registration — access is provisioned by administrators.
+// Sign-in policy: Google sign-in links to an EXISTING account by googleId or
+// verified email; a first-time Google person is auto-provisioned as a CUSTOMER
+// together with a canonical Customer identity (see the callback route) whose
+// mobile number + address are completed during mandatory profile onboarding.
+// There is deliberately NO open email/password self-registration — staff
+// accounts are provisioned by administrators.
 
 import "server-only";
 import { createHash, randomBytes, timingSafeEqual } from "crypto";

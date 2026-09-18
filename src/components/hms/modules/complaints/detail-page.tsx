@@ -14,7 +14,7 @@ import { PriorityBadge, StatusBadge, LoadingState, EmptyState, ErrorState } from
 import { WorkflowTimeline } from "@/components/hms/shared/workflow-timeline";
 import { PdfButtons } from "@/components/hms/shared/pdf-buttons";
 import { PERMISSIONS, humanize } from "@/lib/hms/constants";
-import { fmtDateTime } from "@/lib/hms/format";
+import { customerLabel, fmtDateTime } from "@/lib/hms/format";
 import { useRealtimeEvent } from "@/lib/hms/realtime/hooks";
 import { COMPLAINT_DETAIL_EVENTS } from "@/lib/hms/realtime/matrix";
 import { useToast } from "@/hooks/use-toast";
@@ -52,7 +52,7 @@ type ComplaintDetail = {
   resolutionNotes?: string;
   customerFeedback?: string;
   assignedTechnician?: { id: string; user?: { id: string; name: string } | null } | null;
-  customer?: { id: string; companyName: string } | null;
+  customer?: { id: string; companyName: string; contactPerson?: string } | null;
   equipment?: { id: string; name: string; assetTag: string } | null;
   statusHistory: HistoryRow[];
   workOrders: { id: string; code: string; title: string; status: string; technician?: { user?: { name: string } | null } | null }[];
@@ -145,7 +145,7 @@ export function ComplaintDetailPage({ id }: { id: string }) {
       backHref="/complaints"
       crumbs={[{ label: "Complaints", href: "/complaints" }, { label: detail.code }]}
       title={detail.title}
-      description={`${detail.customer?.companyName ?? "—"}${detail.equipment ? ` · ${detail.equipment.name} (${detail.equipment.assetTag})` : ""} · Logged ${fmtDateTime(detail.createdAt)}`}
+      description={`${customerLabel(detail.customer)}${detail.equipment ? ` · ${detail.equipment.name} (${detail.equipment.assetTag})` : ""} · Logged ${fmtDateTime(detail.createdAt)}`}
       actions={
         <div className="flex flex-wrap items-center gap-2">
           {status === "NEW" && (canUpdate || isPortalOwner) ? (

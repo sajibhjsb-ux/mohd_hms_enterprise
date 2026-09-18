@@ -22,7 +22,7 @@ import {
 } from "@/components/hms/shared/ui-bits";
 import { PERMISSIONS, PRIORITIES, humanize } from "@/lib/hms/constants";
 import { useModuleQuery } from "@/lib/hms/page-query";
-import { money, fmtDate } from "@/lib/hms/format";
+import { customerLabel, money, fmtDate } from "@/lib/hms/format";
 import { useRealtimeEvent } from "@/lib/hms/realtime/hooks";
 import { MODULE_EVENTS } from "@/lib/hms/realtime/matrix";
 import { Button } from "@/components/ui/button";
@@ -44,7 +44,7 @@ type WORow = {
   scheduledDate: string | null;
   totalCents: number;
   createdAt: string;
-  customer?: { id: string; companyName: string } | null;
+  customer?: { id: string; companyName: string; contactPerson?: string } | null;
   equipment?: { id: string; name: string; assetTag: string } | null;
   technician?: { id: string; user?: { id: string; name: string } | null } | null;
   complaint?: { id: string; code: string } | null;
@@ -148,7 +148,7 @@ function WorkOrdersList() {
     { key: "title", header: "Title", value: (r) => r.title, className: "max-w-[240px] truncate" },
     { key: "status", header: "Status", render: (r) => <StatusBadge status={r.status} />, value: (r) => r.status },
     { key: "priority", header: "Priority", render: (r) => <PriorityBadge priority={r.priority} />, value: (r) => r.priority, hideOnMobile: true },
-    { key: "customer", header: "Customer", value: (r) => r.customer?.companyName ?? "", hideOnMobile: true },
+    { key: "customer", header: "Customer", value: (r) => customerLabel(r.customer), hideOnMobile: true },
     { key: "technician", header: "Technician", value: (r) => r.technician?.user?.name ?? "", render: (r) => r.technician?.user?.name ?? "—" },
     { key: "scheduledDate", header: "Scheduled", value: (r) => r.scheduledDate ?? "", render: (r) => fmtDate(r.scheduledDate), hideOnMobile: true },
     { key: "totalCents", header: "Total", value: (r) => r.totalCents, render: (r) => money(r.totalCents), className: "tabular-nums whitespace-nowrap" },

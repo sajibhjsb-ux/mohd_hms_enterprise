@@ -4,7 +4,7 @@
 // monolithic index.tsx): API mirror types, form factories, company-name loader
 // and the printable DocumentPreview. Consumed by the list/new/detail pages.
 
-import { fmtDate, money } from "@/lib/hms/format";
+import { customerLabel, fmtDate, money } from "@/lib/hms/format";
 import { Separator } from "@/components/ui/separator";
 import { humanize } from "@/lib/hms/constants";
 import { DocumentHeader, FALLBACK_IDENTITY, loadCompanyIdentity, type CompanyIdentity } from "@/components/hms/shared/document-header";
@@ -70,8 +70,8 @@ export function DocumentPreview({ q, company }: { q: QuotationDetail; company: C
       />
       <div className="mb-4">
         <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Bill to</div>
-        <div className="font-medium">{q.customer?.companyName}</div>
-        {q.customer?.contactPerson ? <div className="text-xs text-muted-foreground">{q.customer.contactPerson}</div> : null}
+        <div className="font-medium">{customerLabel(q.customer)}</div>
+        {q.customer?.companyName && q.customer?.contactPerson ? <div className="text-xs text-muted-foreground">{q.customer.contactPerson}</div> : null}
         {q.customer?.email ? <div className="text-xs text-muted-foreground">{q.customer.email}</div> : null}
         {q.customer?.phone ? <div className="text-xs text-muted-foreground">{q.customer.phone}</div> : null}
       </div>

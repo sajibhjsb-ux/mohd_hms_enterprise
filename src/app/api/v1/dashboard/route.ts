@@ -90,12 +90,12 @@ export const GET = handler(
     const recentComplaintList = await db.complaint.findMany({
       where: customerId ? { customerId } : {},
       orderBy: { createdAt: "desc" }, take: 6,
-      select: { id: true, code: true, title: true, status: true, priority: true, createdAt: true, customer: { select: { companyName: true } } },
+      select: { id: true, code: true, title: true, status: true, priority: true, createdAt: true, customer: { select: { companyName: true, contactPerson: true } } },
     });
     const recentWOs = await db.workOrder.findMany({
       where: customerId ? { customerId } : {},
       orderBy: { createdAt: "desc" }, take: 5,
-      select: { id: true, code: true, title: true, status: true, technician: { select: { user: { select: { name: true } } } }, customer: { select: { companyName: true } } },
+      select: { id: true, code: true, title: true, status: true, technician: { select: { user: { select: { name: true } } } }, customer: { select: { companyName: true, contactPerson: true } } },
     });
     const upcomingPm = await db.pmTask.findMany({
       where: { status: { in: ["SCHEDULED", "IN_PROGRESS", "OVERDUE"] }, equipment: customerId ? { customerId } : {} },

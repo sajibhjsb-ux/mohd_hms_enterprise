@@ -5,7 +5,7 @@ import { Errors } from "@/lib/hms/api";
 import type { SessionUser } from "@/lib/hms/auth";
 
 export const WO_INCLUDE = {
-  customer: { select: { id: true, companyName: true } },
+  customer: { select: { id: true, companyName: true, contactPerson: true } },
   equipment: { select: { id: true, name: true, assetTag: true } },
   technician: { select: { id: true, user: { select: { id: true, name: true } } } },
   complaint: { select: { id: true, code: true } },
@@ -13,7 +13,7 @@ export const WO_INCLUDE = {
 
 export const WO_DETAIL_INCLUDE = {
   ...WO_INCLUDE,
-  customer: { select: { id: true, companyName: true, portalUser: { select: { id: true, name: true, email: true } } } },
+  customer: { select: { id: true, companyName: true, contactPerson: true, portalUser: { select: { id: true, name: true, email: true } } } },
   checklist: { orderBy: { sortOrder: "asc" } },
   materials: {
     orderBy: { id: "asc" },

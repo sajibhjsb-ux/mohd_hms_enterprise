@@ -13,7 +13,7 @@ import { navigateTo } from "@/lib/hms/router";
 import { PageShell } from "@/components/hms/shared/page-shell";
 import { StatCard, StatusBadge, LoadingState, EmptyState, ErrorState } from "@/components/hms/shared/ui-bits";
 import { PERMISSIONS } from "@/lib/hms/constants";
-import { fmtDate, fmtDateTime, money } from "@/lib/hms/format";
+import { customerLabel, fmtDate, fmtDateTime, money } from "@/lib/hms/format";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Pencil } from "lucide-react";
@@ -162,8 +162,8 @@ export function CustomerDetailPage({ id }: { id: string }) {
     <PageShell
       backLabel="Back to Customers"
       backHref="/customers"
-      crumbs={[{ label: "Customers", href: "/customers" }, { label: detail.companyName }]}
-      title={detail.companyName}
+      crumbs={[{ label: "Customers", href: "/customers" }, { label: customerLabel(detail) }]}
+      title={customerLabel(detail)}
       description={`${detail.code} · ${detail.contactPerson} · ${detail.email} · ${detail.phone}`}
       actions={
         <div className="flex items-center gap-2">

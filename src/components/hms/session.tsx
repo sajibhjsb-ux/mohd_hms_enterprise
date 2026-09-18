@@ -14,6 +14,9 @@ export type SessionUser = {
   role: string;
   customerId: string | null;
   permissions: Permission[];
+  /** Backend-authoritative derived profile state (customers). */
+  profileComplete?: boolean;
+  missingFields?: string[];
 };
 
 type SessionCtx = {

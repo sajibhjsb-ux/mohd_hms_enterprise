@@ -27,7 +27,7 @@ function GoogleIcon({ className }: { className?: string }) {
 const GOOGLE_ERROR_MESSAGES: Record<string, string> = {
   not_configured: "Google sign-in is not configured on this server yet.",
   no_account:
-    "No MOHD.HMS account matches this Google email. Ask your administrator to create your account, then try Google sign-in again to link it.",
+    "We could not set up your customer account with this Google email (it may already exist with a different state). Please contact support for help completing your registration.",
   account_disabled: "This account has been disabled. Contact your administrator.",
   email_unverified:
     "Your Google account email is not verified. Use a verified Google account or sign in with your password.",

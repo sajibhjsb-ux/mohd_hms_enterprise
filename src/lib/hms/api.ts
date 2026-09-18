@@ -30,6 +30,19 @@ export const Errors = {
   invalidTransition: (msg: string) => new ApiError(422, "INVALID_TRANSITION", msg),
   tooMany: (msg = "Too many requests. Please slow down.") => new ApiError(429, "RATE_LIMITED", msg),
   internal: (msg = "Something went wrong. Please try again.") => new ApiError(500, "INTERNAL", msg),
+  /**
+   * 403 PROFILE_INCOMPLETE — a customer attempted a restricted job/service
+   * request before completing the required profile (mobile number + address).
+   * Machine-readable code lets the frontend route to the profile completion
+   * page; details carry the specific missing fields.
+   */
+  profileIncomplete: (missingFields: string[] = []) =>
+    new ApiError(
+      403,
+      "PROFILE_INCOMPLETE",
+      "Please complete your mobile number and address before requesting a service.",
+      { missingFields }
+    ),
 };
 
 export function ok<T>(data: T, init?: number) {

@@ -16,7 +16,7 @@ import { PageShell } from "@/components/hms/shared/page-shell";
 import { EmptyState } from "@/components/hms/shared/ui-bits";
 import { LineItemsEditor, TotalsPanel, formTotals } from "@/components/hms/shared/line-items-editor";
 import { PERMISSIONS } from "@/lib/hms/constants";
-import { money, fromCents } from "@/lib/hms/format";
+import { customerLabel, money, fromCents } from "@/lib/hms/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -222,7 +222,7 @@ export function QuotationNewPage() {
                 <Select value={form.value.customerId} onValueChange={(v) => form.setValue({ customerId: v })}>
                   <SelectTrigger aria-label="Customer"><SelectValue placeholder={refsLoading ? "Loading customers…" : "Select customer"} /></SelectTrigger>
                   <SelectContent>
-                    {customers.map((c) => <SelectItem key={c.id} value={c.id}>{c.companyName} ({c.code})</SelectItem>)}
+                    {customers.map((c) => <SelectItem key={c.id} value={c.id}>{customerLabel(c)} ({c.code})</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>

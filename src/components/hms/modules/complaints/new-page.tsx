@@ -6,7 +6,7 @@
 // architecture — no duplicate tables, no duplicate APIs, no mock data.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, qs } from "@/lib/hms/api-client";
+import { api, qs, ClientApiError } from "@/lib/hms/api-client";
 import { hasPerm, useSession } from "@/components/hms/session";
 import { useUi } from "@/lib/hms/ui-store";
 import { navigateTo } from "@/lib/hms/router";
@@ -16,7 +16,7 @@ import {
   PageHeader, EmptyState,
 } from "@/components/hms/shared/ui-bits";
 import { PERMISSIONS, PRIORITIES, humanize } from "@/lib/hms/constants";
-import { fmtDateTime } from "@/lib/hms/format";
+import { customerLabel, fmtDateTime } from "@/lib/hms/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -24,7 +24,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
-  AlertCircle, ArrowLeft, ChevronRight, Loader2, MapPin, Save, Send, User, X,
+  AlertCircle, ArrowLeft, ChevronRight, CircleUserRound, Loader2, MapPin, Save, Send, User, X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -62,7 +62,7 @@ const DESC_MAX = 5000;
 // ── Page ──
 
 export function ComplaintNewPage() {
-  const { user } = useSession();
+  const { user, refresh } = useSession();
   const { toast } = useToast();
   const setPageDirty = useUi((s) => s.setPageDirty);
   const isStaffUser = !!user && user.role !== "CUSTOMER";
@@ -262,6 +262,18 @@ export function ComplaintNewPage() {
     } catch (e) {
       // CRITICAL: keep every user-entered value on failure — show the error and allow retry.
       const msg = e instanceof Error ? e.message : "Could not create the complaint. Please try again.";
+      // Backend-authoritative onboarding gate (direct/stale-session case):
+      // route the customer to profile completion instead of a generic error.
+      if (e instanceof ClientApiError && e.code === "PROFILE_INCOMPLETE") {
+        toast({
+          title: "Profile completion required",
+          description: msg,
+          variant: "destructive",
+        });
+        void refresh();
+        navigateTo("profile", ["complete"]);
+        return;
+      }
       setSubmitError(msg);
       toast({ title: "Could not create complaint", description: msg, variant: "destructive" });
     } finally {
@@ -275,6 +287,38 @@ export function ComplaintNewPage() {
         title="You don't have permission to create complaints"
         hint="Complaint creation is limited to authorized roles. Contact your administrator if you believe this is a mistake."
       />
+    );
+  }
+
+  // ── Profile completion gate (spec §10/§11) ──
+  // UX hint on top of the backend-authoritative guard; stale sessions are
+  // still caught server-side with the PROFILE_INCOMPLETE code (handled below).
+  const profileIncomplete = !isStaffUser && user?.profileComplete === false;
+  if (profileIncomplete) {
+    return (
+      <div className="max-w-xl mx-auto py-6">
+        <Card className="border-amber-200 bg-amber-50/60">
+          <CardHeader className="pb-2 text-center">
+            <div className="mx-auto h-12 w-12 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center" aria-hidden>
+              <AlertCircle className="h-6 w-6" />
+            </div>
+            <CardTitle className="text-base mt-2">Service requests are locked until your profile is complete</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4 text-center">
+            <p className="text-sm text-muted-foreground">
+              Please complete your mobile number and address before requesting a service.
+            </p>
+            <div className="flex flex-col sm:flex-row gap-2 justify-center">
+              <Button onClick={() => navigateTo("profile", ["complete"])}>
+                <CircleUserRound className="h-4 w-4 mr-1.5" aria-hidden /> Complete Profile
+              </Button>
+              <Button variant="outline" onClick={() => navigateTo("complaints")}>
+                Back to Complaints
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     );
   }
 
@@ -414,7 +458,7 @@ export function ComplaintNewPage() {
                   {selectedCustomer ? (
                     <div className="flex items-start justify-between gap-2 rounded-lg border bg-muted/30 p-3">
                       <div className="min-w-0 text-sm">
-                        <p className="font-medium truncate">{selectedCustomer.companyName ?? selectedCustomer.name ?? selectedCustomer.id}</p>
+                        <p className="font-medium truncate">{customerLabel(selectedCustomer)}</p>
                         <p className="text-xs text-muted-foreground truncate">
                           {[selectedCustomer.contactPerson, selectedCustomer.phone, selectedCustomer.code ? `#${selectedCustomer.code}` : ""].filter(Boolean).join(" · ") || "—"}
                         </p>
@@ -464,7 +508,7 @@ export function ComplaintNewPage() {
                                   onClick={() => pickCustomer(c)}
                                   className="w-full text-left px-3 py-2 hover:bg-accent focus:bg-accent focus:outline-none border-b last:border-0"
                                 >
-                                  <span className="block text-sm font-medium truncate">{c.companyName ?? c.name ?? c.id}</span>
+                                  <span className="block text-sm font-medium truncate">{customerLabel(c)}</span>
                                   <span className="block text-xs text-muted-foreground truncate">
                                     {[c.contactPerson, c.phone, c.code ? `#${c.code}` : ""].filter(Boolean).join(" · ") || "\u00A0"}
                                   </span>

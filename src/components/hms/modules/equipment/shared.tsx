@@ -10,6 +10,7 @@
 
 import type { ReactNode } from "react";
 import { ClientApiError } from "@/lib/hms/api-client";
+import { customerLabel } from "@/lib/hms/format";
 import { StatusBadge } from "@/components/hms/shared/ui-bits";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -25,7 +26,7 @@ export type EquipmentCore = {
   pmFrequencyDays: number; qrToken: string; notes: string; createdAt: string;
   customerId: string | null;
   location: { id: string; name: string; code: string } | null;
-  customer: { id: string; companyName: string; code: string } | null;
+  customer: { id: string; companyName: string; code: string; contactPerson?: string } | null;
 };
 
 /** Row shape returned by GET /api/v1/equipment (list). */
@@ -45,7 +46,7 @@ export type EquipmentDetail = EquipmentCore & {
 
 export type QrData = { equipmentId: string; assetTag: string; name: string; url: string; dataUrl: string };
 
-export type CustomerOption = { id: string; companyName: string; code: string };
+export type CustomerOption = { id: string; companyName: string; code: string; contactPerson?: string };
 export type LocationOption = { id: string; name: string; code: string };
 
 export type FormState = {
@@ -146,7 +147,7 @@ export function EquipmentFormFields({ f, set, errs, idp, customers, locations, l
           <SelectTrigger id={`${idp}-cust`}><SelectValue placeholder="Unassigned" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="none">— Unassigned —</SelectItem>
-            {customers.map((c) => <SelectItem key={c.id} value={c.id}>{c.companyName}</SelectItem>)}
+            {customers.map((c) => <SelectItem key={c.id} value={c.id}>{customerLabel(c)}</SelectItem>)}
           </SelectContent>
         </Select>
         <FieldError msg={errs.customerId} />

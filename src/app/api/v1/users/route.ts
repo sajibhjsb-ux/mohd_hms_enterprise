@@ -13,6 +13,7 @@ import { emit } from "@/lib/hms/workflows/bus";
 import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 import { hashPassword, validatePasswordStrength } from "@/lib/hms/auth";
 import { clientIp } from "@/lib/hms/rate-limit";
+import { createCustomerRecord, newCustomerCode } from "@/lib/hms/customer-profile";
 
 const USER_SELECT = {
   id: true,
@@ -23,7 +24,7 @@ const USER_SELECT = {
   status: true,
   lastLoginAt: true,
   createdAt: true,
-  customer: { select: { id: true, companyName: true, code: true } },
+  customer: { select: { id: true, companyName: true, code: true, contactPerson: true } },
   technicianProfile: { select: { id: true, employeeNo: true, specialty: true, status: true } },
   _count: { select: { sessions: true } },
 } satisfies Prisma.UserSelect;
@@ -95,9 +96,10 @@ export const POST = handler(
     if (taken) throw Errors.conflict("A user account with this email already exists.");
 
     const passwordHash = await hashPassword(body.password);
-    // Pre-allocate the technician number OUTSIDE the transaction — nextNumber()
+    // Pre-allocate numbers OUTSIDE the transaction — nextNumber()
     // writes via the global db client, which would deadlock on SQLite inside one.
     const tecEmployeeNo = body.role === "TECHNICIAN" ? await nextNumber("TEC") : null;
+    const cusCode = body.role === "CUSTOMER" ? await newCustomerCode() : null;
 
     const created = await db.$transaction(async (tx) => {
       const u = await tx.user.create({
@@ -123,6 +125,19 @@ export const POST = handler(
             status: "AVAILABLE",
           },
         });
+      }
+      // Every CUSTOMER user gets the canonical Customer identity in the same
+      // transaction — a customer account without a customer record would be
+      // unclassifiable (invisible in Customers, unscoped, unable to file jobs).
+      // Company name is optional; the customer completes mobile/address via
+      // profile onboarding.
+      if (u.role === "CUSTOMER" && cusCode) {
+        const customer = await createCustomerRecord(tx, cusCode, {
+          name: u.name,
+          email: u.email,
+          phone: u.phone ?? undefined,
+        });
+        return tx.user.update({ where: { id: u.id }, data: { customerId: customer.id } });
       }
       return u;
     });

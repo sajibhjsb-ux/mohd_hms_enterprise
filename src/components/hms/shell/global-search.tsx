@@ -15,6 +15,7 @@ import { hasPerm, useSession } from "@/components/hms/session";
 import { useUi } from "@/lib/hms/ui-store";
 import { MODULES } from "@/components/hms/registry";
 import { PERMISSIONS } from "@/lib/hms/constants";
+import { customerLabel } from "@/lib/hms/format";
 import { Search, Loader2, AlertTriangle, Building2, QrCode } from "lucide-react";
 
 type ComplaintHit = { id: string; code: string; title: string; status: string };
@@ -170,9 +171,9 @@ export function GlobalSearch({ open, onOpenChange, onNavigate }: Props) {
         {customers.length > 0 ? (
           <CommandGroup heading="Customers">
             {customers.map((c) => (
-              <CommandItem key={c.id} value={`cus-${c.companyName ?? c.id}`} onSelect={() => go({ module: "customers", id: c.id })}>
+              <CommandItem key={c.id} value={`cus-${customerLabel(c)}`} onSelect={() => go({ module: "customers", id: c.id })}>
                 <Building2 className="h-4 w-4 text-teal-600" aria-hidden />
-                <span className="truncate">{c.companyName ?? c.id}</span>
+                <span className="truncate">{customerLabel(c)}</span>
                 {c.code ? <span className="ml-auto text-xs text-muted-foreground">#{c.code}</span> : null}
               </CommandItem>
             ))}

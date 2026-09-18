@@ -103,3 +103,19 @@ export function toDateInput(d: string | Date | null | undefined): string {
 export function initials(name: string): string {
   return name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase();
 }
+
+/**
+ * Display label for a customer record. Company name is OPTIONAL for customers
+ * (individuals / homeowners / tenants) — fall back to the contact person so
+ * no customer ever shows as blank. Use wherever customer.companyName was
+ * previously rendered as the primary label.
+ */
+export function customerLabel(
+  c: { companyName?: string | null; contactPerson?: string | null; name?: string | null } | null | undefined
+): string {
+  if (!c) return "—";
+  const company = (c.companyName ?? "").trim();
+  if (company) return company;
+  const person = (c.contactPerson ?? c.name ?? "").trim();
+  return person || "—";
+}

@@ -17,7 +17,7 @@ import { PageShell } from "@/components/hms/shared/page-shell";
 import { WorkflowTimeline } from "@/components/hms/shared/workflow-timeline";
 import { EmptyState, ErrorState, LoadingState, StatusBadge } from "@/components/hms/shared/ui-bits";
 import { humanize, PERMISSIONS } from "@/lib/hms/constants";
-import { fmtDate } from "@/lib/hms/format";
+import { customerLabel, fmtDate } from "@/lib/hms/format";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -46,7 +46,7 @@ type ReportDetail = {
   summary: string;
   overallCondition: string;
   recommendations: string;
-  project: { id: string; code: string; name: string; customer?: { companyName?: string | null } | null } | null;
+  project: { id: string; code: string; name: string; customer?: { companyName?: string | null; contactPerson?: string | null } | null } | null;
   equipment: { id: string; name: string; assetTag: string } | null;
   inspector: { id: string; user?: { name?: string | null } | null } | null;
   findings: Finding[];
@@ -153,7 +153,7 @@ export function IrmsReportDetailPage({ id }: { id: string }) {
         <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse", marginBottom: 16 }}>
           <tbody>
             <tr><td style={printTd}>Report Code</td><td style={printTd}>{detail.code}</td><td style={printTd}>Date</td><td style={printTd}>{fmtDate(detail.inspectionDate)}</td></tr>
-            <tr><td style={printTd}>Project</td><td style={printTd}>{detail.project ? `${detail.project.code} — ${detail.project.name}` : "—"}</td><td style={printTd}>Customer</td><td style={printTd}>{detail.project?.customer?.companyName ?? "—"}</td></tr>
+            <tr><td style={printTd}>Project</td><td style={printTd}>{detail.project ? `${detail.project.code} — ${detail.project.name}` : "—"}</td><td style={printTd}>Customer</td><td style={printTd}>{detail.project?.customer ? customerLabel(detail.project.customer) : "—"}</td></tr>
             <tr><td style={printTd}>Equipment</td><td style={printTd}>{detail.equipment ? `${detail.equipment.name} (${detail.equipment.assetTag})` : "—"}</td><td style={printTd}>Type</td><td style={printTd}>{humanize(detail.type)}</td></tr>
             <tr><td style={printTd}>Inspector</td><td style={printTd}>{detail.inspector?.user?.name ?? "—"}</td><td style={printTd}>Overall Condition</td><td style={printTd}>{humanize(detail.overallCondition)}</td></tr>
           </tbody>

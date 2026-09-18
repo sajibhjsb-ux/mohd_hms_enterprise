@@ -8,6 +8,7 @@ import { isStaff } from "@/lib/hms/rbac";
 import { audit, nextNumber, notify, notifyRole } from "@/lib/hms/services";
 import { PERMISSIONS, PRIORITIES } from "@/lib/hms/constants";
 import { COMPLAINT_INCLUDE, complaintScopeWhere } from "./_lib";
+import { assertCustomerProfileComplete } from "@/lib/hms/customer-profile";
 import { dedupeSubmission } from "@/lib/hms/workflows/idempotency";
 import { emit } from "@/lib/hms/workflows/bus";
 import { EVENT_TYPES } from "@/lib/hms/workflows/types";
@@ -73,6 +74,11 @@ export const POST = handler(
 
     let customerId: string;
     if (user.role === "CUSTOMER") {
+      // Backend-authoritative onboarding gate: no job/service request until the
+      // customer's mobile number and address are on their canonical Customer
+      // record. Even direct API calls are rejected with the machine-readable
+      // PROFILE_INCOMPLETE code (spec §8/§10/§12).
+      await assertCustomerProfileComplete(user);
       if (!user.customerId) throw Errors.forbidden("Your account is not linked to a customer.");
       customerId = user.customerId; // portal users can only file for themselves
     } else {

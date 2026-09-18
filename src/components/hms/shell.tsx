@@ -41,10 +41,11 @@ export function AppShell() {
   const activeModule = useUi((s) => s.activeModule);
   const deepLink = useUi((s) => s.deepLink);
   const setDeepLink = useUi((s) => s.setDeepLink);
+  const changePwOpen = useUi((s) => s.changePwOpen);
+  const setChangePwOpen = useUi((s) => s.setChangePwOpen);
   const [searchOpen, setSearchOpen] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
-  const [pwOpen, setPwOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   /** Hash the user asked for while a dirty form blocked navigation. */
   const [pendingNav, setPendingNav] = useState<string | null>(null);
@@ -60,6 +61,10 @@ export function AppShell() {
     }),
     [user]
   );
+
+  // Modules reachable but not shown in the module navigation (profile is
+  // entered from the header account menu).
+  const navVisible = useMemo(() => visible.filter((m) => !m.navHidden), [visible]);
 
   // Latest visible modules for the hashchange handler (avoids stale closures).
   const visibleRef = useRef<ModuleDef[]>(visible);
@@ -162,7 +167,7 @@ export function AppShell() {
   if (!user) return null;
 
   const active = visible.find((m) => m.key === activeModule) ?? visible[0];
-  const mobileNav = visible.filter((m) => m.mobile);
+  const mobileNav = navVisible.filter((m) => m.mobile);
   const ActiveComponent = active?.component;
 
   return (
@@ -172,10 +177,10 @@ export function AppShell() {
         onOpenSearch={() => setSearchOpen(true)}
         onOpenQr={() => setQrOpen(true)}
         onSelectModule={switchModule}
-        onOpenChangePassword={() => setPwOpen(true)}
+        onOpenChangePassword={() => setChangePwOpen(true)}
         onOpenAbout={() => setAboutOpen(true)}
       />
-      <FloatingNav visible={visible} activeModule={activeModule} onSelect={switchModule} />
+      <FloatingNav visible={navVisible} activeModule={activeModule} onSelect={switchModule} />
 
       {/* Content — aligned with the floating navigation grid */}
       <main className="flex-1 mx-auto w-full max-w-[1500px] px-4 sm:px-6 py-5 pb-24 lg:pb-8" id="main-content">
@@ -226,7 +231,7 @@ export function AppShell() {
                 <SheetTitle>All modules</SheetTitle>
               </SheetHeader>
               <div className="grid grid-cols-3 gap-2 pb-6">
-                {visible.map((m) => (
+                {navVisible.map((m) => (
                   <button
                     key={m.key}
                     onClick={() => { switchModule(m.key); setMobileMoreOpen(false); }}
@@ -246,7 +251,7 @@ export function AppShell() {
       </nav>
 
       {/* Overlays (utility dialogs only — business CRUD uses dedicated pages) */}
-      <ChangePasswordDialog open={pwOpen} onOpenChange={setPwOpen} />
+      <ChangePasswordDialog open={changePwOpen} onOpenChange={setChangePwOpen} />
       <GlobalSearch open={searchOpen} onOpenChange={setSearchOpen} onNavigate={navigateFromSearch} />
       <QrScanDialog open={qrOpen} onOpenChange={setQrOpen} onNavigate={navigateFromQr} />
 

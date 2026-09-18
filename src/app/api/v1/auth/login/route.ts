@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { handler, ok, Errors, parseBody } from "@/lib/hms/api";
 import { verifyPassword, createSession, setSessionCookie, SESSION_TTL_MS } from "@/lib/hms/auth";
 import { can } from "@/lib/hms/rbac";
+import { customerProfileState } from "@/lib/hms/customer-profile";
 import { rateLimit, clientIp } from "@/lib/hms/rate-limit";
 import { audit } from "@/lib/hms/services";
 import type { Permission } from "@/lib/hms/constants";
@@ -35,9 +36,21 @@ export const POST = handler(
     await db.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
     await audit({ actorId: user.id, actorEmail: user.email, action: "LOGIN", resourceType: "AUTH", ip });
 
+    // Profile state is derived server-side (authoritative) and customerId is
+    // included so the client session is complete immediately after login.
+    const profileState = await customerProfileState(user);
     const res = NextResponse.json({
       ok: true,
-      data: { id: user.id, email: user.email, name: user.name, role: user.role, permissions: can(user.role as never) },
+      data: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        customerId: user.customerId,
+        permissions: can(user.role as never),
+        profileComplete: profileState.profileComplete,
+        missingFields: profileState.missingFields,
+      },
     });
     res.headers.set("x-session-expires-at", expiresAt.toISOString());
     return res;

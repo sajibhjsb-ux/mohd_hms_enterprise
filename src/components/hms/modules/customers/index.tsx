@@ -27,6 +27,7 @@ import { useUi } from "@/lib/hms/ui-store";
 import { navigateTo, pageFromSeg } from "@/lib/hms/router";
 import { useToast } from "@/hooks/use-toast";
 import { PERMISSIONS } from "@/lib/hms/constants";
+import { customerLabel } from "@/lib/hms/format";
 import { useRealtimeEvent } from "@/lib/hms/realtime/hooks";
 import { MODULE_EVENTS } from "@/lib/hms/realtime/matrix";
 import { Building2, ClipboardList, KeyRound, Pencil, Plus, Receipt, Trash2, Users, Wifi } from "lucide-react";
@@ -103,7 +104,7 @@ function CustomersList() {
         title: res.data.softDeleted ? "Customer deactivated" : "Customer deleted",
         description: res.data.softDeleted
           ? "The customer has linked records, so it was set to INACTIVE instead of removed."
-          : `${deleteRow.companyName} removed.`,
+          : `${customerLabel(deleteRow)} removed.`,
       });
       setDeleteRow(null);
       load();
@@ -121,11 +122,11 @@ function CustomersList() {
   const columns: Column<CustomerRow>[] = [
     { key: "code", header: "Code", value: (r) => r.code, className: "font-mono text-xs whitespace-nowrap" },
     {
-      key: "companyName", header: "Company", value: (r) => r.companyName,
+      key: "companyName", header: "Company", value: (r) => customerLabel(r),
       render: (r) => (
         <div className="min-w-[160px]">
-          <div className="font-medium truncate">{r.companyName}</div>
-          <div className="text-xs text-muted-foreground truncate">{r.contactPerson}</div>
+          <div className="font-medium truncate">{customerLabel(r)}</div>
+          <div className="text-xs text-muted-foreground truncate">{r.companyName ? r.contactPerson : "—"}</div>
         </div>
       ),
     },
@@ -160,16 +161,16 @@ function CustomersList() {
       key: "actions", header: "", sortable: false,
       render: (r) => (
         <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openPage([r.id])} aria-label={`View ${r.companyName}`}>
+          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openPage([r.id])} aria-label={`View ${customerLabel(r)}`}>
             <Users className="h-4 w-4" />
           </Button>
           {canUpdate ? (
-            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openPage([r.id, "edit"])} aria-label={`Edit ${r.companyName}`}>
+            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openPage([r.id, "edit"])} aria-label={`Edit ${customerLabel(r)}`}>
               <Pencil className="h-4 w-4" />
             </Button>
           ) : null}
           {canDelete ? (
-            <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => setDeleteRow(r)} aria-label={`Delete ${r.companyName}`}>
+            <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => setDeleteRow(r)} aria-label={`Delete ${customerLabel(r)}`}>
               <Trash2 className="h-4 w-4" />
             </Button>
           ) : null}
@@ -240,7 +241,7 @@ function CustomersList() {
       <AlertDialog open={!!deleteRow} onOpenChange={(o) => !o && setDeleteRow(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete {deleteRow?.companyName}?</AlertDialogTitle>
+            <AlertDialogTitle>Delete {deleteRow ? customerLabel(deleteRow) : ""}?</AlertDialogTitle>
             <AlertDialogDescription>
               If this customer has equipment, complaints or invoices it will be deactivated (status INACTIVE) instead of removed, keeping history intact.
             </AlertDialogDescription>

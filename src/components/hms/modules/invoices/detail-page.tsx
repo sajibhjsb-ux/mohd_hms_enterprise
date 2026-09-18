@@ -17,7 +17,7 @@ import { StatusBadge, LoadingState, EmptyState, ErrorState } from "@/components/
 import { WorkflowTimeline } from "@/components/hms/shared/workflow-timeline";
 import { PdfButtons } from "@/components/hms/shared/pdf-buttons";
 import { PERMISSIONS } from "@/lib/hms/constants";
-import { fmtDate, money } from "@/lib/hms/format";
+import { customerLabel, fmtDate, money } from "@/lib/hms/format";
 import { useRealtimeEvent } from "@/lib/hms/realtime/hooks";
 import { INVOICE_DETAIL_EVENTS } from "@/lib/hms/realtime/matrix";
 import { Button } from "@/components/ui/button";
@@ -110,7 +110,7 @@ export function InvoiceDetailPage({ id }: { id: string }) {
           backHref="/invoices"
           crumbs={[{ label: "Invoices", href: "/invoices" }, { label: detail?.code ?? "Invoice" }]}
           title={detail ? `Invoice ${detail.code}` : "Invoice"}
-          description={detail?.customer ? `${detail.customer.companyName} · Issued ${fmtDate(detail.invoiceDate)}` : "Document preview, payments and workflow actions"}
+          description={detail?.customer ? `${customerLabel(detail.customer)} · Issued ${fmtDate(detail.invoiceDate)}` : "Document preview, payments and workflow actions"}
           actions={
             <div className="flex flex-wrap items-center gap-2">
               {detail ? <StatusBadge status={detail.status} /> : null}

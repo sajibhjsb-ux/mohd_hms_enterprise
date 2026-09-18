@@ -58,7 +58,8 @@ export const GET = withId(PERMISSIONS.customers_read, async (id, { user }) => {
 });
 
 const updateSchema = z.object({
-  companyName: z.string().min(1).max(200).optional(),
+  // Company name is OPTIONAL for customers — empty string clears it (spec §5/§27).
+  companyName: z.string().trim().max(200).optional(),
   contactPerson: z.string().min(1).max(120).optional(),
   email: z.string().email("Enter a valid email address.").max(200).optional(),
   phone: z.string().min(1).max(40).optional(),

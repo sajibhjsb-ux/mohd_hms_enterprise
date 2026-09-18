@@ -13,7 +13,7 @@ import { PriorityBadge, StatusBadge, LoadingState, EmptyState, ErrorState } from
 import { WorkflowTimeline } from "@/components/hms/shared/workflow-timeline";
 import { PdfButtons } from "@/components/hms/shared/pdf-buttons";
 import { PERMISSIONS, humanize } from "@/lib/hms/constants";
-import { money, fmtDate, fmtDateTime, toCents } from "@/lib/hms/format";
+import { customerLabel, money, fmtDate, fmtDateTime, toCents } from "@/lib/hms/format";
 import { useRealtimeEvent } from "@/lib/hms/realtime/hooks";
 import { WO_DETAIL_EVENTS } from "@/lib/hms/realtime/matrix";
 import { useToast } from "@/hooks/use-toast";
@@ -44,7 +44,7 @@ type WORow = {
   scheduledDate: string | null;
   totalCents: number;
   createdAt: string;
-  customer?: { id: string; companyName: string } | null;
+  customer?: { id: string; companyName: string; contactPerson?: string } | null;
   equipment?: { id: string; name: string; assetTag: string } | null;
   technician?: { id: string; user?: { id: string; name: string } | null } | null;
   complaint?: { id: string; code: string } | null;
@@ -267,7 +267,7 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
       backHref="/work-orders"
       crumbs={[{ label: "Work Orders", href: "/work-orders" }, { label: detail.code }]}
       title={detail.title}
-      description={`${detail.customer?.companyName ?? "—"}${detail.equipment ? ` · ${detail.equipment.name} (${detail.equipment.assetTag})` : ""} · Created ${fmtDateTime(detail.createdAt)}`}
+      description={`${customerLabel(detail.customer)}${detail.equipment ? ` · ${detail.equipment.name} (${detail.equipment.assetTag})` : ""} · Created ${fmtDateTime(detail.createdAt)}`}
       actions={
         <div className="flex flex-wrap items-center gap-2">
           <StatusBadge status={detail.status} />

@@ -5,7 +5,7 @@ import { Errors } from "@/lib/hms/api";
 import type { SessionUser } from "@/lib/hms/auth";
 
 export const COMPLAINT_INCLUDE = {
-  customer: { select: { id: true, companyName: true } },
+  customer: { select: { id: true, companyName: true, contactPerson: true } },
   equipment: { select: { id: true, name: true, assetTag: true } },
   assignedTechnician: { select: { id: true, user: { select: { id: true, name: true } } } },
 } satisfies Prisma.ComplaintInclude;

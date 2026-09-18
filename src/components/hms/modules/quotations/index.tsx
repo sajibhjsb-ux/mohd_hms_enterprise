@@ -15,7 +15,7 @@ import { api, qs, ClientApiError } from "@/lib/hms/api-client";
 import { useSession, hasPerm } from "@/components/hms/session";
 import { useUi } from "@/lib/hms/ui-store";
 import { navigateTo, pageFromSeg } from "@/lib/hms/router";
-import { money, fmtDate } from "@/lib/hms/format";
+import { customerLabel, money, fmtDate } from "@/lib/hms/format";
 import { useRealtimeEvent } from "@/lib/hms/realtime/hooks";
 import { MODULE_EVENTS } from "@/lib/hms/realtime/matrix";
 import { PERMISSIONS } from "@/lib/hms/constants";
@@ -74,7 +74,7 @@ function QuotationsList() {
 
   const columns: Column<QuotationRow>[] = [
     { key: "code", header: "Code", value: (r) => r.code, render: (r) => <span className="font-medium">{r.code}</span> },
-    { key: "customer", header: "Customer", value: (r) => r.customer?.companyName, className: "max-w-[180px] truncate" },
+    { key: "customer", header: "Customer", value: (r) => customerLabel(r.customer), className: "max-w-[180px] truncate" },
     { key: "quotationDate", header: "Date", value: (r) => r.quotationDate, render: (r) => fmtDate(r.quotationDate), hideOnMobile: true },
     { key: "validUntil", header: "Valid until", value: (r) => r.validUntil, render: (r) => fmtDate(r.validUntil), hideOnMobile: true },
     { key: "totalCents", header: "Total", value: (r) => r.totalCents, render: (r) => <span className="tabular-nums">{money(r.totalCents)}</span> },

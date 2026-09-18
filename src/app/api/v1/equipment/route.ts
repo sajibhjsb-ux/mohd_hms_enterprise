@@ -31,7 +31,7 @@ const EQUIPMENT_SELECT = {
   createdAt: true,
   customerId: true,
   location: { select: { id: true, name: true, code: true } },
-  customer: { select: { id: true, companyName: true, code: true } },
+  customer: { select: { id: true, companyName: true, code: true, contactPerson: true } },
   _count: { select: { complaints: true, workOrders: true, pmTasks: true } },
 } satisfies Prisma.EquipmentSelect;
 

@@ -13,7 +13,7 @@ import { db } from "@/lib/db";
 import { Errors } from "@/lib/hms/api";
 import { isStaff } from "@/lib/hms/rbac";
 import { PERMISSIONS, IRMS_PHOTO_CATEGORIES, IRMS_SIGNATURE_ROLES, humanize, type Permission } from "@/lib/hms/constants";
-import { fmtDate, fmtDateTime, money } from "@/lib/hms/format";
+import { fmtDate, fmtDateTime, money, customerLabel } from "@/lib/hms/format";
 import { PdfDoc, safeFilename, type DocHeaderInfo, type TableCol, type TableCell } from "./engine";
 import { canonicalPhotoOrder, readVariantFile } from "@/lib/hms/irms/storage";
 import type { Branding } from "./branding";
@@ -100,7 +100,7 @@ const workOrder: DocumentDef = {
           ["Work Order", wo.code],
           ["Status", humanize(wo.status)],
           ["Priority", humanize(wo.priority)],
-          ["Customer", wo.customer.companyName],
+          ["Customer", customerLabel(wo.customer)],
           ["Site / Address", [wo.customer.address, wo.customer.city].filter(Boolean).join(", ") || "—"],
           ["Contact", wo.customer.contactPerson ? `${wo.customer.contactPerson}${wo.customer.phone ? ` · ${wo.customer.phone}` : ""}` : wo.customer.phone || "—"],
           ["Equipment", wo.equipment ? `${wo.equipment.name} (${wo.equipment.assetTag})` : "—"],
@@ -208,7 +208,7 @@ const complaint: DocumentDef = {
           ["Complaint", c.code],
           ["Status", humanize(c.status)],
           ["Priority", humanize(c.priority)],
-          ["Customer", c.customer.companyName],
+          ["Customer", customerLabel(c.customer)],
           ["Contact", c.customer.contactPerson ? `${c.customer.contactPerson}${c.customer.phone ? ` · ${c.customer.phone}` : ""}` : c.customer.phone || "—"],
           ["Equipment", c.equipment ? `${c.equipment.name} (${c.equipment.assetTag})` : "—"],
           ["Assigned Technician", c.assignedTechnician ? `${c.assignedTechnician.user.name} (${c.assignedTechnician.employeeNo})` : "Unassigned"],
@@ -272,7 +272,7 @@ const inspectionReport: DocumentDef = {
     const r = await db.inspectionReport.findUnique({
       where: { id },
       include: {
-        project: { select: { id: true, code: true, name: true, siteLocation: true, customerId: true, customer: { select: { companyName: true } } } },
+        project: { select: { id: true, code: true, name: true, siteLocation: true, customerId: true, customer: { select: { companyName: true, contactPerson: true } } } },
         equipment: { select: { name: true, assetTag: true } },
         workOrder: { select: { code: true, title: true } },
         inspector: { select: { employeeNo: true, user: { select: { name: true } } } },
@@ -342,7 +342,7 @@ const inspectionReport: DocumentDef = {
           ["Site", r.project.siteLocation || "—"],
           ["Report", r.code],
           ["Project", `${r.project.code} — ${r.project.name}`],
-          ["Client", r.project.customer?.companyName ?? "—"],
+          ["Client", customerLabel(r.project.customer)],
           ["Equipment", r.equipment ? `${r.equipment.name} (${r.equipment.assetTag})` : "—"],
           ["Inspector", r.inspector ? `${r.inspector.user.name} (${r.inspector.employeeNo})` : "—"],
           ["Overall Condition", humanize(r.overallCondition)],
@@ -467,7 +467,7 @@ const quotation: DocumentDef = {
           ["Date", fmtDate(q.quotationDate)],
           ["Valid Until", fmtDate(q.validUntil)],
           ["Status", humanize(q.status)],
-          ["Customer", q.customer.companyName],
+          ["Customer", customerLabel(q.customer)],
           ["Attention", q.customer.contactPerson || "—"],
           ["Address", [q.customer.address, q.customer.city].filter(Boolean).join(", ") || "—"],
           ["Contact", [q.customer.email, q.customer.phone].filter(Boolean).join(" · ") || "—"],
@@ -537,7 +537,7 @@ const invoice: DocumentDef = {
           ["Invoice Date", fmtDate(inv.invoiceDate)],
           ["Due Date", fmtDate(inv.dueDate)],
           ["Status", humanize(inv.status)],
-          ["Bill To", inv.customer.companyName],
+          ["Bill To", customerLabel(inv.customer)],
           ["Attention", inv.customer.contactPerson || "—"],
           ["Address", [inv.customer.address, inv.customer.city].filter(Boolean).join(", ") || "—"],
           ["Contact", [inv.customer.email, inv.customer.phone].filter(Boolean).join(" · ") || "—"],
@@ -677,7 +677,7 @@ const equipmentReport: DocumentDef = {
       where: { id },
       include: {
         location: { select: { name: true, code: true } },
-        customer: { select: { code: true, companyName: true } },
+        customer: { select: { code: true, companyName: true, contactPerson: true } },
         pmPlans: { select: { code: true, name: true, frequency: true, nextDueDate: true, active: true } },
         workOrders: { orderBy: { createdAt: "desc" }, take: 8, select: { code: true, title: true, status: true, createdAt: true } },
         complaints: { orderBy: { createdAt: "desc" }, take: 8, select: { code: true, title: true, status: true, createdAt: true } },
@@ -706,7 +706,7 @@ const equipmentReport: DocumentDef = {
           ["Model", e.model || "—"],
           ["Serial Number", e.serialNumber || "—"],
           ["Location", e.location ? `${e.location.name} (${e.location.code})` : "—"],
-          ["Customer", e.customer?.companyName ?? "—"],
+          ["Customer", e.customer ? customerLabel(e.customer) : "—"],
           ["Installed", fmtDate(e.installationDate)],
           ["Warranty Expiry", fmtDate(e.warrantyExpiry)],
           ["PM Frequency", `${e.pmFrequencyDays} days`],
@@ -830,7 +830,7 @@ const paymentReceipt: DocumentDef = {
         invoice: {
           select: { code: true, customerId: true, invoiceDate: true, totalCents: true, paidCents: true, balanceCents: true, status: true, customer: { select: { companyName: true, contactPerson: true } } },
         },
-        customer: { select: { companyName: true } },
+        customer: { select: { companyName: true, contactPerson: true } },
       },
     });
     if (!p) throw Errors.notFound("Payment not found.");
@@ -861,7 +861,7 @@ const paymentReceipt: DocumentDef = {
           ["Date", fmtDate(p.paidAt)],
           ["Payment Method", humanize(p.method)],
           ["Reference", p.reference || "—"],
-          ["Received From", p.customer?.companyName ?? inv?.customer.companyName ?? "—"],
+          ["Received From", p.customer ? customerLabel(p.customer) : inv?.customer ? customerLabel(inv.customer) : "—"],
           ["Invoice", inv?.code ?? "—"],
           ["Invoice Status", inv ? humanize(inv.status) : "—"],
           ["Recorded By", recorder?.name ?? "—"],

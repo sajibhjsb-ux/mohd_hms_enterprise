@@ -23,7 +23,7 @@ import { DataTable, type Column } from "@/components/hms/shared/data-table";
 import { PageHeader, StatCard, StatusBadge, LoadingState, ErrorState, DrilldownChips } from "@/components/hms/shared/ui-bits";
 import { PERMISSIONS, humanize } from "@/lib/hms/constants";
 import { useModuleQuery } from "@/lib/hms/page-query";
-import { fmtDate } from "@/lib/hms/format";
+import { customerLabel, fmtDate } from "@/lib/hms/format";
 import { useRealtimeEvent } from "@/lib/hms/realtime/hooks";
 import { MODULE_EVENTS } from "@/lib/hms/realtime/matrix";
 import { Button } from "@/components/ui/button";
@@ -180,8 +180,8 @@ function EquipmentList() {
     },
     { key: "category", header: "Category", value: (r) => r.category, render: (r) => <span className="text-xs">{r.category.replace(/_/g, " ")}</span>, hideOnMobile: true },
     {
-      key: "customer", header: "Customer", value: (r) => r.customer?.companyName ?? "",
-      render: (r) => <span className="text-sm truncate block max-w-[160px]">{r.customer?.companyName ?? "—"}</span>,
+      key: "customer", header: "Customer", value: (r) => customerLabel(r.customer),
+      render: (r) => <span className="text-sm truncate block max-w-[160px]">{customerLabel(r.customer)}</span>,
     },
     {
       key: "location", header: "Location", value: (r) => r.location?.name ?? "",

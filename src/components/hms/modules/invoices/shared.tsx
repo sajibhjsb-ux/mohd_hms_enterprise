@@ -5,7 +5,7 @@
 // company-name loader and the printable DocumentPreview (incl. Paid /
 // Balance-due rows). Consumed by the list/new/detail/payment pages.
 
-import { fmtDate, money } from "@/lib/hms/format";
+import { customerLabel, fmtDate, money } from "@/lib/hms/format";
 import { Separator } from "@/components/ui/separator";
 import { humanize } from "@/lib/hms/constants";
 import { DocumentHeader, FALLBACK_IDENTITY, loadCompanyIdentity, type CompanyIdentity } from "@/components/hms/shared/document-header";
@@ -41,7 +41,7 @@ export type InvoiceDetail = InvoiceRow & {
 };
 
 export type InventoryLite = { id: string; sku: string; name: string; unit: string; unitCostCents: number };
-export type WoLite = { id: string; code: string; title: string; customer?: { companyName: string } | null };
+export type WoLite = { id: string; code: string; title: string; customer?: { companyName?: string; contactPerson?: string } | null };
 
 export type FormItem = {
   kind: string; itemId: string; description: string; quantity: string; unit: string;
@@ -81,8 +81,8 @@ export function DocumentPreview({ inv, company }: { inv: InvoiceDetail; company:
       />
       <div className="mb-4">
         <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Bill to</div>
-        <div className="font-medium">{inv.customer?.companyName}</div>
-        {inv.customer?.contactPerson ? <div className="text-xs text-muted-foreground">{inv.customer.contactPerson}</div> : null}
+        <div className="font-medium">{customerLabel(inv.customer)}</div>
+        {inv.customer?.companyName && inv.customer?.contactPerson ? <div className="text-xs text-muted-foreground">{inv.customer.contactPerson}</div> : null}
         {inv.customer?.email ? <div className="text-xs text-muted-foreground">{inv.customer.email}</div> : null}
         {inv.customer?.phone ? <div className="text-xs text-muted-foreground">{inv.customer.phone}</div> : null}
       </div>

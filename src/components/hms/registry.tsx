@@ -8,7 +8,7 @@ import type { Permission } from "@/lib/hms/constants";
 import {
   LayoutDashboard, Users, Building2, UserCog, HardHat, AlertTriangle, ClipboardList,
   Wrench, CalendarClock, Boxes, ShoppingCart, FileText, Receipt, Wallet, IdCard,
-  SearchCheck, BarChart3, Settings, History, Truck, QrCode,
+  SearchCheck, BarChart3, Settings, History, Truck, QrCode, CircleUserRound,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -20,6 +20,9 @@ export type ModuleDef = {
   roles?: string[];
   permissions?: Permission[];
   mobile?: boolean; // candidate for mobile bottom nav
+  /** Reachable page but hidden from floating/mobile navigation (e.g. profile,
+   *  which is entered from the header account menu). Routing still resolves. */
+  navHidden?: boolean;
   component: ComponentType;
 };
 
@@ -43,6 +46,7 @@ import { ReportsModule } from "./modules/reports";
 import { VehiclesModule } from "./modules/vehicles";
 import { SettingsModule } from "./modules/settings";
 import { AuditModule } from "./modules/audit";
+import { ProfileModule } from "./modules/profile";
 
 export const MODULES: ModuleDef[] = [
   { key: "dashboard", label: "Dashboard", icon: LayoutDashboard, component: DashboardModule, mobile: true },
@@ -65,4 +69,7 @@ export const MODULES: ModuleDef[] = [
   { key: "reports", label: "Reports", icon: BarChart3, permissions: ["reports.read"], component: ReportsModule, mobile: true },
   { key: "audit", label: "Audit Logs", shortLabel: "Audit", icon: History, roles: ["SUPER_ADMIN", "ADMIN"], permissions: ["audit.read"], component: AuditModule },
   { key: "settings", label: "Settings", icon: Settings, roles: ["SUPER_ADMIN", "ADMIN"], permissions: ["settings.read"], component: SettingsModule },
+  // Customer profile — entered from the header account menu (spec §34), not
+  // from the module nav. Views: /profile (view), /profile/edit, /profile/complete.
+  { key: "profile", label: "My Profile", shortLabel: "Profile", icon: CircleUserRound, roles: ["CUSTOMER"], navHidden: true, component: ProfileModule },
 ];

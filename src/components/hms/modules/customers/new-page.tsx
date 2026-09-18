@@ -17,6 +17,7 @@ import { useDraft } from "@/hooks/use-draft";
 import { PageShell } from "@/components/hms/shared/page-shell";
 import { EmptyState } from "@/components/hms/shared/ui-bits";
 import { PERMISSIONS } from "@/lib/hms/constants";
+import { customerLabel } from "@/lib/hms/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -31,6 +32,7 @@ type CustomerCreated = {
   id: string;
   code: string;
   companyName: string;
+  contactPerson?: string;
   portalUser: { id: string; email: string } | null;
 };
 
@@ -102,7 +104,7 @@ export function CustomerNewPage() {
       });
       toast({
         title: "Customer created",
-        description: `${res.data.companyName} (${res.data.code})${res.data.portalUser ? " — portal account ready" : ""}.`,
+        description: `${customerLabel(res.data)} (${res.data.code})${res.data.portalUser ? " — portal account ready" : ""}.`,
       });
       draft.reset(EMPTY_FORM);
       setPortalPassword("");
@@ -170,7 +172,7 @@ export function CustomerNewPage() {
         <CardContent>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="sm:col-span-2">
-              <Label htmlFor="cus-name">Company name *</Label>
+              <Label htmlFor="cus-name">Company name <span className="text-[11px] font-normal text-muted-foreground">(Optional)</span></Label>
               <Input id="cus-name" value={draft.value.companyName} onChange={(e) => draft.setValue({ companyName: e.target.value })} placeholder="e.g. Metro Tower Facilities" />
               <FieldError msg={fieldErrors.companyName} />
             </div>

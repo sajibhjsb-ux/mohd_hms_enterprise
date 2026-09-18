@@ -25,7 +25,7 @@ import { useSession, hasPerm } from "@/components/hms/session";
 import { navigateTo, pageFromSeg } from "@/lib/hms/router";
 import { useUi } from "@/lib/hms/ui-store";
 import { useToast } from "@/hooks/use-toast";
-import { money, fmtDate } from "@/lib/hms/format";
+import { customerLabel, money, fmtDate } from "@/lib/hms/format";
 import { useRealtimeEventDebounced } from "@/lib/hms/realtime/hooks";
 import { MODULE_EVENTS } from "@/lib/hms/realtime/matrix";
 import { PERMISSIONS } from "@/lib/hms/constants";
@@ -51,7 +51,7 @@ type Summary = {
 type ReceivableRow = {
   id: string; code: string; dueDate: string | null; status: string;
   totalCents: number; paidCents: number; balanceCents: number;
-  customer: { id: string; code: string; companyName: string };
+  customer: { id: string; code: string; companyName: string; contactPerson?: string };
 };
 
 type ExpenseRow = {
@@ -213,7 +213,7 @@ function FinanceList({ initialTab }: { initialTab?: string }) {
 
   const receivableColumns: Column<ReceivableRow>[] = [
     { key: "code", header: "Invoice", value: (r) => r.code, render: (r) => <span className="font-medium">{r.code}</span> },
-    { key: "customer", header: "Customer", value: (r) => r.customer?.companyName, className: "max-w-[200px] truncate" },
+    { key: "customer", header: "Customer", value: (r) => customerLabel(r.customer), className: "max-w-[200px] truncate" },
     { key: "dueDate", header: "Due", value: (r) => r.dueDate, render: (r) => fmtDate(r.dueDate) },
     { key: "totalCents", header: "Total", value: (r) => r.totalCents, render: (r) => <span className="tabular-nums">{money(r.totalCents)}</span>, hideOnMobile: true },
     { key: "balanceCents", header: "Balance", value: (r) => r.balanceCents, render: (r) => <span className="tabular-nums font-medium">{money(r.balanceCents)}</span> },

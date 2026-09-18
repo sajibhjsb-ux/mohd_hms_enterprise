@@ -23,7 +23,7 @@ import {
 } from "@/components/hms/shared/ui-bits";
 import { PERMISSIONS, PRIORITIES, humanize } from "@/lib/hms/constants";
 import { useModuleQuery } from "@/lib/hms/page-query";
-import { fmtDate } from "@/lib/hms/format";
+import { customerLabel, fmtDate } from "@/lib/hms/format";
 import { useRealtimeEvent } from "@/lib/hms/realtime/hooks";
 import { MODULE_EVENTS } from "@/lib/hms/realtime/matrix";
 import { Button } from "@/components/ui/button";
@@ -47,7 +47,7 @@ type ComplaintRow = {
   status: string;
   createdAt: string;
   customerId: string;
-  customer?: { id: string; companyName: string } | null;
+  customer?: { id: string; companyName: string; contactPerson?: string } | null;
   equipment?: { id: string; name: string; assetTag: string } | null;
   assignedTechnician?: { id: string; user?: { id: string; name: string } | null } | null;
 };
@@ -158,7 +158,7 @@ function ComplaintsList() {
     { key: "title", header: "Title", value: (r) => r.title, className: "max-w-[260px] truncate" },
     { key: "priority", header: "Priority", render: (r) => <PriorityBadge priority={r.priority} />, value: (r) => r.priority },
     { key: "status", header: "Status", render: (r) => <StatusBadge status={r.status} />, value: (r) => r.status },
-    { key: "customer", header: "Customer", value: (r) => r.customer?.companyName ?? "", hideOnMobile: true },
+    { key: "customer", header: "Customer", value: (r) => customerLabel(r.customer), hideOnMobile: true },
     { key: "technician", header: "Technician", value: (r) => r.assignedTechnician?.user?.name ?? "", render: (r) => r.assignedTechnician?.user?.name ?? "—", hideOnMobile: true },
     { key: "equipment", header: "Equipment", value: (r) => r.equipment?.name ?? "", render: (r) => (r.equipment ? `${r.equipment.name} (${r.equipment.assetTag})` : "—"), hideOnMobile: true },
     { key: "createdAt", header: "Created", value: (r) => r.createdAt, render: (r) => fmtDate(r.createdAt), hideOnMobile: true },

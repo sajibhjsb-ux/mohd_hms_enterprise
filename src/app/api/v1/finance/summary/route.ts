@@ -36,7 +36,7 @@ export const GET = handler(async ({ user }) => {
       where: { ...scope, status: { in: OPEN_INVOICE_STATUSES }, balanceCents: { gt: 0 } },
       orderBy: [{ dueDate: "asc" }, { createdAt: "desc" }],
       take: 20,
-      include: { customer: { select: { id: true, code: true, companyName: true } } },
+      include: { customer: { select: { id: true, code: true, companyName: true, contactPerson: true } } },
     }),
     db.expense.findMany({
       orderBy: { createdAt: "desc" },

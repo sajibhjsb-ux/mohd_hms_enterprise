@@ -35,7 +35,7 @@ async function loadScopedEquipment(id: string, user: SessionUser) {
     where: { id },
     include: {
       location: { select: { id: true, name: true, code: true } },
-      customer: { select: { id: true, companyName: true, code: true } },
+      customer: { select: { id: true, companyName: true, code: true, contactPerson: true } },
     },
   });
   if (!equipment) throw Errors.notFound("Equipment not found.");
@@ -131,7 +131,7 @@ export const PATCH = withId(PERMISSIONS.equipment_update, async (id, { req, user
     },
     include: {
       location: { select: { id: true, name: true, code: true } },
-      customer: { select: { id: true, companyName: true, code: true } },
+      customer: { select: { id: true, companyName: true, code: true, contactPerson: true } },
     },
   });
 
@@ -162,7 +162,7 @@ export const DELETE = withId(PERMISSIONS.equipment_delete, async (id, { req, use
     data: { status: "RETIRED" },
     include: {
       location: { select: { id: true, name: true, code: true } },
-      customer: { select: { id: true, companyName: true, code: true } },
+      customer: { select: { id: true, companyName: true, code: true, contactPerson: true } },
     },
   });
 

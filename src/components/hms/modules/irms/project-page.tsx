@@ -23,7 +23,7 @@ import { useDraft } from "@/hooks/use-draft";
 import { PageShell } from "@/components/hms/shared/page-shell";
 import { EmptyState, ErrorState, LoadingState } from "@/components/hms/shared/ui-bits";
 import { humanize, PERMISSIONS } from "@/lib/hms/constants";
-import { fmtDateTime, toDateInput } from "@/lib/hms/format";
+import { customerLabel, fmtDateTime, toDateInput } from "@/lib/hms/format";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -48,7 +48,7 @@ const emptyProjectForm = {
 };
 type ProjectFormValues = typeof emptyProjectForm;
 
-type CustomerOpt = { id: string; companyName: string };
+type CustomerOpt = { id: string; companyName: string; contactPerson?: string };
 
 type ProjectApiResponse = {
   id: string;
@@ -99,7 +99,7 @@ function ProjectFields({
           <SelectContent>
             <SelectItem value="NONE">Internal / No customer</SelectItem>
             {(customers ?? []).map((c) => (
-              <SelectItem key={c.id} value={c.id}>{c.companyName}</SelectItem>
+              <SelectItem key={c.id} value={c.id}>{customerLabel(c)}</SelectItem>
             ))}
           </SelectContent>
         </Select>
