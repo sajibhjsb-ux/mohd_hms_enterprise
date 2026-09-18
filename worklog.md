@@ -292,3 +292,22 @@ Stage Summary:
 - One authoritative navigation config (MODULES registry) drives desktop floating nav, More menu, mobile bottom nav and search module list. RBAC filtering identical across all.
 - All header/nav interactions preserved: notifications (live badge, mark read, complaint deep-open), profile (theme/Change password/About/Sign out — all roles reach password change), QR (existing deep-link reuse), search (real APIs only).
 - No business logic, API, schema, auth or RBAC changes. Test artifacts cleaned (Guard verification entry draft discarded).
+
+---
+Task ID: 11
+Agent: Z.ai Code (main)
+Task: Floating menu redesign — match reference screenshot: same pill size, scrollable + slidable strip (replaces "More" dropdown overflow)
+
+Work Log:
+- Read reference screenshot (upload/pasted_image_1789689139273.png): pill nav with horizontal items + circular ">" edge arrow overlapping a partially visible last item.
+- Rewrote `src/components/hms/shell/floating-nav.tsx`: kept exact pill size (h-16 / max-w-[1500px] / rounded-3xl / glass blur / shadow); removed measurement-based "More" DropdownMenu overflow; items now live in one `overflow-x-auto no-scrollbar` strip.
+- Added interactions: drag-to-slide with mouse (pointer events, 6px threshold, pointer capture on drag start, click suppressed after real drag via onClickCapture), wheel-to-slide (native non-passive wheel listener, skips at edges so page scroll unaffected), circular ChevronLeft/ChevronRight edge buttons (h-9 w-9 rounded-full bg-background shadow, absolute at strip edges, only visible when scrollable in that direction), active-module auto-scroll-into-view (manual scrollLeft math, no page jump), scroll-state tracking via onScroll + ResizeObserver + document.fonts.ready.
+- Touch untouched: native momentum scrolling (drag handlers skip pointerType=touch).
+- Added `.no-scrollbar` utility to `src/app/globals.css`.
+- Browser-verified (agent-browser, admin@mohdhms.com): T1 right-arrow click scrolls (0→615) ✓; T2 left-arrow returns (→0) and arrows toggle correctly ✓; T3 drag slides 1:1 (300px) ✓; T4 nav item click activates module + auto-scroll nudges active item into view ✓; T5 click after drag suppressed (no module misfire, scrollLeft 277→197 exact) ✓; T6 wheel over strip slides (+240→437; CLI `mouse wheel` dispatches at 0,0 so tested via targeted WheelEvent) ✓; T7 strip end: right arrow hides, left arrow shows ✓; T8 responsive: lg(1024) shows scrollable nav, 375px hides floating nav + shows bottom nav + no horizontal overflow ✓; T9 zero console/page errors ✓; T10 final 1920px screenshot visually matches reference ✓.
+- Note: mid-testing agent-browser real clicks silently stopped dispatching events (even document-capture saw nothing); fixed by restarting the browser session — app code was not the cause.
+
+Stage Summary:
+- Floating nav now matches the reference: same size pill, single scrollable row, drag/wheel/arrow sliding, no "More" dropdown.
+- Files changed: `src/components/hms/shell/floating-nav.tsx` (rewritten), `src/app/globals.css` (+.no-scrollbar).
+- lint clean, dev.log clean, all 10 browser tests PASS.

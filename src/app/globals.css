@@ -137,6 +137,15 @@
   background: oklch(0.6 0.12 153);
 }
 
+/* Hide scrollbar while keeping scroll functionality (floating nav strip) */
+.no-scrollbar {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* legacy Edge */
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none; /* Chrome/Safari */
+}
+
 @media print {
   .no-print { display: none !important; }
   body { background: white !important; }
