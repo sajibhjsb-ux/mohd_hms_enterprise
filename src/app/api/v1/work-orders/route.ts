@@ -6,6 +6,8 @@ import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { handler, ok, okList, parseBody, listQuery, pagedMeta, Errors } from "@/lib/hms/api";
 import { audit, nextNumber, notify } from "@/lib/hms/services";
+import { emit } from "@/lib/hms/workflows/bus";
+import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 import { PERMISSIONS, PRIORITIES } from "@/lib/hms/constants";
 import { WO_INCLUDE, WO_DETAIL_INCLUDE } from "./_lib";
 
@@ -148,6 +150,8 @@ export const POST = handler(
         type: "INFO", resourceType: "WORK_ORDER", resourceId: created.id,
       });
     }
+    // Realtime (STEP 13/39): technician + staff + customer see the new WO live.
+    await emit({ type: EVENT_TYPES.WORK_ORDER_CREATED, resourceType: "WORK_ORDER", resourceId: created.id, payload: { code, workOrderId: created.id, customerId: body.customerId }, actorType: "USER", actorId: user.id });
 
     return ok(created, 201);
   },

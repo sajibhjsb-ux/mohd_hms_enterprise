@@ -5,7 +5,7 @@
 // no separate application. All KPIs come from real engine data (outbox + runs).
 
 import { useCallback, useEffect, useState } from "react";
-import { Activity, Bot, RefreshCw, Save, Settings2 } from "lucide-react";
+import { Activity, Bot, RadioTower, RefreshCw, Save, Settings2 } from "lucide-react";
 import { api } from "@/lib/hms/api-client";
 import { PERMISSIONS } from "@/lib/hms/constants";
 import { hasPerm, useSession } from "@/components/hms/session";
@@ -55,6 +55,26 @@ function when(iso: string | null | undefined): string {
   return new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
+function whenMs(ms: number | null | undefined): string {
+  if (!ms) return "—";
+  return new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+
+type RealtimeHealth = {
+  service: {
+    connectedClients: number;
+    byRole: Record<string, number>;
+    presence: { userId: string; name: string; role: string; sockets: number; since: number }[];
+    eventsBroadcast: number;
+    lastEventAt: string | null;
+    lastEvent: string;
+    startedAt: string;
+    uptimeS: number;
+  } | null;
+  dispatcher: { lastDispatchAt: number; lastBroadcastAt: number; lastError: string; dispatching: boolean; serviceUrl: string };
+  outbox: { pendingEvents: number; broadcastPending: number };
+};
+
 export function AutomationTab() {
   const { user } = useSession();
   const { toast } = useToast();
@@ -85,6 +105,23 @@ export function AutomationTab() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Realtime health visibility (STEP 49): SUPER_ADMIN-only live diagnostics —
+  // connected sockets, presence, broadcast stats, dispatcher/outbox status.
+  const [rt, setRt] = useState<RealtimeHealth | null>(null);
+  useEffect(() => {
+    if (!isSuper) return;
+    let alive = true;
+    const loadRt = async () => {
+      try {
+        const res = await api.get<RealtimeHealth>("/api/v1/realtime/health");
+        if (alive) setRt(res.data);
+      } catch { /* diagnostics are best-effort */ }
+    };
+    void loadRt();
+    const t = setInterval(loadRt, 10_000);
+    return () => { alive = false; clearInterval(t); };
+  }, [isSuper]);
 
   const dirty = data ? Object.entries(draft).filter(([k, v]) => (data.settings[k] ?? "") !== v) : [];
 
@@ -136,6 +173,55 @@ export function AutomationTab() {
           </Card>
         ))}
       </div>
+
+      {/* Realtime health (STEP 49) — SUPER_ADMIN only */}
+      {isSuper ? (
+        <Card data-testid="realtime-health">
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <RadioTower className="h-4 w-4 text-primary" /> Realtime system
+            </CardTitle>
+            <CardDescription>
+              WebSocket transport, live presence and event dispatch — technical diagnostics are limited to Super Admin.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              {[
+                { label: "Connected clients", value: rt?.service?.connectedClients ?? 0 },
+                { label: "Events broadcast", value: rt?.service?.eventsBroadcast ?? 0 },
+                { label: "Outbox pending (workflow)", value: rt?.outbox.pendingEvents ?? data.events.pending },
+                { label: "Awaiting broadcast", value: rt?.outbox.broadcastPending ?? 0 },
+              ].map((c) => (
+                <div key={c.label} className="rounded-lg border bg-muted/30 px-3 py-2">
+                  <p className="text-xs text-muted-foreground">{c.label}</p>
+                  <p className="text-xl font-semibold tabular-nums">{c.value}</p>
+                </div>
+              ))}
+            </div>
+            <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
+              <div>
+                Service:{" "}
+                {rt?.service ? (
+                  <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">
+                    online · uptime {Math.round((rt.service.uptimeS ?? 0) / 60)}m
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">unreachable</Badge>
+                )}
+              </div>
+              <div>Last broadcast: {rt?.service?.lastEventAt ? `${rt.service.lastEvent} · ${when(rt.service.lastEventAt)}` : "—"}</div>
+              <div>Dispatcher tick: {whenMs(rt?.dispatcher.lastDispatchAt ?? null)}{rt?.dispatcher.lastError ? ` · error: ${rt.dispatcher.lastError}` : ""}</div>
+              <div>
+                Online now:{" "}
+                {rt?.service?.presence?.length
+                  ? rt.service.presence.map((p) => `${p.name} (${p.role.replace("_", " ").toLowerCase()})`).join(", ")
+                  : "—"}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
 
       {/* Automations status (§63) */}
       <Card>

@@ -26,6 +26,8 @@ import { hasPerm, useSession } from "@/components/hms/session";
 import { useUi } from "@/lib/hms/ui-store";
 import { navigateTo, pageFromSeg } from "@/lib/hms/router";
 import { fmtDate, money } from "@/lib/hms/format";
+import { useRealtimeEvent } from "@/lib/hms/realtime/hooks";
+import { MODULE_EVENTS } from "@/lib/hms/realtime/matrix";
 import { PERMISSIONS, type Permission } from "@/lib/hms/constants";
 import { Button } from "@/components/ui/button";
 import { Plus, ShoppingCart, ClipboardCheck, Hourglass } from "lucide-react";
@@ -97,6 +99,9 @@ function PurchasesList() {
     loadPos();
     // Supplier/inventory reference pickers now load on the dedicated new-PO page.
   }, [loadPos]);
+
+  // Realtime (STEP 15): purchase updates refresh the list live.
+  useRealtimeEvent(MODULE_EVENTS.purchases, () => { void loadPos(); });
 
   // ── list columns ──
 

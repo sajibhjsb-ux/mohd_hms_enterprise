@@ -19,6 +19,8 @@ import {
 } from "lucide-react";
 import { api, qs } from "@/lib/hms/api-client";
 import { fmtDate } from "@/lib/hms/format";
+import { useRealtimeEvent } from "@/lib/hms/realtime/hooks";
+import { MODULE_EVENTS } from "@/lib/hms/realtime/matrix";
 import { humanize, PERMISSIONS } from "@/lib/hms/constants";
 import { hasPerm, useSession } from "@/components/hms/session";
 import { useUi } from "@/lib/hms/ui-store";
@@ -131,6 +133,9 @@ function IrmsList() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Realtime (STEP 16): IRMS project/report changes refresh the view live.
+  useRealtimeEvent(MODULE_EVENTS.irms, () => { void load(); });
 
   // ── Project delete (branch messages preserved; window.confirm → AlertDialog) ──
   const deleteProject = async (p: IrmsProject) => {

@@ -10,6 +10,8 @@ import { PERMISSIONS, type Permission } from "@/lib/hms/constants";
 import type { SessionUser } from "@/lib/hms/auth";
 import { hashPassword, validatePasswordStrength } from "@/lib/hms/auth";
 import { audit, notify, nextNumber } from "@/lib/hms/services";
+import { emit } from "@/lib/hms/workflows/bus";
+import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 import { clientIp } from "@/lib/hms/rate-limit";
 
 /**
@@ -168,6 +170,8 @@ export const PATCH = withId(PERMISSIONS.users_update, async (id, { req, user }) 
     });
   }
 
+  // Realtime (STEP 11/18): role/status changes propagate (navigation/access hints).
+  await emit({ type: EVENT_TYPES.USER_UPDATED, resourceType: "USER", resourceId: id, payload: { fields: Object.keys(body).filter((k) => k !== "action") }, actorType: "USER", actorId: user.id });
   return ok(fresh ?? updated);
 });
 

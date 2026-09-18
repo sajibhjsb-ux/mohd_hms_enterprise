@@ -19,6 +19,8 @@ import {
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api, qs } from "@/lib/hms/api-client";
 import { fmtDate, toDateInput } from "@/lib/hms/format";
+import { useRealtimeEvent } from "@/lib/hms/realtime/hooks";
+import { MODULE_EVENTS } from "@/lib/hms/realtime/matrix";
 import { PERMISSIONS } from "@/lib/hms/constants";
 import { hasPerm, useSession } from "@/components/hms/session";
 import { useUi } from "@/lib/hms/ui-store";
@@ -189,6 +191,9 @@ function HrList() {
   useEffect(() => {
     loadLeaves();
   }, [loadLeaves]);
+
+  // Realtime: leave approvals / employee changes refresh HR views live.
+  useRealtimeEvent(MODULE_EVENTS.hr, () => { void loadLeaves(); void loadOverview(); });
 
   const chartData = useMemo(() => {
     if (!overview) return [];

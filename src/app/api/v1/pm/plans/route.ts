@@ -4,6 +4,8 @@ import { db } from "@/lib/db";
 import { handler, ok, okList, parseBody, listQuery, pagedMeta, Errors } from "@/lib/hms/api";
 import { PERMISSIONS, FREQUENCY_DAYS, PM_FREQUENCIES } from "@/lib/hms/constants";
 import { audit, nextNumber } from "@/lib/hms/services";
+import { emit } from "@/lib/hms/workflows/bus";
+import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 
 const planInclude = {
   equipment: { select: { id: true, name: true, assetTag: true } },
@@ -102,6 +104,8 @@ export const POST = handler(
       metadata: { code, name: plan.name, frequency: plan.frequency },
     });
 
+    // Realtime: PM views update live.
+    await emit({ type: EVENT_TYPES.PM_PLAN_UPDATED, resourceType: "PmPlan", resourceId: plan.id, payload: { code, action: "CREATED" }, actorType: "USER", actorId: user.id });
     return ok(plan, 201);
   },
   { permission: PERMISSIONS.pm_manage }

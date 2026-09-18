@@ -10,6 +10,7 @@ import { audit, nextNumber, notify, notifyRole } from "@/lib/hms/services";
 import { FREQUENCY_DAYS } from "@/lib/hms/constants";
 import { formatCurrency } from "@/lib/hms/format";
 import { isAutomationEnabled, automationNumber } from "./settings";
+import { emit } from "./bus";
 import { EVENT_TYPES, type EventType } from "./types";
 import { registerWorkflow, type WorkflowResult } from "./engine";
 
@@ -91,6 +92,8 @@ registerWorkflow(EVENT_TYPES.COMPLAINT_CONFIRMED, "AUTO_CREATE_DRAFT_INVOICE", a
     notifyRole("FINANCE", { title: "Draft invoice ready for review", message: `Draft invoice ${invoice.code} was generated automatically from confirmed complaint ${complaint.code} (${formatCurrency(subtotalCents / 100)}).`, type: "INFO", resourceType: "INVOICE", resourceId: invoice.id }),
     notifyRole("ADMIN", { title: "Draft invoice generated", message: `Complaint ${complaint.code} confirmed → draft invoice ${invoice.code} created automatically.`, type: "INFO", resourceType: "INVOICE", resourceId: invoice.id }),
   ]);
+  // Realtime (STEP 14): finance sees the automation-generated invoice live.
+  await emit({ type: EVENT_TYPES.INVOICE_CREATED, resourceType: "INVOICE", resourceId: invoice.id, payload: { code: invoice.code, totalCents: subtotalCents, customerId: complaint.customerId }, actorType: "SYSTEM" });
   return { result: "SUCCESS", detail: `created draft invoice ${invoice.code}` };
 });
 
@@ -154,6 +157,8 @@ registerWorkflow(EVENT_TYPES.WORK_ORDER_COMPLETED, "AUTO_CREATE_DRAFT_INVOICE_WO
     });
   }
   await notifyRole("FINANCE", { title: "Draft invoice ready for review", message: `Draft invoice ${invoice.code} was generated automatically from completed work order ${wo.code}.`, type: "INFO", resourceType: "INVOICE", resourceId: invoice.id });
+  // Realtime (STEP 14): finance sees the automation-generated invoice live.
+  await emit({ type: EVENT_TYPES.INVOICE_CREATED, resourceType: "INVOICE", resourceId: invoice.id, payload: { code: invoice.code, totalCents: wo.totalCents, customerId: wo.customerId }, actorType: "SYSTEM" });
   return { result: "SUCCESS", detail: `created draft invoice ${invoice.code}` };
 });
 
@@ -200,6 +205,8 @@ async function autoCreateWorkOrder(ctx: { resourceId: string; eventType: string 
   if (complaint.assignedTechnician?.userId) {
     await notify({ userId: complaint.assignedTechnician.userId, title: "Work order created", message: `Work order ${wo.code} for complaint ${complaint.code} is pending your acceptance.`, type: "INFO", resourceType: "WORK_ORDER", resourceId: wo.id });
   }
+  // Realtime (STEP 13/40): the auto-created work order reaches technician + staff + customer live.
+  await emit({ type: EVENT_TYPES.WORK_ORDER_CREATED, resourceType: "WORK_ORDER", resourceId: wo.id, payload: { code: wo.code, workOrderId: wo.id, customerId: complaint.customerId }, actorType: "SYSTEM" });
   return { result: "SUCCESS", detail: `created work order ${wo.code}` };
 }
 registerWorkflow(EVENT_TYPES.COMPLAINT_ACCEPTED, "AUTO_CREATE_WORK_ORDER", (ctx) => autoCreateWorkOrder(ctx));

@@ -32,6 +32,8 @@ import { useUi } from "@/lib/hms/ui-store";
 import { navigateTo, pageFromSeg } from "@/lib/hms/router";
 import { useToast } from "@/hooks/use-toast";
 import { fmtDateTime, money } from "@/lib/hms/format";
+import { useRealtimeEvent } from "@/lib/hms/realtime/hooks";
+import { MODULE_EVENTS } from "@/lib/hms/realtime/matrix";
 import { PERMISSIONS, humanize, type Permission } from "@/lib/hms/constants";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -210,6 +212,9 @@ function InventoryList() {
     // Suppliers load lazily when the Suppliers tab opens — the item/supplier
     // forms are dedicated pages now and fetch their own pickers.
   }, [loadItems]);
+
+  // Realtime (STEP 15): stock changes / low stock refresh the list live.
+  useRealtimeEvent(MODULE_EVENTS.inventory, () => { void loadItems(); });
 
   function onTabChange(value: string) {
     setTab(value);

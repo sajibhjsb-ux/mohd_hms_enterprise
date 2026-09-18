@@ -783,3 +783,28 @@ Stage Summary:
 - Centralized PDF system live: 1 registry, 1 thin endpoint, 1 engine, 9 document types, real verified downloads from every relevant module; BND-correct, RBAC/tenant-safe, validated, logged, A4 professional layout with repeated table headers
 - UniPDF decision + remaining issues documented honestly in docs/PDF-SYSTEM-REPORT.md (FINAL STATUS: PASS)
 - Files: +src/lib/hms/pdf/{engine,branding,documents}.ts, +src/app/api/v1/pdf/[type]/[id]/route.ts, +src/lib/hms/pdf-client.ts, +src/components/hms/shared/pdf-buttons.tsx, +docs/PDF-SYSTEM-REPORT.md; modified 8 module pages
+
+---
+Task ID: 15
+Agent: Z.ai Code (main)
+Task: 53-section FULL REALTIME UPDATE SYSTEM — root-cause fix + enterprise realtime architecture (outbox → dispatcher → socket.io → browser)
+
+Work Log:
+- STEP 1 AUDIT: no transport/subscription/presence/cache-invalidation existed. The project ALREADY had a transactional outbox (DomainEvent) + workflow engine (exactly-once, retry, dead-letter) + scheduler — the chain stopped at the outbox; nothing reached browsers. Root cause: realtime delivery layer never existed (not a broken webhook/WS).
+- Prisma: added DomainEvent.broadcastAt (+index) → db:push OK.
+- EVENT_TYPES extended (NOTIFICATION_CREATED, *_CREATED/UPDATED for WO/invoice/quotation/purchase/inventory/equipment/customer/user/HR/PM/IRMS/vehicle).
+- New src/lib/hms/realtime/dispatcher.ts: resolveRooms() audience matrix (role-scoped rooms: mgmt/finance/hr/staffAll/user/customer; fail-closed default) + dispatchPendingEvents() (broadcastAt CAS claim, 10-min window, retry-on-failure) + kickRealtimeDispatch(). Wired into bus.emit() (tx + non-tx) and scheduler 2s tick.
+- services.notify() now emits NOTIFICATION_CREATED (badge/panel/toast realtime, STEP 17).
+- Emit sites added across ~18 mutation routes (complaints edit, WO create/update, invoices create/update, quotations, purchases, inventory movement/adjust, equipment, customers, users, hr leave, pm plans/tasks, irms projects/reports, automation-generated WO/invoice handlers).
+- New mini-services/realtime-service (bun --hot, port 3003 WS + loopback 3004 internal API): socket.io path "/", handshake auth via app session endpoint (hms_session cookie forwarded), rooms joined ONLY from verified session, /internal/publish (secret + room allow-list + event-id dedupe), /internal/health, presence map + broadcast, realtime:sync→resync.
+- New API routes: /api/v1/realtime/health (SUPER_ADMIN-only; service + dispatcher + outbox stats), /api/v1/realtime/presence (staff).
+- Frontend: realtime bus (pub/sub) + socket singleton (withCredentials, ws→polling, capped exponential backoff, state machine, event-id dedupe, resync-on-connect) + useRealtimeEvent/useRealtimeEventDebounced/useRealtimeResync hooks (pageDirty guard = STEP 36 form safety) + RealtimeProvider in shell.
+- Header: Live/Reconnecting indicator (non-blocking pill) + realtime notification badge & toast subscription.
+- Module wiring via realtime matrix: dashboard (debounced KPI refetch), complaints list+detail, work-orders list+detail, invoices list+detail, quotations, purchases, inventory, equipment, pm, irms, customers, users, employees, hr, finance, vehicles — targeted event subscriptions only.
+- Settings → Automation: SUPER_ADMIN "Realtime system" card (clients, presence, broadcasts, dispatcher/outbox status).
+- RBAC FIX during testing: original coarse `staff` room leaked COMPLAINT_CREATED to technicians → replaced with role rooms (ADMIN/SUPER_ADMIN/SUPERVISOR); retested clean.
+- Browser proof (agent-browser, 3 parallel sessions through Caddy gateway): customer portal UI created CPT-2026-0017 → admin complaints list showed it WITHOUT refresh; ADMIN badge 55→56 live; dashboard Open Complaints 12→13 live; tech accept (API) → ops detail flipped to In Progress + auto WO-2026-0006 appeared live; anonymous socket rejected; Customer B + unassigned technician sockets received nothing; duplicate publish deduped; service kill → Reconnecting… → restart → Live → events flow; app restart → all 3 sessions auto-reconnected; mobile 375px list updated live, no horizontal overflow; lint clean.
+
+Stage Summary:
+- Full realtime chain proven in real browsers: API mutation → DomainEvent outbox (authoritative) → dispatcher (server-side audience) → realtime service → authorized sockets → targeted UI updates. No reloads/polling/fake counters; PostgreSQL(-equivalent) remains the only source of truth; service keeps no business state.
+- Files: prisma/schema.prisma; src/lib/hms/{realtime/{dispatcher.ts,bus.ts,socket.ts,hooks.ts,matrix.ts},services.ts,workflows/{bus.ts,scheduler.ts,handlers.ts,types.ts}}; ~18 API route emit sites; api/v1/realtime/{health,presence}; shell.tsx; shell/header.tsx; modules wired (dashboard, complaints×2, work-orders×2, invoices×2, quotations, purchases, inventory, equipment, pm, irms, customers, users, employees, hr, finance, vehicles); settings/automation-tab.tsx; mini-services/realtime-service/*; scripts/rt-test.ts.

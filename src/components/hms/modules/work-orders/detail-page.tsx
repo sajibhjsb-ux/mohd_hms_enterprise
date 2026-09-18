@@ -14,6 +14,8 @@ import { WorkflowTimeline } from "@/components/hms/shared/workflow-timeline";
 import { PdfButtons } from "@/components/hms/shared/pdf-buttons";
 import { PERMISSIONS, humanize } from "@/lib/hms/constants";
 import { money, fmtDate, fmtDateTime, toCents } from "@/lib/hms/format";
+import { useRealtimeEvent } from "@/lib/hms/realtime/hooks";
+import { WO_DETAIL_EVENTS } from "@/lib/hms/realtime/matrix";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -109,6 +111,12 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
   }, [id]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Realtime: this work order's updates (assignment, checklist, status by any
+  // authorized user) refresh the detail view live.
+  useRealtimeEvent(WO_DETAIL_EVENTS, (ev) => {
+    if (!ev.aggregate_id || ev.aggregate_id === id) void load();
+  });
 
   const refreshDetail = useCallback(async () => {
     try {

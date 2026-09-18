@@ -12,6 +12,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Plus, Truck, Wrench, CircleParking, Gauge } from "lucide-react";
 import { api } from "@/lib/hms/api-client";
 import { fmtDate } from "@/lib/hms/format";
+import { useRealtimeEvent } from "@/lib/hms/realtime/hooks";
+import { MODULE_EVENTS } from "@/lib/hms/realtime/matrix";
 import { humanize, PERMISSIONS } from "@/lib/hms/constants";
 import { hasPerm, useSession } from "@/components/hms/session";
 import { useUi } from "@/lib/hms/ui-store";
@@ -86,6 +88,9 @@ function VehiclesList() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Realtime: vehicle changes refresh the list live.
+  useRealtimeEvent(MODULE_EVENTS.vehicles, () => { void load(); });
 
   const stats = useMemo(
     () => ({

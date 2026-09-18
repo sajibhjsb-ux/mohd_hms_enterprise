@@ -10,6 +10,8 @@ import { PERMISSIONS, type Permission } from "@/lib/hms/constants";
 import { isStaff } from "@/lib/hms/rbac";
 import type { SessionUser } from "@/lib/hms/auth";
 import { audit } from "@/lib/hms/services";
+import { emit } from "@/lib/hms/workflows/bus";
+import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 import { clientIp } from "@/lib/hms/rate-limit";
 
 /**
@@ -143,6 +145,8 @@ export const PATCH = withId(PERMISSIONS.equipment_update, async (id, { req, user
     ip,
   });
 
+  // Realtime (STEP 10): equipment edits propagate live.
+  await emit({ type: EVENT_TYPES.EQUIPMENT_UPDATED, resourceType: "EQUIPMENT", resourceId: id, payload: { assetTag: existing.assetTag, fields: Object.keys(body) }, actorType: "USER", actorId: user.id });
   return ok(equipment);
 });
 

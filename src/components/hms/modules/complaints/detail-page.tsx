@@ -15,6 +15,8 @@ import { WorkflowTimeline } from "@/components/hms/shared/workflow-timeline";
 import { PdfButtons } from "@/components/hms/shared/pdf-buttons";
 import { PERMISSIONS, humanize } from "@/lib/hms/constants";
 import { fmtDateTime } from "@/lib/hms/format";
+import { useRealtimeEvent } from "@/lib/hms/realtime/hooks";
+import { COMPLAINT_DETAIL_EVENTS } from "@/lib/hms/realtime/matrix";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -85,6 +87,12 @@ export function ComplaintDetailPage({ id }: { id: string }) {
   }, [id]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Realtime: this complaint's status changes (by any authorized user) refresh
+  // the detail view live — the timeline stays current without a refresh.
+  useRealtimeEvent(COMPLAINT_DETAIL_EVENTS, (ev) => {
+    if (!ev.aggregate_id || ev.aggregate_id === id) void load();
+  });
 
   const runTransition = useCallback(async (action: string, extra?: Record<string, unknown>) => {
     if (!detail) return;

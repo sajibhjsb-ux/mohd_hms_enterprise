@@ -5,6 +5,8 @@ import { db } from "@/lib/db";
 import { handler, ok, parseBody, Errors } from "@/lib/hms/api";
 import { roleCan } from "@/lib/hms/rbac";
 import { audit } from "@/lib/hms/services";
+import { emit } from "@/lib/hms/workflows/bus";
+import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 import { PERMISSIONS, PRIORITIES } from "@/lib/hms/constants";
 import type { SessionUser } from "@/lib/hms/auth";
 import { COMPLAINT_DETAIL_INCLUDE, assertViewComplaint, technicianProfileIdFor } from "../_lib";
@@ -92,6 +94,8 @@ export const PATCH = withId(
       resourceType: "COMPLAINT", resourceId: id,
       metadata: { code: complaint.code, fields: Object.keys(body) },
     });
+    // Realtime (STEP 10/11): editors + staff portals see complaint edits live.
+    await emit({ type: EVENT_TYPES.COMPLAINT_UPDATED, resourceType: "COMPLAINT", resourceId: id, payload: { code: complaint.code, fields: Object.keys(body) }, actorType: "USER", actorId: user.id });
     return ok(updated);
   },
   { permission: PERMISSIONS.complaints_read }

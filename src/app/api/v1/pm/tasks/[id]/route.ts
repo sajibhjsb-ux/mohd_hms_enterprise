@@ -5,6 +5,8 @@ import { handler, ok, parseBody, Errors } from "@/lib/hms/api";
 import type { SessionUser } from "@/lib/hms/auth";
 import { PERMISSIONS } from "@/lib/hms/constants";
 import { audit } from "@/lib/hms/services";
+import { emit } from "@/lib/hms/workflows/bus";
+import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 
 function withId(fn: (id: string, ctx: { req: NextRequest; user: SessionUser }) => Promise<NextResponse>, permission?: (typeof PERMISSIONS)[keyof typeof PERMISSIONS]) {
   return async (req: NextRequest, ctx: { params: Promise<{ id: string }> }) => {
@@ -87,6 +89,8 @@ export const PATCH = withId(
       metadata: { code: task.code, fields: Object.keys(body) },
     });
 
+    // Realtime: PM views update live.
+    await emit({ type: EVENT_TYPES.PM_TASK_UPDATED, resourceType: "PmTask", resourceId: id, payload: { code: task.code, fields: Object.keys(body) }, actorType: "USER", actorId: user.id });
     return ok(updated);
   },
   PERMISSIONS.pm_manage

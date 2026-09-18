@@ -17,6 +17,8 @@ import {
 } from "lucide-react";
 import { api, qs } from "@/lib/hms/api-client";
 import { fmtDate } from "@/lib/hms/format";
+import { useRealtimeEvent } from "@/lib/hms/realtime/hooks";
+import { MODULE_EVENTS } from "@/lib/hms/realtime/matrix";
 import { PERMISSIONS, humanize } from "@/lib/hms/constants";
 import { PdfButtons } from "@/components/hms/shared/pdf-buttons";
 import { hasPerm, useSession } from "@/components/hms/session";
@@ -156,6 +158,9 @@ function PmList() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Realtime: PM plan/task changes refresh the view live.
+  useRealtimeEvent(MODULE_EVENTS.pm, () => { void load(); });
 
   // ── Stats ──
   const stats = useMemo(() => {

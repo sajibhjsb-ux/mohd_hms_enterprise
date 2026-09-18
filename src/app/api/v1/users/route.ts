@@ -9,6 +9,8 @@ import { db } from "@/lib/db";
 import { handler, ok, okList, Errors, parseBody, listQuery, pagedMeta } from "@/lib/hms/api";
 import { PERMISSIONS } from "@/lib/hms/constants";
 import { nextNumber, audit, notifyRole } from "@/lib/hms/services";
+import { emit } from "@/lib/hms/workflows/bus";
+import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 import { hashPassword, validatePasswordStrength } from "@/lib/hms/auth";
 import { clientIp } from "@/lib/hms/rate-limit";
 
@@ -144,6 +146,8 @@ export const POST = handler(
     });
 
     const { passwordHash: _omit, ...safe } = created;
+    // Realtime (STEP 11/49): user admin views + the affected user update live.
+    await emit({ type: EVENT_TYPES.USER_UPDATED, resourceType: "USER", resourceId: created.id, payload: { email: created.email, name: created.name }, actorType: "USER", actorId: user.id });
     return ok(safe, 201);
   },
   { permission: PERMISSIONS.users_create }

@@ -78,6 +78,13 @@ export const POST = withId(PERMISSIONS.inventory_manage, async (id, { req, user 
     });
   }
 
+  // Realtime (STEP 15): stock received/consumed/adjusted updates inventory views live.
+  await emit({
+    type: EVENT_TYPES.INVENTORY_ADJUSTED, resourceType: "INVENTORY_ITEM", resourceId: result.updated.id,
+    payload: { sku: result.updated.sku, movementType: body.type, quantity: signed, balanceAfter: result.updated.stockQty },
+    actorType: "USER", actorId: user.id,
+  });
+
   await audit({
     actorId: user.id,
     actorEmail: user.email,

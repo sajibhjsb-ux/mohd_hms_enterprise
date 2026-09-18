@@ -9,6 +9,8 @@ import { handler, ok, okList, Errors, parseBody, listQuery, pagedMeta } from "@/
 import { PERMISSIONS } from "@/lib/hms/constants";
 import { isStaff } from "@/lib/hms/rbac";
 import { nextNumber, audit, notifyRole } from "@/lib/hms/services";
+import { emit } from "@/lib/hms/workflows/bus";
+import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 import { hashPassword, validatePasswordStrength } from "@/lib/hms/auth";
 import { clientIp } from "@/lib/hms/rate-limit";
 
@@ -149,6 +151,8 @@ export const POST = handler(
       resourceId: customer.id,
     });
 
+    // Realtime: customer records appear live for staff + that customer's portal.
+    await emit({ type: EVENT_TYPES.CUSTOMER_UPDATED, resourceType: "CUSTOMER", resourceId: customer.id, payload: { code: customer.code, companyName: customer.companyName }, actorType: "USER", actorId: user.id });
     return ok(customer, 201);
   },
   { permission: PERMISSIONS.customers_create }

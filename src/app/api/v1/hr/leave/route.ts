@@ -4,6 +4,8 @@ import { db } from "@/lib/db";
 import { handler, ok, okList, parseBody, listQuery, pagedMeta, Errors } from "@/lib/hms/api";
 import { PERMISSIONS } from "@/lib/hms/constants";
 import { audit } from "@/lib/hms/services";
+import { emit } from "@/lib/hms/workflows/bus";
+import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 
 /** Leave request list (with employee + approver) — filterable by status. */
 export const GET = handler(
@@ -104,6 +106,8 @@ export const POST = handler(
       metadata: { employee: `${employee.firstName} ${employee.lastName}`, type: body.type, days },
     });
 
+    // Realtime: HR views update live.
+    await emit({ type: EVENT_TYPES.HR_LEAVE_UPDATED, resourceType: "LeaveRequest", resourceId: leave.id, payload: { action: "REQUESTED" }, actorType: "USER", actorId: user.id });
     return ok(leave, 201);
   },
   { permission: PERMISSIONS.hr_read }

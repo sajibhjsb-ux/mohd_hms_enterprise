@@ -7,6 +7,8 @@ import { db } from "@/lib/db";
 import { handler, ok, okList, parseBody, listQuery, pagedMeta, Errors } from "@/lib/hms/api";
 import { PERMISSIONS } from "@/lib/hms/constants";
 import { nextNumber, audit } from "@/lib/hms/services";
+import { emit } from "@/lib/hms/workflows/bus";
+import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 import { isStaff, scopeFilter } from "@/lib/hms/rbac";
 import type { Prisma } from "@prisma/client";
 
@@ -152,5 +154,7 @@ export const POST = handler(async ({ req, user }) => {
     metadata: { code, totalCents: totals.totalCents, customerId: body.customerId },
   });
 
+  // Realtime: quotation staff views update live.
+  await emit({ type: EVENT_TYPES.QUOTATION_CREATED, resourceType: "QUOTATION", resourceId: quotation.id, payload: { code, totalCents: totals.totalCents }, actorType: "USER", actorId: user.id });
   return ok(quotation, 201);
 }, { permission: PERMISSIONS.quotations_manage });

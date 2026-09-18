@@ -26,6 +26,8 @@ import { navigateTo, pageFromSeg } from "@/lib/hms/router";
 import { useUi } from "@/lib/hms/ui-store";
 import { useToast } from "@/hooks/use-toast";
 import { money, fmtDate } from "@/lib/hms/format";
+import { useRealtimeEventDebounced } from "@/lib/hms/realtime/hooks";
+import { MODULE_EVENTS } from "@/lib/hms/realtime/matrix";
 import { PERMISSIONS } from "@/lib/hms/constants";
 import { cn } from "@/lib/utils";
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
@@ -168,6 +170,14 @@ function FinanceList({ initialTab }: { initialTab?: string }) {
     loadExpenses();
     loadTransactions(month, trxType);
   }, [canRead]);
+
+  // Realtime (STEP 14): payments/invoices refresh finance KPIs live (debounced by hook).
+  useRealtimeEventDebounced(MODULE_EVENTS.finance, () => {
+    if (!canRead) return;
+    void loadSummary();
+    void loadExpenses();
+    void loadTransactions(month, trxType);
+  });
 
   if (!canRead) {
     return (

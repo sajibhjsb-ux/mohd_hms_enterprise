@@ -24,6 +24,8 @@ import {
 import { PERMISSIONS, PRIORITIES, humanize } from "@/lib/hms/constants";
 import { useModuleQuery } from "@/lib/hms/page-query";
 import { fmtDate } from "@/lib/hms/format";
+import { useRealtimeEvent } from "@/lib/hms/realtime/hooks";
+import { MODULE_EVENTS } from "@/lib/hms/realtime/matrix";
 import { Button } from "@/components/ui/button";
 import {
   AlertTriangle, CheckCircle2, ClipboardCheck, Clock, Hammer, ListChecks, Plus,
@@ -122,6 +124,9 @@ function ComplaintsList() {
   }, []);
 
   useEffect(() => { load(); }, [load, reloadKey]);
+
+  // Realtime (STEP 38-42): complaint lifecycle events refresh the list live.
+  useRealtimeEvent(MODULE_EVENTS.complaints, () => setReloadKey((k) => k + 1));
 
   // ── Derived views ──
   const stats = useMemo(() => {

@@ -30,6 +30,8 @@ import { useToast } from "@/hooks/use-toast";
 import type { Permission } from "@/lib/hms/constants";
 import { humanize } from "@/lib/hms/constants";
 import { fmtDateTime } from "@/lib/hms/format";
+import { useRealtimeEvent } from "@/lib/hms/realtime/hooks";
+import { MODULE_EVENTS } from "@/lib/hms/realtime/matrix";
 import { EyeOff, Eye, KeyRound, Pencil, Plus, ShieldCheck, UserX } from "lucide-react";
 import { UserNewPage } from "./new-page";
 import { UserEditPage } from "./edit-page";
@@ -110,6 +112,9 @@ function UsersList() {
   }, [includeCustomers]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Realtime: user/role changes refresh the list live.
+  useRealtimeEvent(MODULE_EVENTS.users, () => { void load(); });
 
   async function submitDisable() {
     if (!disableRow) return;

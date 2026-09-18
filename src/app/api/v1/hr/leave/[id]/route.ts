@@ -5,6 +5,8 @@ import { handler, ok, parseBody, Errors } from "@/lib/hms/api";
 import type { SessionUser } from "@/lib/hms/auth";
 import { PERMISSIONS } from "@/lib/hms/constants";
 import { audit, notify } from "@/lib/hms/services";
+import { emit } from "@/lib/hms/workflows/bus";
+import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 
 function withId(fn: (id: string, ctx: { req: NextRequest; user: SessionUser }) => Promise<NextResponse>, permission?: (typeof PERMISSIONS)[keyof typeof PERMISSIONS]) {
   return async (req: NextRequest, ctx: { params: Promise<{ id: string }> }) => {
@@ -64,6 +66,8 @@ export const PATCH = withId(
       });
     }
 
+    // Realtime: HR views + the employee update live.
+    await emit({ type: EVENT_TYPES.HR_LEAVE_UPDATED, resourceType: "LeaveRequest", resourceId: id, payload: { action: body.action, status }, actorType: "USER", actorId: user.id });
     return ok(updated);
   },
   PERMISSIONS.hr_manage

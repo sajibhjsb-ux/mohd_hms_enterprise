@@ -7,6 +7,7 @@
 import "server-only";
 import { db } from "@/lib/db";
 import type { EmitInput } from "./types";
+import { kickRealtimeDispatch } from "@/lib/hms/realtime/dispatcher";
 
 /** Fire-and-forget worker kick (never blocks or fails the business request — §105). */
 export function kickWorkflowEngine(): void {
@@ -36,10 +37,14 @@ export async function emit(input: EmitInput): Promise<string> {
   try {
     if (input.tx) {
       const row = await input.tx.domainEvent.create({ data });
+      // The row commits with the caller's transaction; the kick retries shortly
+      // after so the committed row is broadcast once it exists (STEP 3/4).
+      kickRealtimeDispatch();
       return row.id;
     }
     const row = await db.domainEvent.create({ data });
     kickWorkflowEngine();
+    kickRealtimeDispatch();
     return row.id;
   } catch (e) {
     // Event persistence failure must never break the business response (§105),

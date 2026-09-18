@@ -8,6 +8,8 @@ import { db } from "@/lib/db";
 import { handler, ok, okList, parseBody, listQuery, pagedMeta, Errors } from "@/lib/hms/api";
 import { PERMISSIONS } from "@/lib/hms/constants";
 import { audit, nextNumber } from "@/lib/hms/services";
+import { emit } from "@/lib/hms/workflows/bus";
+import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 
 function parseDateInput(value?: string | null): Date | null {
   if (!value) return null;
@@ -133,6 +135,8 @@ export const POST = handler(
       metadata: { code: po.code, totalCents, itemCount: lines.length },
     });
 
+    // Realtime (STEP 15): purchasing staff views update live.
+    await emit({ type: EVENT_TYPES.PURCHASE_CREATED, resourceType: "PURCHASE_ORDER", resourceId: po.id, payload: { code: po.code, totalCents }, actorType: "USER", actorId: user.id });
     return ok(po, 201);
   },
   { permission: PERMISSIONS.purchases_manage }

@@ -12,6 +12,7 @@ import "./handlers"; // side-effect: registers all workflows into the engine
 import { db } from "@/lib/db";
 import { emit } from "./bus";
 import { tickWorkflowEngine } from "./engine";
+import { dispatchPendingEvents } from "@/lib/hms/realtime/dispatcher";
 import { EVENT_TYPES } from "./types";
 import { pmReminderDays, slaTargetsHours, automationNumber, isAutomationEnabled } from "./settings";
 
@@ -158,6 +159,9 @@ export function startScheduler(): void {
   console.log(JSON.stringify({ ts: new Date().toISOString(), level: "info", msg: "workflow-scheduler-started" }));
   setTimeout(() => { void tickWorkflowEngine(); }, 2_000);
   setInterval(() => { void tickWorkflowEngine(); }, 10_000);
+  // Realtime dispatch safety net (STEP 7/22): pushes committed outbox events to
+  // the realtime service. emit() also kicks this directly for low latency.
+  setInterval(() => { void dispatchPendingEvents(); }, 2_000);
   setTimeout(() => { void runScans(); }, 5_000);
   setInterval(() => { void runScans(); }, 60_000);
 }

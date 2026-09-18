@@ -27,6 +27,8 @@ import { navigateTo, pageFromSeg } from "@/lib/hms/router";
 import { useToast } from "@/hooks/use-toast";
 import { PERMISSIONS } from "@/lib/hms/constants";
 import { fmtDate, money } from "@/lib/hms/format";
+import { useRealtimeEvent } from "@/lib/hms/realtime/hooks";
+import { MODULE_EVENTS } from "@/lib/hms/realtime/matrix";
 import { IdCard, Plus, Pencil, UserMinus, Wallet } from "lucide-react";
 import { EmployeeNewPage } from "./new-page";
 import { EmployeeEditPage } from "./edit-page";
@@ -77,6 +79,9 @@ function EmployeesList() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Realtime: employee/HR changes refresh the list live.
+  useRealtimeEvent(MODULE_EVENTS.employees, () => { void load(); });
 
   // Terminate stays a confirm dialog (soft delete — history is retained).
   async function submitDelete() {

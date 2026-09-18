@@ -8,6 +8,8 @@ import { PERMISSIONS, type Permission } from "@/lib/hms/constants";
 import { isStaff } from "@/lib/hms/rbac";
 import type { SessionUser } from "@/lib/hms/auth";
 import { audit, notify } from "@/lib/hms/services";
+import { emit } from "@/lib/hms/workflows/bus";
+import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 import { clientIp } from "@/lib/hms/rate-limit";
 
 /**
@@ -105,6 +107,8 @@ export const PATCH = withId(PERMISSIONS.customers_update, async (id, { req, user
     ip,
   });
 
+  // Realtime: customer edits propagate live to staff + that customer's portal.
+  await emit({ type: EVENT_TYPES.CUSTOMER_UPDATED, resourceType: "CUSTOMER", resourceId: id, payload: { code: existing.code, fields: Object.keys(body) }, actorType: "USER", actorId: user.id });
   return ok(customer);
 });
 

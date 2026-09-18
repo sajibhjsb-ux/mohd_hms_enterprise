@@ -24,6 +24,8 @@ import { PageHeader, StatCard, StatusBadge, LoadingState, ErrorState, DrilldownC
 import { PERMISSIONS, humanize } from "@/lib/hms/constants";
 import { useModuleQuery } from "@/lib/hms/page-query";
 import { fmtDate } from "@/lib/hms/format";
+import { useRealtimeEvent } from "@/lib/hms/realtime/hooks";
+import { MODULE_EVENTS } from "@/lib/hms/realtime/matrix";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
@@ -142,6 +144,9 @@ function EquipmentList() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Realtime: equipment changes refresh the list live.
+  useRealtimeEvent(MODULE_EVENTS.equipment, () => { void load(); });
 
   async function submitRetire() {
     if (!retireRow) return;

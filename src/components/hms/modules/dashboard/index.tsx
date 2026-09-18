@@ -14,6 +14,8 @@ import { useSession } from "@/components/hms/session";
 import { navigateTo } from "@/lib/hms/router";
 import { kpiHref, kpiNavigate } from "@/lib/hms/kpi-nav";
 import { money, fmtDate, fmtDateTime } from "@/lib/hms/format";
+import { useRealtimeEventDebounced } from "@/lib/hms/realtime/hooks";
+import { MODULE_EVENTS } from "@/lib/hms/realtime/matrix";
 import { humanize } from "@/lib/hms/constants";
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis, PieChart, Pie, Legend } from "recharts";
 import {
@@ -58,6 +60,10 @@ export function DashboardModule() {
   }, []);
 
   useEffect(() => { load(); }, [load, user?.id]);
+
+  // Realtime (STEP 35): KPI values are recomputed from the same authoritative
+  // API when underlying data changes — no fake counters, debounced 800ms.
+  useRealtimeEventDebounced(MODULE_EVENTS.dashboard, () => { void load(); });
 
   if (error && !data) return <ErrorState message={error} onRetry={load} />;
 

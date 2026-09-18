@@ -3,6 +3,8 @@
 
 import "server-only";
 import { db } from "@/lib/db";
+import { emit } from "@/lib/hms/workflows/bus";
+import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 
 export type AuditInput = {
   actorId?: string | null;
@@ -63,9 +65,10 @@ type NotifyInput = {
 export async function notify(input: NotifyInput) {
   const channels = input.channels ?? ["IN_APP"];
   try {
+    let notificationId = "";
     for (const channel of channels) {
       if (channel === "IN_APP") {
-        await db.notification.create({
+        const row = await db.notification.create({
           data: {
             userId: input.userId,
             channel,
@@ -76,10 +79,30 @@ export async function notify(input: NotifyInput) {
             resourceId: input.resourceId ?? "",
           },
         });
+        notificationId = row.id;
       } else {
         // Outbound channels are logged for the delivery pipeline (provider integration point).
         console.log(JSON.stringify({ ts: new Date().toISOString(), level: "info", channel, to: input.userId, title: input.title, queued: true }));
       }
+    }
+    // Realtime delivery (STEP 17): the persisted notification becomes an outbox
+    // event so the recipient's badge/panel/toast update without any refresh.
+    if (notificationId) {
+      await emit({
+        type: EVENT_TYPES.NOTIFICATION_CREATED,
+        resourceType: "NOTIFICATION",
+        resourceId: notificationId,
+        payload: {
+          userIds: [input.userId],
+          notificationId,
+          title: input.title,
+          message: input.message,
+          type: input.type ?? "INFO",
+          resourceType: input.resourceType ?? "",
+          resourceId: input.resourceId ?? "",
+        },
+        actorType: "SYSTEM",
+      });
     }
   } catch (e) {
     console.error("notify-failed", e);

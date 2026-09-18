@@ -7,6 +7,8 @@ import { db } from "@/lib/db";
 import { handler, ok, okList, parseBody, listQuery, pagedMeta, Errors } from "@/lib/hms/api";
 import { PERMISSIONS } from "@/lib/hms/constants";
 import { nextNumber, audit } from "@/lib/hms/services";
+import { emit } from "@/lib/hms/workflows/bus";
+import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 import { isStaff, scopeFilter } from "@/lib/hms/rbac";
 import type { Prisma } from "@prisma/client";
 
@@ -220,6 +222,8 @@ export const POST = handler(async ({ req, user }) => {
       resourceType: "INVOICE", resourceId: invoice.id,
       metadata: { code, source: "WORK_ORDER", workOrderId: wo.id, totalCents: totals.totalCents },
     });
+    // Realtime (STEP 14): finance/admin see draft invoices live; completion of WO → invoice chain.
+    await emit({ type: EVENT_TYPES.INVOICE_CREATED, resourceType: "INVOICE", resourceId: invoice.id, payload: { code, totalCents: totals.totalCents, customerId: invoice.customerId }, actorType: "USER", actorId: user.id });
     return ok(invoice, 201);
   }
 
@@ -258,5 +262,7 @@ export const POST = handler(async ({ req, user }) => {
     resourceType: "INVOICE", resourceId: invoice.id,
     metadata: { code, source: "MANUAL", totalCents: totals.totalCents, customerId: body.customerId },
   });
+  // Realtime (STEP 14): finance/admin see draft invoices live.
+  await emit({ type: EVENT_TYPES.INVOICE_CREATED, resourceType: "INVOICE", resourceId: invoice.id, payload: { code, totalCents: totals.totalCents, customerId: body.customerId }, actorType: "USER", actorId: user.id });
   return ok(invoice, 201);
 }, { permission: PERMISSIONS.invoices_manage });

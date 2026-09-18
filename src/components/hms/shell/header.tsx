@@ -5,7 +5,7 @@
 // Right: QR scanner · Notifications · Theme · Language · User profile.
 // Self-contained notification polling; reuses existing session + theme systems.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,10 @@ import { navigateTo, RESOURCE_ROUTES } from "@/lib/hms/router";
 import { humanize, PERMISSIONS } from "@/lib/hms/constants";
 import { initials } from "@/lib/hms/format";
 import { cn } from "@/lib/utils";
+import { onRealtimeState } from "@/lib/hms/realtime/bus";
+import { useRealtimeEvent } from "@/lib/hms/realtime/hooks";
+import { RT } from "@/lib/hms/realtime/matrix";
+import { useToast } from "@/hooks/use-toast";
 import {
   AlertTriangle, Bell, CheckCircle2, CheckCheck, ChevronDown, Globe, Info, KeyRound, Loader2,
   LogOut, Moon, QrCode, Search, Sun,
@@ -43,6 +47,8 @@ export function TopHeader({ onOpenSearch, onOpenQr, onSelectModule, onOpenChange
   const [notifs, setNotifs] = useState<NotifItem[]>([]);
   const [unread, setUnread] = useState(0);
   const [mounted, setMounted] = useState(false);
+  const { toast } = useToast();
+  const toastSeq = useRef(0);
 
   // Theme icon must only render after hydration to avoid mismatch
   // (rAF keeps setState off the synchronous effect path).
@@ -65,6 +71,22 @@ export function TopHeader({ onOpenSearch, onOpenQr, onSelectModule, onOpenChange
     const initial = setTimeout(loadNotifs, 0);
     return () => { clearInterval(t); clearTimeout(initial); };
   }, [user?.id, loadNotifs]);
+
+  // Realtime notifications (STEP 17): badge/panel/toast update immediately —
+  // no refresh. The server only delivers events targeted at THIS user.
+  useRealtimeEvent([RT.NOTIFICATION_CREATED], (ev) => {
+    void loadNotifs();
+    toastSeq.current += 1;
+    const title = typeof ev.data?.title === "string" ? ev.data.title : "New notification";
+    const message = typeof ev.data?.message === "string" ? ev.data.message : undefined;
+    const isError = ev.data?.type === "ERROR";
+    toast({
+      id: `rt-notif-${toastSeq.current}`,
+      title,
+      description: message,
+      variant: isError ? "destructive" : "default",
+    });
+  });
 
   async function markAllRead() {
     await api.patch("/api/v1/notifications/read-all", {}).catch(() => undefined);
@@ -122,6 +144,7 @@ export function TopHeader({ onOpenSearch, onOpenQr, onSelectModule, onOpenChange
 
           {/* Right cluster */}
           <div className="ml-auto flex items-center gap-0.5 sm:gap-1">
+            <LiveIndicator />
             {canScan ? (
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -177,6 +200,47 @@ export function TopHeader({ onOpenSearch, onOpenQr, onSelectModule, onOpenChange
 function SearchShortcutHint() {
   const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent);
   return <span aria-hidden>{isMac ? "⌘K" : "Ctrl K"}</span>;
+}
+
+/**
+ * Realtime connection indicator (STEP 21/24).
+ * Small, non-blocking status pill — no error modals on reconnect. Only the
+ * connection health is shown to everyone; technical diagnostics stay in the
+ * Super Admin's realtime health panel.
+ */
+function LiveIndicator() {
+  const [state, setState] = useState<RealtimeState>("CONNECTING");
+  useEffect(() => onRealtimeState(setState), []);
+
+  const live = state === "CONNECTED";
+  const label =
+    state === "CONNECTED" ? "Live"
+    : state === "RECONNECTING" ? "Reconnecting…"
+    : state === "CONNECTING" ? "Connecting…"
+    : state === "FAILED" ? "Offline"
+    : "Offline";
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          className={cn(
+            "hidden sm:inline-flex items-center gap-1.5 h-9 px-2.5 rounded-full border text-xs font-medium",
+            live
+              ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-400"
+              : "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-400"
+          )}
+          role="status"
+          aria-live="polite"
+          aria-label={`Realtime connection: ${label}`}
+        >
+          <span className={cn("h-1.5 w-1.5 rounded-full", live ? "bg-emerald-500" : "bg-amber-500 animate-pulse")} aria-hidden />
+          {label}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{live ? "Realtime updates are live" : "Realtime updates are retrying automatically"}</TooltipContent>
+    </Tooltip>
+  );
 }
 
 function NotifMenu({ notifs, unread, onOpen, markAllRead, markRead }: {

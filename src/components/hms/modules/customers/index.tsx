@@ -27,6 +27,8 @@ import { useUi } from "@/lib/hms/ui-store";
 import { navigateTo, pageFromSeg } from "@/lib/hms/router";
 import { useToast } from "@/hooks/use-toast";
 import { PERMISSIONS } from "@/lib/hms/constants";
+import { useRealtimeEvent } from "@/lib/hms/realtime/hooks";
+import { MODULE_EVENTS } from "@/lib/hms/realtime/matrix";
 import { Building2, ClipboardList, KeyRound, Pencil, Plus, Receipt, Trash2, Users, Wifi } from "lucide-react";
 import { CustomerNewPage } from "./new-page";
 import { CustomerDetailPage } from "./detail-page";
@@ -88,6 +90,9 @@ function CustomersList() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Realtime: customer records refresh the list live.
+  useRealtimeEvent(MODULE_EVENTS.customers, () => { void load(); });
 
   async function submitDelete() {
     if (!deleteRow) return;

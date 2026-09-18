@@ -18,6 +18,8 @@ import { WorkflowTimeline } from "@/components/hms/shared/workflow-timeline";
 import { PdfButtons } from "@/components/hms/shared/pdf-buttons";
 import { PERMISSIONS } from "@/lib/hms/constants";
 import { fmtDate, money } from "@/lib/hms/format";
+import { useRealtimeEvent } from "@/lib/hms/realtime/hooks";
+import { INVOICE_DETAIL_EVENTS } from "@/lib/hms/realtime/matrix";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
@@ -60,6 +62,11 @@ export function InvoiceDetailPage({ id }: { id: string }) {
   }, [id]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Realtime (STEP 14): payments/status changes on this invoice refresh it live.
+  useRealtimeEvent(INVOICE_DETAIL_EVENTS, (ev) => {
+    if (!ev.aggregate_id || ev.aggregate_id === id) void load();
+  });
 
   async function runTransition(action: "send" | "cancel") {
     setBusy(true);

@@ -10,6 +10,8 @@ import { handler, ok, okList, Errors, parseBody, listQuery, pagedMeta } from "@/
 import { PERMISSIONS } from "@/lib/hms/constants";
 import { isStaff } from "@/lib/hms/rbac";
 import { nextNumber, audit, notifyRole } from "@/lib/hms/services";
+import { emit } from "@/lib/hms/workflows/bus";
+import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 import { clientIp } from "@/lib/hms/rate-limit";
 
 const EQUIPMENT_SELECT = {
@@ -153,6 +155,8 @@ export const POST = handler(
       resourceId: equipment.id,
     });
 
+    // Realtime (STEP 10): equipment lists update live for staff + owning customer.
+    await emit({ type: EVENT_TYPES.EQUIPMENT_UPDATED, resourceType: "EQUIPMENT", resourceId: equipment.id, payload: { assetTag: equipment.assetTag, name: equipment.name }, actorType: "USER", actorId: user.id });
     return ok(equipment, 201);
   },
   { permission: PERMISSIONS.equipment_create }

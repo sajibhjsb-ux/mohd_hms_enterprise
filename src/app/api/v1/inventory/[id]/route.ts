@@ -10,6 +10,8 @@ import { handler, ok, parseBody, Errors } from "@/lib/hms/api";
 import type { SessionUser } from "@/lib/hms/auth";
 import { db } from "@/lib/db";
 import { audit } from "@/lib/hms/services";
+import { emit } from "@/lib/hms/workflows/bus";
+import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 
 function withId(
   permission: Permission,
@@ -88,6 +90,8 @@ export const PATCH = withId(PERMISSIONS.inventory_manage, async (id, { req, user
     metadata: { sku: updated.sku },
   });
 
+  // Realtime (STEP 15): inventory views update live.
+  await emit({ type: EVENT_TYPES.INVENTORY_ITEM_UPDATED, resourceType: "INVENTORY_ITEM", resourceId: id, payload: { sku: updated.sku }, actorType: "USER", actorId: user.id });
   return ok(updated);
 });
 

@@ -793,12 +793,17 @@ model DomainEvent {
   actorId       String?
   createdAt     DateTime  @default(now())
   processedAt   DateTime?
+  // Realtime dispatch (STEP 5/7/22): the outbox worker hands committed events to
+  // the realtime service. NULL = not yet broadcast; the dispatcher polls for
+  // un-broadcast recent events (missed-event recovery + push failure retry).
+  broadcastAt   DateTime?
 
   runs WorkflowRun[]
 
   @@index([status, nextAttemptAt])
   @@index([type, createdAt])
   @@index([resourceType, resourceId])
+  @@index([broadcastAt, createdAt])
 }
 
 // One immutable record per workflow execution attempt. The unique [eventId, workflow]

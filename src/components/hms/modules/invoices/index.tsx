@@ -18,6 +18,8 @@ import { useUi } from "@/lib/hms/ui-store";
 import { navigateTo, pageFromSeg } from "@/lib/hms/router";
 import { useModuleQuery } from "@/lib/hms/page-query";
 import { money, fmtDate } from "@/lib/hms/format";
+import { useRealtimeEvent } from "@/lib/hms/realtime/hooks";
+import { MODULE_EVENTS } from "@/lib/hms/realtime/matrix";
 import { PERMISSIONS, humanize } from "@/lib/hms/constants";
 import { CircleDollarSign, Plus, TriangleAlert, Wallet } from "lucide-react";
 import { InvoiceNewPage } from "./new-page";
@@ -92,6 +94,9 @@ function InvoicesList() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Realtime (STEP 14): invoice created/sent/payment updates the list + KPIs live.
+  useRealtimeEvent(MODULE_EVENTS.invoices, () => { void load(); });
 
   const columns: Column<InvoiceRow>[] = [
     { key: "code", header: "Code", value: (r) => r.code, render: (r) => <span className="font-medium">{r.code}</span> },

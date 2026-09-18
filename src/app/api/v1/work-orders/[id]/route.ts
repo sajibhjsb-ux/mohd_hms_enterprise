@@ -8,6 +8,8 @@ import { db } from "@/lib/db";
 import { handler, ok, parseBody, Errors } from "@/lib/hms/api";
 import { roleCan } from "@/lib/hms/rbac";
 import { audit, notify } from "@/lib/hms/services";
+import { emit } from "@/lib/hms/workflows/bus";
+import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 import { PERMISSIONS, PRIORITIES } from "@/lib/hms/constants";
 import type { SessionUser } from "@/lib/hms/auth";
 import { WO_DETAIL_INCLUDE, assertViewWorkOrder, isAssignedTechnician, isSupervisorPlus } from "../_lib";
@@ -123,6 +125,8 @@ export const PATCH = withId(
       });
     }
 
+    // Realtime (STEP 13/39-40): assignment/detail changes propagate live.
+    await emit({ type: EVENT_TYPES.WORK_ORDER_UPDATED, resourceType: "WORK_ORDER", resourceId: id, payload: { code: wo.code, fields: Object.keys(body) }, actorType: "USER", actorId: user.id });
     return ok(updated);
   },
   { permission: PERMISSIONS.work_orders_read }

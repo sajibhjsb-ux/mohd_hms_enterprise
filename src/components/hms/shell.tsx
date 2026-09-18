@@ -34,6 +34,7 @@ import { TopHeader } from "./shell/header";
 import { FloatingNav } from "./shell/floating-nav";
 import { GlobalSearch, type SearchNavigateTarget } from "./shell/global-search";
 import { QrScanDialog } from "./shell/qr-dialog";
+import { RealtimeProvider } from "./realtime/realtime-provider";
 
 export function AppShell() {
   const { user } = useSession();
@@ -160,6 +161,7 @@ export function AppShell() {
   const ActiveComponent = active?.component;
 
   return (
+    <RealtimeProvider>
     <div className="min-h-screen flex flex-col bg-[radial-gradient(60rem_30rem_at_50%_-10%,oklch(0.95_0.05_152/0.6),transparent)] dark:bg-none">
       <TopHeader
         onOpenSearch={() => setSearchOpen(true)}
@@ -287,6 +289,7 @@ export function AppShell() {
         </DialogContent>
       </Dialog>
     </div>
+    </RealtimeProvider>
   );
 }
 

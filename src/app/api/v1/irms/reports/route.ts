@@ -4,6 +4,8 @@ import { db } from "@/lib/db";
 import { handler, ok, okList, parseBody, listQuery, pagedMeta, Errors } from "@/lib/hms/api";
 import { PERMISSIONS } from "@/lib/hms/constants";
 import { audit, nextNumber } from "@/lib/hms/services";
+import { emit } from "@/lib/hms/workflows/bus";
+import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 
 const REPORT_TYPES = ["ROUTINE", "SAFETY", "EQUIPMENT", "PROJECT", "OTHER"] as const;
 const CONDITIONS = ["EXCELLENT", "GOOD", "FAIR", "POOR", "CRITICAL"] as const;
@@ -127,6 +129,8 @@ export const POST = handler(
       metadata: { code, projectId: body.projectId, type: body.type, findings: body.findings.length },
     });
 
+    // Realtime (STEP 16): IRMS staff views update live.
+    await emit({ type: EVENT_TYPES.IRMS_REPORT_UPDATED, resourceType: "InspectionReport", resourceId: report.id, payload: { code, action: "CREATED" }, actorType: "USER", actorId: user.id });
     return ok(report, 201);
   },
   { permission: PERMISSIONS.irms_manage }

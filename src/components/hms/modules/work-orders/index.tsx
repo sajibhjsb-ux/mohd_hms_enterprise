@@ -23,6 +23,8 @@ import {
 import { PERMISSIONS, PRIORITIES, humanize } from "@/lib/hms/constants";
 import { useModuleQuery } from "@/lib/hms/page-query";
 import { money, fmtDate } from "@/lib/hms/format";
+import { useRealtimeEvent } from "@/lib/hms/realtime/hooks";
+import { MODULE_EVENTS } from "@/lib/hms/realtime/matrix";
 import { Button } from "@/components/ui/button";
 import {
   CircleDollarSign, ClipboardList, Hammer, PauseCircle, PlayCircle, Plus, Wrench,
@@ -112,6 +114,9 @@ function WorkOrdersList() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Realtime (STEP 39-42): assignments and lifecycle refresh the list live.
+  useRealtimeEvent(MODULE_EVENTS["work-orders"], () => { void load(); });
 
   // ── Derived views ──
   const stats = useMemo(() => {

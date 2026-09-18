@@ -16,6 +16,8 @@ import { useSession, hasPerm } from "@/components/hms/session";
 import { useUi } from "@/lib/hms/ui-store";
 import { navigateTo, pageFromSeg } from "@/lib/hms/router";
 import { money, fmtDate } from "@/lib/hms/format";
+import { useRealtimeEvent } from "@/lib/hms/realtime/hooks";
+import { MODULE_EVENTS } from "@/lib/hms/realtime/matrix";
 import { PERMISSIONS } from "@/lib/hms/constants";
 import { Check, FileText, Plus, Repeat, Send } from "lucide-react";
 import { QuotationNewPage } from "./new-page";
@@ -60,6 +62,8 @@ function QuotationsList() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+  // Realtime: quotation updates refresh the list live.
+  useRealtimeEvent(MODULE_EVENTS.quotations, () => { void load(); });
 
   const stats = useMemo(() => ({
     draft: rows.filter((r) => r.status === "DRAFT").length,

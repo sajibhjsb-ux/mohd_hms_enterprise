@@ -7,6 +7,8 @@ import { db } from "@/lib/db";
 import { handler, ok, parseBody, Errors } from "@/lib/hms/api";
 import { PERMISSIONS, type Permission } from "@/lib/hms/constants";
 import { audit } from "@/lib/hms/services";
+import { emit } from "@/lib/hms/workflows/bus";
+import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 import { isStaff } from "@/lib/hms/rbac";
 import type { Prisma } from "@prisma/client";
 import type { SessionUser } from "@/lib/hms/auth";
@@ -135,6 +137,8 @@ export const PATCH = withId(PERMISSIONS.invoices_manage, async (id, { req, user 
     actorId: user.id, actorEmail: user.email, action: "INVOICE_UPDATED",
     resourceType: "INVOICE", resourceId: id, metadata: { code: existing.code, totalCents },
   });
+  // Realtime (STEP 14): finance/admin/customer views update live.
+  await emit({ type: EVENT_TYPES.INVOICE_UPDATED, resourceType: "INVOICE", resourceId: id, payload: { code: existing.code, totalCents }, actorType: "USER", actorId: user.id });
   return ok(invoice);
 });
 
