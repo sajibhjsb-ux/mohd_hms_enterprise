@@ -12,6 +12,8 @@ import { roleCan } from "@/lib/hms/rbac";
 import type { SessionUser } from "@/lib/hms/auth";
 import { db } from "@/lib/db";
 import { audit, notifyRole } from "@/lib/hms/services";
+import { emit } from "@/lib/hms/workflows/bus";
+import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 
 function withId(
   permission: Permission,
@@ -193,6 +195,11 @@ export const POST = withId(PERMISSIONS.purchases_manage, async (id, { req, user 
         resourceType: "PURCHASE_ORDER",
         resourceId: po.id,
         metadata: { code: po.code, status: updated.status, lines: body.items?.length ?? "all-remaining" },
+      });
+      // Outbox (§19): receipt notification workflow keys off this event.
+      await emit({
+        type: EVENT_TYPES.PURCHASE_RECEIVED, resourceType: "PURCHASE_ORDER", resourceId: po.id,
+        payload: { code: po.code, status: updated.status }, actorType: "USER", actorId: user.id,
       });
       return ok(updated);
     }

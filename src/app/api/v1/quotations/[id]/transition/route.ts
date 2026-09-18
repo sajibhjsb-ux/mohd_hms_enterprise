@@ -8,6 +8,8 @@ import { PERMISSIONS } from "@/lib/hms/constants";
 import { audit, notify, notifyRole } from "@/lib/hms/services";
 import { isStaff } from "@/lib/hms/rbac";
 import type { SessionUser } from "@/lib/hms/auth";
+import { emit } from "@/lib/hms/workflows/bus";
+import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 
 const bodySchema = z.object({
   action: z.enum(["send", "approve", "reject", "expire"]),
@@ -68,6 +70,13 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       resourceType: "QUOTATION", resourceId: id,
       metadata: { code: quotation.code, from: quotation.status, to: TARGET[body.action] },
     });
+    // Outbox (§24): quotation workflow events (acceptance feeds configured next actions).
+    if (body.action === "send") {
+      await emit({ type: EVENT_TYPES.QUOTATION_SENT, resourceType: "QUOTATION", resourceId: id, payload: { code: quotation.code }, actorType: "USER", actorId: user.id });
+    }
+    if (body.action === "approve") {
+      await emit({ type: EVENT_TYPES.QUOTATION_ACCEPTED, resourceType: "QUOTATION", resourceId: id, payload: { code: quotation.code }, actorType: "USER", actorId: user.id });
+    }
 
     return ok(updated);
   }, { permission: PERMISSIONS.quotations_manage })(req);

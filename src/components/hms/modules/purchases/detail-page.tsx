@@ -11,6 +11,7 @@ import { api, ClientApiError } from "@/lib/hms/api-client";
 import { hasPerm, useSession } from "@/components/hms/session";
 import { PageShell } from "@/components/hms/shared/page-shell";
 import { LoadingState, EmptyState, ErrorState, StatusBadge } from "@/components/hms/shared/ui-bits";
+import { WorkflowTimeline } from "@/components/hms/shared/workflow-timeline";
 import { PERMISSIONS, type Permission } from "@/lib/hms/constants";
 import { fmtDate, money } from "@/lib/hms/format";
 import { useToast } from "@/hooks/use-toast";
@@ -336,6 +337,7 @@ export function PurchaseDetailPage({ id }: { id: string }) {
           </div>
         </div>
       </div>
+      <WorkflowTimeline resourceType="PURCHASE_ORDER" resourceId={detail.id} className="mt-6" />
     </PageShell>
   );
 }

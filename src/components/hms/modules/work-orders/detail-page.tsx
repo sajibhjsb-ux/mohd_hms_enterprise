@@ -10,6 +10,7 @@ import { api, qs } from "@/lib/hms/api-client";
 import { hasPerm, useSession } from "@/components/hms/session";
 import { PageShell } from "@/components/hms/shared/page-shell";
 import { PriorityBadge, StatusBadge, LoadingState, EmptyState, ErrorState } from "@/components/hms/shared/ui-bits";
+import { WorkflowTimeline } from "@/components/hms/shared/workflow-timeline";
 import { PERMISSIONS, humanize } from "@/lib/hms/constants";
 import { money, fmtDate, fmtDateTime, toCents } from "@/lib/hms/format";
 import { useToast } from "@/hooks/use-toast";
@@ -532,6 +533,8 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
           </div>
         </div>
       </div>
+
+      <WorkflowTimeline resourceType="WORK_ORDER" resourceId={detail.id} className="mt-6" />
 
       {/* Cancel confirmation — the only dialog kept on this page */}
       <AlertDialog open={confirmCancel} onOpenChange={setConfirmCancel}>

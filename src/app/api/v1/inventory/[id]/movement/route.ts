@@ -5,11 +5,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import type { Permission } from "@/lib/hms/constants";
-import { PERMISSIONS, ROLES } from "@/lib/hms/constants";
+import { PERMISSIONS } from "@/lib/hms/constants";
 import { handler, ok, parseBody, Errors } from "@/lib/hms/api";
 import type { SessionUser } from "@/lib/hms/auth";
 import { db } from "@/lib/db";
-import { audit, notifyRole } from "@/lib/hms/services";
+import { audit } from "@/lib/hms/services";
+import { emit } from "@/lib/hms/workflows/bus";
+import { EVENT_TYPES } from "@/lib/hms/workflows/types";
+import { dedupeSubmission } from "@/lib/hms/workflows/idempotency";
 
 function withId(
   permission: Permission,
@@ -32,6 +35,7 @@ const movementSchema = z.object({
 
 export const POST = withId(PERMISSIONS.inventory_manage, async (id, { req, user }) => {
   const body = await parseBody(req, movementSchema);
+  dedupeSubmission({ userId: user.id, route: "POST /api/v1/inventory/[id]/movement", body: { id, ...body } });
 
   let signed: number;
   if (body.type === "ADJUST") {
@@ -65,12 +69,12 @@ export const POST = withId(PERMISSIONS.inventory_manage, async (id, { req, user 
   });
 
   if (result.updated.stockQty <= result.minStockQty) {
-    await notifyRole(ROLES.ADMIN, {
-      title: "Low stock alert",
-      message: `Low stock: ${result.updated.sku} ${result.updated.name} at ${result.updated.stockQty}`,
-      type: "WARNING",
-      resourceType: "INVENTORY_ITEM",
-      resourceId: result.updated.id,
+    // §17 — low stock automation via the outbox (deduplicated per item per 24h
+    // inside the handler; no repeated notification spam on repeated movements).
+    await emit({
+      type: EVENT_TYPES.LOW_STOCK, resourceType: "INVENTORY_ITEM", resourceId: result.updated.id,
+      payload: { sku: result.updated.sku, stockQty: result.updated.stockQty, minStockQty: result.minStockQty, source: "MANUAL_MOVEMENT" },
+      actorType: "USER", actorId: user.id,
     });
   }
 

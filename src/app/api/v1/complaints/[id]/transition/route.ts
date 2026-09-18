@@ -1,5 +1,7 @@
 // MOHD.HMS ENTERPRISE — Complaint workflow transitions (server-side enforced).
 // assign → accept/start → complete → confirm → close; cancel from open states.
+// §9 state machine (COMPLAINT_TRANSITIONS), §56 optimistic concurrency
+// (status-guarded updateMany), §4/§5 transactional outbox on the invoicing path.
 import type { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
@@ -9,6 +11,8 @@ import { audit, notify, notifyRole } from "@/lib/hms/services";
 import { COMPLAINT_TRANSITIONS, PERMISSIONS } from "@/lib/hms/constants";
 import type { SessionUser } from "@/lib/hms/auth";
 import { COMPLAINT_DETAIL_INCLUDE, assertViewComplaint, technicianProfileIdFor } from "../../_lib";
+import { emit } from "@/lib/hms/workflows/bus";
+import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 
 type Ctx = { req: NextRequest; user: SessionUser };
 
@@ -34,6 +38,15 @@ async function addHistory(complaintId: string, fromStatus: string, toStatus: str
   await db.complaintStatusHistory.create({ data: { complaintId, fromStatus, toStatus, changedById, note } });
 }
 
+/** §56 — status-guarded update; a concurrent transition yields 409, never drift. */
+async function guardedUpdate(id: string, from: string, data: Record<string, unknown>) {
+  const res = await db.complaint.updateMany({ where: { id, status: from }, data });
+  if (res.count === 0) {
+    throw Errors.conflict("This complaint was just updated by someone else. Reload the page and try again.");
+  }
+  return db.complaint.findUnique({ where: { id }, include: COMPLAINT_DETAIL_INCLUDE });
+}
+
 export const POST = withId(
   async (id, { req, user }) => {
     const body = await parseBody(req, transitionSchema);
@@ -56,14 +69,12 @@ export const POST = withId(
         if (!roleCan(user.role, PERMISSIONS.complaints_assign)) throw Errors.forbidden();
         assertTransition("ASSIGNED", from);
         if (!body.technicianId) throw Errors.badRequest("technicianId is required to assign a complaint.");
-        const tech = await db.technicianProfile.findUnique({ where: { id: body.technicianId }, include: { user: { select: { id: true, name: true } } } });
+        const tech = await db.technicianProfile.findUnique({ where: { id: body.technicianId }, include: { user: { select: { id: true, name: true, status: true } } } });
         if (!tech) throw Errors.badRequest("Technician profile not found.");
+        // §11 — assignment is only valid for an active technician account.
+        if (tech.user.status !== "ACTIVE") throw Errors.badRequest("Technician is not active.");
 
-        const updated = await db.complaint.update({
-          where: { id },
-          data: { status: "ASSIGNED", assignedTechnicianId: tech.id, assignedAt: now },
-          include: COMPLAINT_DETAIL_INCLUDE,
-        });
+        const updated = await guardedUpdate(id, from, { status: "ASSIGNED", assignedTechnicianId: tech.id, assignedAt: now });
         await addHistory(id, from, "ASSIGNED", user.id, body.note ?? `Assigned to ${tech.user.name}`);
         await audit({
           actorId: user.id, actorEmail: user.email, action: "COMPLAINT_ASSIGNED",
@@ -81,6 +92,9 @@ export const POST = withId(
             type: "INFO", resourceType: "COMPLAINT", resourceId: id,
           });
         }
+        // Outbox: assignment event (escalation engine keys off it) + queued email.
+        await emit({ type: EVENT_TYPES.COMPLAINT_ASSIGNED, resourceType: "COMPLAINT", resourceId: id, payload: { code, technicianId: tech.id }, actorType: "USER", actorId: user.id });
+        await emit({ type: EVENT_TYPES.EMAIL_SEND, resourceType: "COMPLAINT", resourceId: id, payload: { userId: tech.userId, title: "New complaint assigned", message: `You have been assigned complaint ${code}: ${complaint.title}` }, actorType: "USER", actorId: user.id });
         return ok(updated);
       }
 
@@ -93,19 +107,20 @@ export const POST = withId(
         if (from === "IN_PROGRESS") return ok(complaint); // idempotent no-op
         assertTransition("IN_PROGRESS", from);
 
-        const updated = await db.complaint.update({
-          where: { id },
-          data: { status: "IN_PROGRESS", acceptedAt: complaint.acceptedAt ?? now, startedAt: now },
-          include: COMPLAINT_DETAIL_INCLUDE,
-        });
+        const updated = await guardedUpdate(id, from, { status: "IN_PROGRESS", acceptedAt: complaint.acceptedAt ?? now, startedAt: now });
         await addHistory(id, from, "IN_PROGRESS", user.id, body.note ?? "Work started");
         await audit({
-          actorId: user.id, actorEmail: user.email, action: "COMPLAINT_ACCEPTED",
+          actorId: user.id, actorEmail: user.email, action: body.action === "accept" ? "COMPLAINT_ACCEPTED" : "COMPLAINT_STARTED",
           resourceType: "COMPLAINT", resourceId: id, metadata: { code },
         });
         await notifyRole("SUPERVISOR", {
           title: "Complaint in progress", message: `${code} is now in progress (${user.name}).`,
           type: "INFO", resourceType: "COMPLAINT", resourceId: id,
+        });
+        // Outbox: acceptance/start event — auto work order creation keys off it (§13).
+        await emit({
+          type: body.action === "accept" ? EVENT_TYPES.COMPLAINT_ACCEPTED : EVENT_TYPES.COMPLAINT_STARTED,
+          resourceType: "COMPLAINT", resourceId: id, payload: { code }, actorType: "USER", actorId: user.id,
         });
         return ok(updated);
       }
@@ -115,14 +130,10 @@ export const POST = withId(
         if (!isAssignedTech && !roleCan(user.role, PERMISSIONS.complaints_update)) throw Errors.forbidden();
         assertTransition("COMPLETED", from);
 
-        const updated = await db.complaint.update({
-          where: { id },
-          data: {
-            status: "COMPLETED",
-            completedAt: now,
-            ...(body.note ? { resolutionNotes: body.note } : {}),
-          },
-          include: COMPLAINT_DETAIL_INCLUDE,
+        const updated = await guardedUpdate(id, from, {
+          status: "COMPLETED",
+          completedAt: now,
+          ...(body.note ? { resolutionNotes: body.note } : {}),
         });
         await addHistory(id, from, "COMPLETED", user.id, body.note ?? "Resolution recorded");
         await audit({
@@ -140,6 +151,7 @@ export const POST = withId(
           title: "Complaint completed", message: `${code} marked completed by ${user.name}, awaiting customer confirmation.`,
           type: "INFO", resourceType: "COMPLAINT", resourceId: id,
         });
+        await emit({ type: EVENT_TYPES.COMPLAINT_COMPLETED, resourceType: "COMPLAINT", resourceId: id, payload: { code }, actorType: "USER", actorId: user.id });
         return ok(updated);
       }
 
@@ -149,16 +161,23 @@ export const POST = withId(
         if (!isPortalOwner && !staffUpdater) throw Errors.forbidden();
         assertTransition("CONFIRMED", from);
 
-        const updated = await db.complaint.update({
-          where: { id },
-          data: {
-            status: "CONFIRMED",
-            confirmedAt: now,
-            ...(body.note ? { customerFeedback: body.note } : {}),
-          },
-          include: COMPLAINT_DETAIL_INCLUDE,
+        // §4/§5 transactional outbox: the status change, history and the outbox
+        // event that auto-creates the draft invoice commit atomically.
+        const updated = await db.$transaction(async (tx) => {
+          const res = await tx.complaint.updateMany({
+            where: { id, status: from },
+            data: { status: "CONFIRMED", confirmedAt: now, ...(body.note ? { customerFeedback: body.note } : {}) },
+          });
+          if (res.count === 0) throw Errors.conflict("This complaint was just updated by someone else. Reload the page and try again.");
+          await tx.complaintStatusHistory.create({ data: { complaintId: id, fromStatus: from, toStatus: "CONFIRMED", changedById: user.id, note: body.note ?? "Customer confirmed resolution" } });
+          await tx.domainEvent.create({
+            data: {
+              type: EVENT_TYPES.COMPLAINT_CONFIRMED, resourceType: "COMPLAINT", resourceId: id,
+              payload: JSON.stringify({ code }), actorType: "USER", actorId: user.id,
+            },
+          });
+          return tx.complaint.findUnique({ where: { id }, include: COMPLAINT_DETAIL_INCLUDE });
         });
-        await addHistory(id, from, "CONFIRMED", user.id, body.note ?? "Customer confirmed resolution");
         await audit({
           actorId: user.id, actorEmail: user.email, action: "COMPLAINT_CONFIRMED",
           resourceType: "COMPLAINT", resourceId: id, metadata: { code, by: user.role },
@@ -169,7 +188,7 @@ export const POST = withId(
             type: "INFO", resourceType: "COMPLAINT", resourceId: id,
           }),
           notifyRole("FINANCE", {
-            title: "Complaint confirmed", message: `Complaint ${code} confirmed, ready for invoicing.`,
+            title: "Complaint confirmed", message: `Complaint ${code} confirmed, a draft invoice will be generated automatically for review.`,
             type: "INFO", resourceType: "COMPLAINT", resourceId: id,
           }),
         ]);
@@ -180,16 +199,13 @@ export const POST = withId(
         if (!roleCan(user.role, PERMISSIONS.complaints_close)) throw Errors.forbidden();
         assertTransition("CLOSED", from);
 
-        const updated = await db.complaint.update({
-          where: { id },
-          data: { status: "CLOSED", closedAt: now },
-          include: COMPLAINT_DETAIL_INCLUDE,
-        });
+        const updated = await guardedUpdate(id, from, { status: "CLOSED", closedAt: now });
         await addHistory(id, from, "CLOSED", user.id, body.note ?? "Complaint closed");
         await audit({
           actorId: user.id, actorEmail: user.email, action: "COMPLAINT_CLOSED",
           resourceType: "COMPLAINT", resourceId: id, metadata: { code },
         });
+        await emit({ type: EVENT_TYPES.COMPLAINT_CLOSED, resourceType: "COMPLAINT", resourceId: id, payload: { code }, actorType: "USER", actorId: user.id });
         return ok(updated);
       }
 
@@ -197,11 +213,7 @@ export const POST = withId(
         if (!roleCan(user.role, PERMISSIONS.complaints_assign)) throw Errors.forbidden();
         assertTransition("CANCELLED", from);
 
-        const updated = await db.complaint.update({
-          where: { id },
-          data: { status: "CANCELLED" },
-          include: COMPLAINT_DETAIL_INCLUDE,
-        });
+        const updated = await guardedUpdate(id, from, { status: "CANCELLED" });
         await addHistory(id, from, "CANCELLED", user.id, body.note ?? "Complaint cancelled");
         await audit({
           actorId: user.id, actorEmail: user.email, action: "COMPLAINT_CANCELLED",

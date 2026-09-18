@@ -8,6 +8,8 @@ import { PERMISSIONS } from "@/lib/hms/constants";
 import { audit, notify, notifyRole } from "@/lib/hms/services";
 import { isStaff } from "@/lib/hms/rbac";
 import type { SessionUser } from "@/lib/hms/auth";
+import { emit } from "@/lib/hms/workflows/bus";
+import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 
 const bodySchema = z.object({
   action: z.enum(["send", "cancel"]),
@@ -67,6 +69,11 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         resourceType: "INVOICE",
         resourceId: id,
       });
+      // Outbox (§26/§30): invoice-sent event + queued email to the customer.
+      await emit({ type: EVENT_TYPES.INVOICE_SENT, resourceType: "INVOICE", resourceId: id, payload: { code: invoice.code, totalCents: invoice.totalCents }, actorType: "USER", actorId: user.id });
+      if (portalUserId) {
+        await emit({ type: EVENT_TYPES.EMAIL_SEND, resourceType: "INVOICE", resourceId: id, payload: { userId: portalUserId, title: `Invoice ${invoice.code} sent`, message: `Invoice ${invoice.code} is now available. Amount due: RM ${(invoice.totalCents / 100).toFixed(2)}.` }, actorType: "USER", actorId: user.id });
+      }
     }
 
     await audit({

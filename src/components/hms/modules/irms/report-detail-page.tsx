@@ -14,6 +14,7 @@ import { hasPerm, useSession } from "@/components/hms/session";
 import { navigateTo } from "@/lib/hms/router";
 import { useToast } from "@/hooks/use-toast";
 import { PageShell } from "@/components/hms/shared/page-shell";
+import { WorkflowTimeline } from "@/components/hms/shared/workflow-timeline";
 import { EmptyState, ErrorState, LoadingState, StatusBadge } from "@/components/hms/shared/ui-bits";
 import { humanize, PERMISSIONS } from "@/lib/hms/constants";
 import { fmtDate } from "@/lib/hms/format";
@@ -312,6 +313,7 @@ export function IrmsReportDetailPage({ id }: { id: string }) {
             </div>
           </div>
         </div>
+        <WorkflowTimeline resourceType="InspectionReport" resourceId={detail.id} className="mt-6 no-print" />
       </PageShell>
 
       <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>

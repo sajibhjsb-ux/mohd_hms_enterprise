@@ -27,6 +27,8 @@ export const GET = handler(
     const sp = new URL(req.url).searchParams;
     const action = (sp.get("action") ?? "").trim();
     const actorEmail = (sp.get("actorEmail") ?? "").trim();
+    const resourceType = (sp.get("resourceType") ?? "").trim();
+    const resourceId = (sp.get("resourceId") ?? "").trim();
     const fromRaw = sp.get("from");
     const toRaw = sp.get("to");
 
@@ -36,6 +38,8 @@ export const GET = handler(
     const where: Prisma.AuditLogWhereInput = {};
     if (action) where.action = { contains: action };
     if (actorEmail) where.actorEmail = { contains: actorEmail };
+    if (resourceType) where.resourceType = resourceType;
+    if (resourceId) where.resourceId = resourceId;
     if (q.search) {
       where.OR = ["action", "actorEmail", "resourceType", "resourceId"].map((field) => ({
         [field]: { contains: q.search },

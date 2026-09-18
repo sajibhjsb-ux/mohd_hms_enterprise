@@ -6,6 +6,8 @@ import type { SessionUser } from "@/lib/hms/auth";
 import { PERMISSIONS } from "@/lib/hms/constants";
 import { roleCan } from "@/lib/hms/rbac";
 import { audit, notify, notifyRole } from "@/lib/hms/services";
+import { emit } from "@/lib/hms/workflows/bus";
+import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 
 function withId(fn: (id: string, ctx: { req: NextRequest; user: SessionUser }) => Promise<NextResponse>) {
   return async (req: NextRequest, ctx: { params: Promise<{ id: string }> }) => {
@@ -116,6 +118,8 @@ export const POST = withId(
         resourceId: id,
       });
     }
+    // Outbox (§70): inspection completed — feeds project history / reporting workflows.
+    await emit({ type: EVENT_TYPES.INSPECTION_COMPLETED, resourceType: "InspectionReport", resourceId: id, payload: { code: report.code }, actorType: "USER", actorId: user.id });
     return ok(updated);
   }
 );

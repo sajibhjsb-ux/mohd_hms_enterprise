@@ -11,6 +11,8 @@ import { audit, notify, notifyRole } from "@/lib/hms/services";
 import { WO_TRANSITIONS, PERMISSIONS } from "@/lib/hms/constants";
 import type { SessionUser } from "@/lib/hms/auth";
 import { WO_DETAIL_INCLUDE, assertViewWorkOrder, isAssignedTechnician, assertWoTransition } from "../../_lib";
+import { EVENT_TYPES } from "@/lib/hms/workflows/types";
+import { dedupeSubmission } from "@/lib/hms/workflows/idempotency";
 
 type Ctx = { req: NextRequest; user: SessionUser };
 
@@ -29,6 +31,7 @@ const transitionSchema = z.object({
 export const POST = withId(
   async (id, { req, user }) => {
     const body = await parseBody(req, transitionSchema);
+    if (body.action === "complete") dedupeSubmission({ userId: user.id, route: "POST /api/v1/work-orders/[id]/transition:complete", body: { id, note: body.note } });
     const wo = await db.workOrder.findUnique({ where: { id }, include: WO_DETAIL_INCLUDE });
     if (!wo) throw Errors.notFound("Work order not found.");
     await assertViewWorkOrder(user, wo);
@@ -108,7 +111,7 @@ export const POST = withId(
 
       case "complete": {
         assertWoTransition("COMPLETED", from, WO_TRANSITIONS);
-        const { updated } = await db.$transaction(async (tx) => {
+        const { updated, lowStockItems } = await db.$transaction(async (tx) => {
           // Re-read inside the transaction — guards idempotency (a concurrent
           // completion flips the status and this update throws via the guard below).
           const current = await tx.workOrder.findUnique({
@@ -125,10 +128,24 @@ export const POST = withId(
           const labourTotalCents = Math.round(current.labourHours * current.labourRateCents);
           const totalCents = labourTotalCents + materialsTotalCents;
 
+          // §15 — checklist enforcement is BACKEND-authoritative: a work order
+          // with unfinished checklist items cannot be completed, regardless of UI.
+          const checklist = await tx.workOrderChecklistItem.findMany({
+            where: { workOrderId: id },
+            select: { label: true, done: true },
+          });
+          const pending = checklist.filter((c) => !c.done);
+          if (pending.length > 0) {
+            throw Errors.invalidTransition(
+              `Cannot complete: ${pending.length} checklist item(s) still open (${pending.slice(0, 3).map((c) => c.label).join(", ")}${pending.length > 3 ? "…" : ""}).`
+            );
+          }
+
           // Stock deduction for inventoried materials (once — from-status guard above)
+          const lowStock: { id: string }[] = [];
           for (const m of current.materials) {
             if (!m.inventoryItemId) continue;
-            const item = await tx.inventoryItem.findUnique({ where: { id: m.inventoryItemId }, select: { id: true, stockQty: true } });
+            const item = await tx.inventoryItem.findUnique({ where: { id: m.inventoryItemId }, select: { id: true, stockQty: true, minStockQty: true } });
             if (!item) continue;
             const balanceAfter = item.stockQty - m.quantity;
             await tx.inventoryItem.update({ where: { id: item.id }, data: { stockQty: balanceAfter } });
@@ -138,6 +155,27 @@ export const POST = withId(
                 referenceType: "WORK_ORDER", referenceId: current.id, note: current.code, createdById: user.id,
               },
             });
+            // §17 — flag items that dropped to/below minimum after this issue.
+            if (balanceAfter <= item.minStockQty) lowStock.push({ id: item.id });
+          }
+
+          // Transactional outbox (§5): completion event commits with the stock
+          // deduction — the auto-invoice workflow can never be lost or orphaned.
+          await tx.domainEvent.create({
+            data: {
+              type: EVENT_TYPES.WORK_ORDER_COMPLETED, resourceType: "WORK_ORDER", resourceId: id,
+              payload: JSON.stringify({ code: current.code, totalCents: labourTotalCents + materialsTotalCents }),
+              actorType: "USER", actorId: user.id,
+            },
+          });
+          for (const item of lowStock) {
+            await tx.domainEvent.create({
+              data: {
+                type: EVENT_TYPES.LOW_STOCK, resourceType: "INVENTORY_ITEM", resourceId: item.id,
+                payload: JSON.stringify({ source: "WORK_ORDER", workOrderCode: current.code }),
+                actorType: "SYSTEM",
+              },
+            });
           }
 
           const row = await tx.workOrder.update({
@@ -145,7 +183,7 @@ export const POST = withId(
             data: { status: "COMPLETED", completedAt: now, labourTotalCents, materialsTotalCents, totalCents, ...(body.note ? { notes: body.note } : {}) },
             include: WO_DETAIL_INCLUDE,
           });
-          return { updated: row };
+          return { updated: row, lowStockItems: lowStock };
         });
 
         await audit({ actorId: user.id, actorEmail: user.email, action: "WORK_ORDER_COMPLETED", resourceType: "WORK_ORDER", resourceId: id, metadata: { code, totalCents: updated.totalCents } });

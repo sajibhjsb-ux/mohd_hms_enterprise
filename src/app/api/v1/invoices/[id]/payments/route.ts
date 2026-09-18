@@ -9,6 +9,9 @@ import { PERMISSIONS } from "@/lib/hms/constants";
 import { audit, nextNumber, notifyRole } from "@/lib/hms/services";
 import { isStaff } from "@/lib/hms/rbac";
 import type { SessionUser } from "@/lib/hms/auth";
+import { emit } from "@/lib/hms/workflows/bus";
+import { EVENT_TYPES } from "@/lib/hms/workflows/types";
+import { dedupeSubmission } from "@/lib/hms/workflows/idempotency";
 
 const bodySchema = z.object({
   amount: z.coerce.number().positive("Payment amount must be greater than 0"),
@@ -32,6 +35,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   const { id } = await ctx.params;
   return handler(async ({ user }) => {
     const body = await parseBody(req, bodySchema);
+    dedupeSubmission({ userId: user.id, route: `POST /api/v1/invoices/${id}/payments`, body });
     const invoice = await loadScoped(id, user);
 
     if (invoice.status === "CANCELLED") throw Errors.invalidTransition("Cannot record payments on a cancelled invoice.");
@@ -112,6 +116,17 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       resourceType: "INVOICE",
       resourceId: invoice.id,
     });
+    // Outbox (§27/§29/§69): payment event → customer receipt notification
+    // (auto-reconciliation) + queued email to the customer.
+    await emit({
+      type: EVENT_TYPES.PAYMENT_RECEIVED, resourceType: "INVOICE", resourceId: invoice.id,
+      payload: { code: invoice.code, amountCents, method: body.method, paidCents: updated.paidCents, balanceCents: updated.balanceCents },
+      actorType: "USER", actorId: user.id,
+    });
+    const payPortalUser = await db.customer.findUnique({ where: { id: invoice.customerId }, select: { portalUser: { select: { id: true } } } });
+    if (payPortalUser?.portalUser?.id) {
+      await emit({ type: EVENT_TYPES.EMAIL_SEND, resourceType: "INVOICE", resourceId: invoice.id, payload: { userId: payPortalUser.portalUser.id, title: `Payment received for ${invoice.code}`, message: `Payment of RM ${body.amount.toFixed(2)} received for invoice ${invoice.code}. Thank you.` }, actorType: "USER", actorId: user.id });
+    }
 
     return ok(updated, 201);
   }, { permission: PERMISSIONS.payments_record })(req);

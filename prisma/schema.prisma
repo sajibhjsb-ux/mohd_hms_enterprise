@@ -767,3 +767,55 @@ model Draft {
 
   @@unique([userId, formKey])
 }
+
+// ─────────────────────────── WORKFLOW ENGINE (outbox + runs) ───────────────────────────
+// DomainEvent is the transactional outbox: business services write the event in the
+// same transaction as their data change; the outbox worker processes it exactly once
+// (claim guard), retries with exponential backoff and dead-letters after max attempts.
+
+model DomainEvent {
+  id            String    @id @default(cuid())
+  type          String // COMPLAINT_CREATED, COMPLAINT_CONFIRMED, LOW_STOCK, PM_DUE, EMAIL_SEND …
+  resourceType  String    @default("")
+  resourceId    String    @default("")
+  payload       String    @default("{}") // JSON
+  // PENDING → PROCESSING → DONE | DEAD (PENDING again on retry)
+  status        String    @default("PENDING")
+  attempts      Int       @default(0)
+  maxAttempts   Int       @default(5)
+  nextAttemptAt DateTime  @default(now())
+  lastError     String    @default("")
+  requestId     String    @default("")
+  actorType     String    @default("USER") // USER | SYSTEM
+  actorId       String?
+  createdAt     DateTime  @default(now())
+  processedAt   DateTime?
+
+  runs WorkflowRun[]
+
+  @@index([status, nextAttemptAt])
+  @@index([type, createdAt])
+  @@index([resourceType, resourceId])
+}
+
+// One immutable record per workflow execution attempt. The unique [eventId, workflow]
+// index on SUCCESS results is the idempotency key: a retried event never re-executes
+// a workflow that already succeeded (handlers double-check business state as well).
+model WorkflowRun {
+  id           String      @id @default(cuid())
+  eventId      String
+  event        DomainEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  workflow     String // AUTO_CREATE_DRAFT_INVOICE, LOW_STOCK_ALERT, ESCALATE_COMPLAINT …
+  resourceType String      @default("")
+  resourceId   String      @default("")
+  // SUCCESS | SKIPPED | FAILED
+  result       String      @default("SUCCESS")
+  detail       String      @default("") // e.g. created invoice code / skip reason
+  actorType    String      @default("SYSTEM") // SYSTEM | USER
+  attempt      Int         @default(1)
+  startedAt    DateTime    @default(now())
+  completedAt  DateTime?
+
+  @@index([workflow, startedAt])
+  @@index([resourceType, resourceId])
+}

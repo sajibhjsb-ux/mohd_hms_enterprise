@@ -14,6 +14,7 @@ import { navigateTo } from "@/lib/hms/router";
 import { useToast } from "@/hooks/use-toast";
 import { PageShell } from "@/components/hms/shared/page-shell";
 import { StatusBadge, LoadingState, EmptyState, ErrorState } from "@/components/hms/shared/ui-bits";
+import { WorkflowTimeline } from "@/components/hms/shared/workflow-timeline";
 import { PERMISSIONS } from "@/lib/hms/constants";
 import { fmtDate, money } from "@/lib/hms/format";
 import { Button } from "@/components/ui/button";
@@ -240,6 +241,8 @@ export function InvoiceDetailPage({ id }: { id: string }) {
           </div>
         ) : null}
       </div>
+
+      <WorkflowTimeline resourceType="INVOICE" resourceId={detail.id} className="mt-6" />
 
       <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
         <AlertDialogContent>

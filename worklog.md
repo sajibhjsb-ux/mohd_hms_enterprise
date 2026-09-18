@@ -692,3 +692,26 @@ Stage Summary:
 - ALL spec-56 sections verified by real-browser testing; every Create/View/Edit/Delete/Search/Filter/Tab/Back-Forward/Direct-URL flow exercised per module; data protection (draft-on-refresh, guard, no unexpected resets) proven; dual RBAC + tenant scoping proven server-authoritative
 - Final files changed this task set: modules/complaints/edit-page.tsx (new), modules/complaints/index.tsx, modules/complaints/detail-page.tsx, modules/equipment/index.tsx, modules/customers/detail-page.tsx
 - FINAL STATUS: PASS — ready for 12-section report
+
+---
+Task ID: 16
+Agent: Z.ai Code (main)
+Task: 115-section COMPLETE AUTOMATIC WORKFLOW ENGINE — implement + verify + push to GitHub
+
+Work Log:
+- Read uploaded 115-section spec (end-to-end business automation) in full; recon of existing architecture (hash-router SPA, 90+ API routes, per-module state machines, audit/notify services, SQLite/Prisma)
+- Prisma: added DomainEvent (transactional outbox: status/attempts/nextAttemptAt/lastError/actorType, indexed) + WorkflowRun (per-attempt ledger, unique [eventId,workflow]) → db push (additive)
+- Engine core in src/lib/hms/workflows/: types.ts (24 event types), settings.ts (17 configurable settings w/ 60s cache), bus.ts (emit w/ optional tx → atomic outbox), engine.ts (claim guard, per-attempt WorkflowRun, exp backoff 30s→15m cap, dead-letter + SUPER_ADMIN alert, idempotent retry), idempotency.ts (5s TTL dedupe), scheduler.ts (10s engine tick + 60s scans: PM due/reminders/overdue, escalation, SLA, invoice overdue), handlers.ts (12 workflows), src/instrumentation.ts (boot start)
+- Wired emits into 9 routes; concurrency guards (status-guarded updateMany) on complaint transitions; backend checklist enforcement on WO complete (§15 → 422); active-technician validation (§11); double-submission dedupe on create/complete/payment routes
+- APIs: /api/v1/automation/overview|settings|events/[id]/retry (RBAC: settings_read view, settings_manage edit, SUPER_ADMIN retry, all audited)
+- Frontend: Settings → Automation tab (live KPIs, 11 automation status rows, failed/dead-letter lists w/ SUPER_ADMIN retry, toggles+number inputs); shared WorkflowTimeline (audit-driven, SYSTEM badge) added to 6 detail pages; audit API gained resourceType/resourceId filters
+- BUGS FOUND+FIXED: B1 dedupe ctx.body ReferenceError → 500 (added tsc --noEmit to QA); B2 engine registry duplicated across module graphs (instrumentation vs route chunks) → events no-op'd → globalThis registry; B3 tech.status vs user.status active check; B4 WO completed after confirm never invoiced → late-completion rule
+- Browser+DB E2E: full complaint lifecycle across 4 role logins (CPT-2026-0010 NEW→…→CLOSED, 6 history rows, all timestamps), auto-WO (WO-2026-0003), checklist-blocked completion (422), material issue 40→5 + StockMovement + LOW_STOCK alert, customer confirm → auto INV-2026-0010 (RM760 = 130 labour + 630 material), finance send+payment → PAID + TRX + customer receipt, admin close
+- Idempotency: event retry ×2 → still 1 invoice; double-click → 409 + single record
+- Scheduler: PM_DUE → PMT-2026-0005 generated + nextDue advanced (auto-recurrence); PM_REMINDER (4d + 1d) → tech notifications; PM_OVERDUE → SCHEDULED→OVERDUE flip + alerts; escalation/SLA/WO-overdue fired on real seed records
+- RBAC negatives: customer→automation 403, finance→retry/settings 403, cross-tenant 404; mobile 375px no overflow; console clean; 2 mid-test server restarts lost nothing (§94/95)
+- Final: 33 events all DONE, 17 SUCCESS + 6 documented SKIPPED runs, 0 dead letters; lint + tsc clean; docs/AUTOMATION-REPORT.md (17-section report, FINAL STATUS: NOT PRODUCTION READY solely pending §13 items: provider creds, real overdue observation, PostgreSQL migration+backup drill)
+
+Stage Summary:
+- All 115 spec sections implemented and verified to the maximum extent the sandbox allows; report saved at docs/AUTOMATION-REPORT.md; worklog + report + code pushed to GitHub (sajibhjsb-ux/mohd_hms_enterprise main)
+- Key files: src/lib/hms/workflows/* (engine), src/instrumentation.ts, api/v1/automation/*, settings/automation-tab.tsx, shared/workflow-timeline.tsx, 9 wired API routes, schema +2 models

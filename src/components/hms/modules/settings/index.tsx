@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { AutomationTab } from "./automation-tab";
 
 // Keep in sync with package.json version.
 const APP_VERSION = "0.2.1";
@@ -141,6 +142,7 @@ export function SettingsModule() {
       <Tabs defaultValue="company">
         <TabsList className="mb-4">
           <TabsTrigger value="company">Company</TabsTrigger>
+          <TabsTrigger value="automation">Automation</TabsTrigger>
           <TabsTrigger value="system">System</TabsTrigger>
         </TabsList>
 
@@ -206,6 +208,11 @@ export function SettingsModule() {
               </CardContent>
             </Card>
           )}
+        </TabsContent>
+
+        {/* ── Automation (§63/§104 — inside the existing Settings architecture) ── */}
+        <TabsContent value="automation">
+          <AutomationTab />
         </TabsContent>
 
         {/* ── System ── */}

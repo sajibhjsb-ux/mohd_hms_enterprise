@@ -8,6 +8,9 @@ import { isStaff } from "@/lib/hms/rbac";
 import { audit, nextNumber, notify, notifyRole } from "@/lib/hms/services";
 import { PERMISSIONS, PRIORITIES } from "@/lib/hms/constants";
 import { COMPLAINT_INCLUDE, complaintScopeWhere } from "./_lib";
+import { dedupeSubmission } from "@/lib/hms/workflows/idempotency";
+import { emit } from "@/lib/hms/workflows/bus";
+import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 
 const createSchema = z.object({
   title: z.string().min(3, "Title must be at least 3 characters.").max(200),
@@ -66,6 +69,7 @@ export const GET = handler(
 export const POST = handler(
   async ({ req, user }) => {
     const body = await parseBody(req, createSchema);
+    dedupeSubmission({ userId: user.id, route: "POST /api/v1/complaints", body });
 
     let customerId: string;
     if (user.role === "CUSTOMER") {
@@ -112,6 +116,8 @@ export const POST = handler(
       notifyRole("SUPERVISOR", { title: "New complaint", message: `New complaint ${code}: ${body.title}`, type: "INFO", resourceType: "COMPLAINT", resourceId: created.id }),
       notifyRole("ADMIN", { title: "New complaint", message: `New complaint ${code}: ${body.title}`, type: "INFO", resourceType: "COMPLAINT", resourceId: created.id }),
     ]);
+    // Outbox: downstream workflows (urgency escalations, SLA tracking) key off this event.
+    await emit({ type: EVENT_TYPES.COMPLAINT_CREATED, resourceType: "COMPLAINT", resourceId: created.id, payload: { code, priority: body.priority, customerId }, actorType: "USER", actorId: user.id });
 
     return ok(created, 201);
   },

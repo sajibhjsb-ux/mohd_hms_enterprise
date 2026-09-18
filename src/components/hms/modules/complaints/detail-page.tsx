@@ -11,6 +11,7 @@ import { hasPerm, useSession } from "@/components/hms/session";
 import { navigateTo } from "@/lib/hms/router";
 import { PageShell } from "@/components/hms/shared/page-shell";
 import { PriorityBadge, StatusBadge, LoadingState, EmptyState, ErrorState } from "@/components/hms/shared/ui-bits";
+import { WorkflowTimeline } from "@/components/hms/shared/workflow-timeline";
 import { PERMISSIONS, humanize } from "@/lib/hms/constants";
 import { fmtDateTime } from "@/lib/hms/format";
 import { useToast } from "@/hooks/use-toast";
@@ -306,6 +307,8 @@ export function ComplaintDetailPage({ id }: { id: string }) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <WorkflowTimeline resourceType="COMPLAINT" resourceId={detail.id} className="mt-6" />
 
       <Separator className="opacity-0" />
     </PageShell>

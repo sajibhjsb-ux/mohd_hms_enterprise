@@ -55,3 +55,8 @@ server.log
 # local env & database (never commit secrets or data)
 .env
 *.db
+
+# local working artifacts
+tool-results/
+upload/
+dev.log

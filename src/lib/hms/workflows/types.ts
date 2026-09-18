@@ -1,0 +1,66 @@
+// MOHD.HMS ENTERPRISE — Workflow engine types.
+// Central event vocabulary (§3 EVENT-DRIVEN ARCHITECTURE). Business services emit
+// these after their authoritative database write; the outbox worker (§5) executes
+// the registered workflow actions exactly once, with retry (§7) and dead-lettering
+// (§8). NEVER emit business events from frontend code.
+
+import "server-only";
+import type { Prisma } from "@prisma/client";
+
+export const EVENT_TYPES = {
+  // Complaint lifecycle (§10)
+  COMPLAINT_CREATED: "COMPLAINT_CREATED",
+  COMPLAINT_ASSIGNED: "COMPLAINT_ASSIGNED",
+  COMPLAINT_ACCEPTED: "COMPLAINT_ACCEPTED",
+  COMPLAINT_STARTED: "COMPLAINT_STARTED",
+  COMPLAINT_COMPLETED: "COMPLAINT_COMPLETED",
+  COMPLAINT_CONFIRMED: "COMPLAINT_CONFIRMED",
+  COMPLAINT_CLOSED: "COMPLAINT_CLOSED",
+  // Work orders (§13/§14)
+  COMPLAINT_ACCEPTANCE_AUTO_WO: "COMPLAINT_ACCEPTANCE_AUTO_WO",
+  WORK_ORDER_COMPLETED: "WORK_ORDER_COMPLETED",
+  // Inventory (§16/§17)
+  LOW_STOCK: "LOW_STOCK",
+  // Purchasing (§18/§19)
+  PURCHASE_RECEIVED: "PURCHASE_RECEIVED",
+  // PM automation (§20/§21) — raised by the scheduler
+  PM_DUE: "PM_DUE",
+  PM_REMINDER: "PM_REMINDER",
+  PM_OVERDUE: "PM_OVERDUE",
+  // Quotations (§24)
+  QUOTATION_SENT: "QUOTATION_SENT",
+  QUOTATION_ACCEPTED: "QUOTATION_ACCEPTED",
+  // Invoices / payments (§26/§27)
+  INVOICE_SENT: "INVOICE_SENT",
+  INVOICE_OVERDUE: "INVOICE_OVERDUE",
+  PAYMENT_RECEIVED: "PAYMENT_RECEIVED",
+  // Inspections (§70)
+  INSPECTION_COMPLETED: "INSPECTION_COMPLETED",
+  // Escalation / SLA / overdue — raised by the scheduler (§22/§34/§59/§62)
+  ESCALATE_COMPLAINT_NOT_ACCEPTED: "ESCALATE_COMPLAINT_NOT_ACCEPTED",
+  SLA_BREACH_COMPLAINT: "SLA_BREACH_COMPLAINT",
+  WO_OVERDUE: "WO_OVERDUE",
+  // Email queue (§30) — centralized EmailService input
+  EMAIL_SEND: "EMAIL_SEND",
+} as const;
+
+export type EventType = (typeof EVENT_TYPES)[keyof typeof EVENT_TYPES];
+
+export type TxClient = Prisma.TransactionClient;
+
+export type EmitInput = {
+  type: EventType | string;
+  resourceType?: string;
+  resourceId?: string;
+  payload?: Record<string, unknown>;
+  /** USER = human-triggered action; SYSTEM = scheduler/automation (§39). */
+  actorType?: "USER" | "SYSTEM";
+  actorId?: string | null;
+  requestId?: string;
+  /**
+   * Transactional outbox (§4/§5): pass the interactive transaction client so the
+   * event row commits together with the business data — database updated but
+   * automation lost (or the inverse) becomes impossible.
+   */
+  tx?: TxClient;
+};

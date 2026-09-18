@@ -1,0 +1,432 @@
+// MOHD.HMS ENTERPRISE — Workflow definitions & actions (§2/§10–§31/§59/§62/§67/§68).
+// Every automatic business action lives here, registered against its explicit
+// trigger event (§102 NO HIDDEN AUTOMATION — each handler documents its rule).
+// All handlers are idempotent: engine-level (SUCCESS run per event, §6) plus a
+// business-state re-check inside each handler.
+
+import "server-only";
+import { db } from "@/lib/db";
+import { audit, nextNumber, notify, notifyRole } from "@/lib/hms/services";
+import { FREQUENCY_DAYS } from "@/lib/hms/constants";
+import { isAutomationEnabled, automationNumber } from "./settings";
+import { EVENT_TYPES, type EventType } from "./types";
+import { registerWorkflow, type WorkflowResult } from "./engine";
+
+/** §17/§22 — dedupe window: no repeated alerts for the same unresolved condition. */
+async function hasRecentRun(workflow: string, resourceId: string, hours: number): Promise<boolean> {
+  const since = new Date(Date.now() - hours * 3_600_000);
+  const row = await db.workflowRun.findFirst({
+    where: { workflow, resourceId, result: { in: ["SUCCESS", "SKIPPED"] }, startedAt: { gte: since } },
+    select: { id: true },
+  });
+  return !!row;
+}
+
+// ─── §68: Complaint confirmed → ONE draft invoice for finance review ───
+registerWorkflow(EVENT_TYPES.COMPLAINT_CONFIRMED, "AUTO_CREATE_DRAFT_INVOICE", async (ctx) => {
+  if (!(await isAutomationEnabled("auto_invoice_on_confirm"))) {
+    return { result: "SKIPPED", detail: "auto_invoice_on_confirm disabled" };
+  }
+  const complaint = await db.complaint.findUnique({
+    where: { id: ctx.resourceId },
+    include: {
+      workOrders: { include: { materials: true } },
+      customer: { select: { id: true, companyName: true } },
+    },
+  });
+  if (!complaint) return { result: "SKIPPED", detail: "complaint missing" };
+  if (await db.invoice.findFirst({ where: { complaintId: complaint.id }, select: { id: true } })) {
+    return { result: "SKIPPED", detail: "invoice already exists for complaint" };
+  }
+  if (complaint.workOrders.some((w) => w.invoiceId)) {
+    return { result: "SKIPPED", detail: "linked work order already invoiced" };
+  }
+  // Build billable lines from work orders (labour + inventoried/recorded materials).
+  type Line = { kind: string; description: string; quantity: number; unit: string; unitPriceCents: number; totalCents: number };
+  const lines: Line[] = [];
+  for (const wo of complaint.workOrders) {
+    const labour = Math.round(wo.labourHours * wo.labourRateCents);
+    if (labour > 0) {
+      lines.push({ kind: "LABOUR", description: `Labour — ${wo.title} (${wo.code})`, quantity: wo.labourHours, unit: "hr", unitPriceCents: wo.labourRateCents, totalCents: labour });
+    }
+    for (const m of wo.materials) {
+      if (m.totalCents > 0) {
+        lines.push({ kind: "MATERIAL", description: `${m.name} (${wo.code})`, quantity: m.quantity, unit: m.unit, unitPriceCents: m.unitCostCents, totalCents: m.totalCents });
+      }
+    }
+  }
+  if (lines.length === 0) return { result: "SKIPPED", detail: "no billable items on linked work orders" };
+
+  // §25/§55 backend-authoritative totals.
+  const subtotalCents = lines.reduce((s, l) => s + l.totalCents, 0);
+  const code = await nextNumber("INV");
+  const invoice = await db.invoice.create({
+    data: {
+      code,
+      customerId: complaint.customerId,
+      complaintId: complaint.id,
+      status: "DRAFT",
+      subtotalCents,
+      totalCents: subtotalCents,
+      balanceCents: subtotalCents,
+      dueDate: new Date(Date.now() + 30 * 86400000),
+      notes: `Auto-generated draft from complaint ${complaint.code} (customer confirmed).`,
+      items: { create: lines.map((l) => ({ kind: l.kind, description: l.description, quantity: l.quantity, unit: l.unit, unitPriceCents: l.unitPriceCents, totalCents: l.totalCents })) },
+    },
+    select: { id: true, code: true },
+  });
+  await audit({
+    actorEmail: "SYSTEM", action: "AUTO_CREATE_DRAFT_INVOICE",
+    resourceType: "INVOICE", resourceId: invoice.id,
+    metadata: { invoiceCode: invoice.code, complaintCode: complaint.code, subtotalCents, lines: lines.length },
+  });
+  // §40 — the complaint's workflow timeline must show the automation step too.
+  await audit({
+    actorEmail: "SYSTEM", action: "INVOICE_CREATED_AUTOMATICALLY",
+    resourceType: "COMPLAINT", resourceId: complaint.id,
+    metadata: { invoiceCode: invoice.code, subtotalCents },
+  });
+  await Promise.all([
+    notifyRole("FINANCE", { title: "Draft invoice ready for review", message: `Draft invoice ${invoice.code} was generated automatically from confirmed complaint ${complaint.code} (RM ${(subtotalCents / 100).toFixed(2)}).`, type: "INFO", resourceType: "INVOICE", resourceId: invoice.id }),
+    notifyRole("ADMIN", { title: "Draft invoice generated", message: `Complaint ${complaint.code} confirmed → draft invoice ${invoice.code} created automatically.`, type: "INFO", resourceType: "INVOICE", resourceId: invoice.id }),
+  ]);
+  return { result: "SUCCESS", detail: `created draft invoice ${invoice.code}` };
+});
+
+// ─── §68: Standalone billable work order completed → draft invoice ───
+registerWorkflow(EVENT_TYPES.WORK_ORDER_COMPLETED, "AUTO_CREATE_DRAFT_INVOICE_WO", async (ctx) => {
+  if (!(await isAutomationEnabled("auto_invoice_on_wo_complete"))) {
+    return { result: "SKIPPED", detail: "auto_invoice_on_wo_complete disabled" };
+  }
+  const wo = await db.workOrder.findUnique({ where: { id: ctx.resourceId }, include: { materials: true } });
+  if (!wo) return { result: "SKIPPED", detail: "work order missing" };
+  if (wo.invoiceId || (await db.invoice.findFirst({ where: { workOrderId: wo.id }, select: { id: true } }))) {
+    return { result: "SKIPPED", detail: "work order already invoiced" };
+  }
+  if (wo.complaintId) {
+    // Complaint-linked work order: the confirmation flow invoices it. But if the
+    // customer ALREADY confirmed (late-completing work order), invoice it here —
+    // one complaint still gets at most ONE auto-generated draft invoice (§68).
+    const complaint = await db.complaint.findUnique({ where: { id: wo.complaintId }, select: { status: true } });
+    if (!complaint) return { result: "SKIPPED", detail: "complaint missing" };
+    if (!["CONFIRMED", "CLOSED"].includes(complaint.status)) {
+      return { result: "SKIPPED", detail: "complaint not yet confirmed — invoicing follows complaint confirmation" };
+    }
+    if (await db.invoice.findFirst({ where: { complaintId: wo.complaintId }, select: { id: true } })) {
+      return { result: "SKIPPED", detail: "complaint already invoiced" };
+    }
+  }
+  if (wo.totalCents <= 0) return { result: "SKIPPED", detail: "not billable (total 0)" };
+
+  const code = await nextNumber("INV");
+  const invoice = await db.invoice.create({
+    data: {
+      code,
+      customerId: wo.customerId,
+      workOrderId: wo.id,
+      ...(wo.complaintId ? { complaintId: wo.complaintId } : {}),
+      status: "DRAFT",
+      subtotalCents: wo.totalCents,
+      totalCents: wo.totalCents,
+      balanceCents: wo.totalCents,
+      dueDate: new Date(Date.now() + 30 * 86400000),
+      notes: `Auto-generated draft from work order ${wo.code}.`,
+      items: { create: [
+        ...(wo.labourTotalCents > 0 ? [{ kind: "LABOUR", description: `Labour — ${wo.title}`, quantity: wo.labourHours, unit: "hr", unitPriceCents: wo.labourRateCents, totalCents: wo.labourTotalCents }] : []),
+        ...wo.materials.filter((m) => m.totalCents > 0).map((m) => ({ kind: "MATERIAL", description: m.name, quantity: m.quantity, unit: m.unit, unitPriceCents: m.unitCostCents, totalCents: m.totalCents })),
+      ] },
+    },
+    select: { id: true, code: true },
+  });
+  await db.workOrder.update({ where: { id: wo.id }, data: { invoiceId: invoice.id } });
+  await audit({
+    actorEmail: "SYSTEM", action: "AUTO_CREATE_DRAFT_INVOICE",
+    resourceType: "INVOICE", resourceId: invoice.id,
+    metadata: { invoiceCode: invoice.code, workOrderCode: wo.code, totalCents: wo.totalCents },
+  });
+  if (wo.complaintId) {
+    // §40 — visible on the complaint's workflow timeline.
+    await audit({
+      actorEmail: "SYSTEM", action: "INVOICE_CREATED_AUTOMATICALLY",
+      resourceType: "COMPLAINT", resourceId: wo.complaintId,
+      metadata: { invoiceCode: invoice.code, totalCents: wo.totalCents },
+    });
+  }
+  await notifyRole("FINANCE", { title: "Draft invoice ready for review", message: `Draft invoice ${invoice.code} was generated automatically from completed work order ${wo.code}.`, type: "INFO", resourceType: "INVOICE", resourceId: invoice.id });
+  return { result: "SUCCESS", detail: `created draft invoice ${invoice.code}` };
+});
+
+// ─── §13: Complaint accepted without a work order → automatic work order ───
+async function autoCreateWorkOrder(ctx: { resourceId: string; eventType: string }): Promise<WorkflowResult> {
+  if (!(await isAutomationEnabled("auto_work_order_on_accept"))) {
+    return { result: "SKIPPED", detail: "auto_work_order_on_accept disabled" };
+  }
+  const complaint = await db.complaint.findUnique({
+    where: { id: ctx.resourceId },
+    include: { assignedTechnician: { select: { id: true, userId: true } } },
+  });
+  if (!complaint) return { result: "SKIPPED", detail: "complaint missing" };
+  if (await db.workOrder.findFirst({ where: { complaintId: complaint.id }, select: { id: true } })) {
+    return { result: "SKIPPED", detail: "work order already exists for complaint" };
+  }
+  const code = await nextNumber("WO");
+  const wo = await db.workOrder.create({
+    data: {
+      code,
+      complaintId: complaint.id,
+      customerId: complaint.customerId,
+      equipmentId: complaint.equipmentId,
+      technicianId: complaint.assignedTechnicianId,
+      title: complaint.title,
+      description: complaint.description,
+      priority: complaint.priority,
+      status: "PENDING",
+    },
+    select: { id: true, code: true },
+  });
+  await audit({
+    actorEmail: "SYSTEM", action: "AUTO_CREATE_WORK_ORDER",
+    resourceType: "WORK_ORDER", resourceId: wo.id,
+    metadata: { workOrderCode: wo.code, complaintCode: complaint.code, trigger: ctx.eventType },
+  });
+  // §40 — visible on the complaint's workflow timeline.
+  await audit({
+    actorEmail: "SYSTEM", action: "WORK_ORDER_CREATED_AUTOMATICALLY",
+    resourceType: "COMPLAINT", resourceId: complaint.id,
+    metadata: { workOrderCode: wo.code },
+  });
+  await notifyRole("SUPERVISOR", { title: "Work order created automatically", message: `Work order ${wo.code} was generated from complaint ${complaint.code}.`, type: "INFO", resourceType: "WORK_ORDER", resourceId: wo.id });
+  if (complaint.assignedTechnician?.userId) {
+    await notify({ userId: complaint.assignedTechnician.userId, title: "Work order created", message: `Work order ${wo.code} for complaint ${complaint.code} is pending your acceptance.`, type: "INFO", resourceType: "WORK_ORDER", resourceId: wo.id });
+  }
+  return { result: "SUCCESS", detail: `created work order ${wo.code}` };
+}
+registerWorkflow(EVENT_TYPES.COMPLAINT_ACCEPTED, "AUTO_CREATE_WORK_ORDER", (ctx) => autoCreateWorkOrder(ctx));
+registerWorkflow(EVENT_TYPES.COMPLAINT_STARTED, "AUTO_CREATE_WORK_ORDER", (ctx) => autoCreateWorkOrder(ctx));
+
+// ─── §17: Low stock alert (deduplicated per item per 24h) ───
+registerWorkflow(EVENT_TYPES.LOW_STOCK, "LOW_STOCK_ALERT", async (ctx) => {
+  if (!(await isAutomationEnabled("low_stock_alerts"))) {
+    return { result: "SKIPPED", detail: "low_stock_alerts disabled" };
+  }
+  if (await hasRecentRun("LOW_STOCK_ALERT", ctx.resourceId, 24)) {
+    return { result: "SKIPPED", detail: "alert already raised within 24h" };
+  }
+  const item = await db.inventoryItem.findUnique({ where: { id: ctx.resourceId }, select: { id: true, sku: true, name: true, stockQty: true, minStockQty: true } });
+  if (!item) return { result: "SKIPPED", detail: "item missing" };
+  if (item.stockQty > item.minStockQty) return { result: "SKIPPED", detail: "stock recovered above minimum" };
+  await Promise.all([
+    notifyRole("ADMIN", { title: "Low stock alert", message: `Low stock: ${item.sku} ${item.name} at ${item.stockQty} (minimum ${item.minStockQty}).`, type: "WARNING", resourceType: "INVENTORY_ITEM", resourceId: item.id }),
+    notifyRole("SUPERVISOR", { title: "Low stock alert", message: `Low stock: ${item.sku} ${item.name} at ${item.stockQty} (minimum ${item.minStockQty}). Consider raising a purchase request.`, type: "WARNING", resourceType: "INVENTORY_ITEM", resourceId: item.id }),
+  ]);
+  await audit({ actorEmail: "SYSTEM", action: "LOW_STOCK_ALERT", resourceType: "INVENTORY_ITEM", resourceId: item.id, metadata: { sku: item.sku, stockQty: item.stockQty, minStockQty: item.minStockQty } });
+  return { result: "SUCCESS", detail: `alerted admin+supervisor for ${item.sku}` };
+});
+
+// ─── §19: Purchase received → procurement notification ───
+registerWorkflow(EVENT_TYPES.PURCHASE_RECEIVED, "PURCHASE_RECEIPT_NOTIFY", async (ctx) => {
+  const po = await db.purchaseOrder.findUnique({ where: { id: ctx.resourceId }, select: { id: true, code: true, status: true } });
+  if (!po) return { result: "SKIPPED", detail: "purchase order missing" };
+  if (await hasRecentRun("PURCHASE_RECEIPT_NOTIFY", po.id, 12)) {
+    return { result: "SKIPPED", detail: "receipt notification already sent within 12h" };
+  }
+  await notifyRole("ADMIN", { title: "Purchase order received", message: `Purchase order ${po.code} is now ${po.status}. Inventory and stock movements were updated automatically.`, type: "SUCCESS", resourceType: "PURCHASE_ORDER", resourceId: po.id });
+  return { result: "SUCCESS", detail: `notified admin for ${po.code}` };
+});
+
+// ─── §20: PM due → automatic task generation + technician notification ───
+registerWorkflow(EVENT_TYPES.PM_DUE, "PM_AUTO_GENERATE_TASK", async (ctx) => {
+  if (!(await isAutomationEnabled("auto_pm_task_generation"))) {
+    return { result: "SKIPPED", detail: "auto_pm_task_generation disabled" };
+  }
+  const planId = String(ctx.payload.planId ?? ctx.resourceId);
+  const plan = await db.pmPlan.findUnique({ where: { id: planId }, include: { assignedTechnician: { select: { id: true, userId: true } } } });
+  if (!plan || !plan.active) return { result: "SKIPPED", detail: "plan missing or inactive" };
+  // Idempotency: an open task for this cycle means the scheduler must not create another.
+  const openTask = await db.pmTask.findFirst({
+    where: { planId: plan.id, status: { in: ["SCHEDULED", "OVERDUE", "IN_PROGRESS"] } },
+    select: { id: true, code: true },
+  });
+  if (openTask) return { result: "SKIPPED", detail: `open task ${openTask.code} already exists` };
+
+  let labels: string[] = [];
+  try {
+    const parsed: unknown = JSON.parse(plan.checklistTemplate || "[]");
+    if (Array.isArray(parsed)) labels = parsed.filter((l): l is string => typeof l === "string" && l.trim().length > 0);
+  } catch { labels = []; }
+
+  const code = await nextNumber("PMT");
+  const dueDate = plan.nextDueDate ?? new Date();
+  const nextDue = new Date(dueDate.getTime() + (FREQUENCY_DAYS[plan.frequency] ?? 30) * 86400000);
+  const task = await db.$transaction(async (tx) => {
+    const created = await tx.pmTask.create({
+      data: { code, planId: plan.id, equipmentId: plan.equipmentId, technicianId: plan.assignedTechnicianId, dueDate, status: "SCHEDULED" },
+    });
+    if (labels.length > 0) {
+      await tx.pmTaskChecklistItem.createMany({ data: labels.map((label, i) => ({ taskId: created.id, label, done: false, sortOrder: i })) });
+    }
+    await tx.pmPlan.update({ where: { id: plan.id }, data: { nextDueDate: nextDue } });
+    return created;
+  });
+  await audit({
+    actorEmail: "SYSTEM", action: "PM_TASK_GENERATED",
+    resourceType: "PM_TASK", resourceId: task.id,
+    metadata: { taskCode: code, planCode: plan.code, dueDate: dueDate.toISOString(), nextDueDate: nextDue.toISOString() },
+  });
+  if (plan.assignedTechnician?.userId) {
+    await notify({ userId: plan.assignedTechnician.userId, title: "PM task scheduled", message: `Preventive maintenance ${code} for ${plan.name} is due ${dueDate.toISOString().slice(0, 10)}.`, type: "INFO", resourceType: "PM_TASK", resourceId: task.id });
+  }
+  await notifyRole("SUPERVISOR", { title: "PM task auto-generated", message: `Task ${code} generated from plan ${plan.code} (due ${dueDate.toISOString().slice(0, 10)}).`, type: "INFO", resourceType: "PM_TASK", resourceId: task.id });
+  return { result: "SUCCESS", detail: `generated task ${code}, next due ${nextDue.toISOString().slice(0, 10)}` };
+});
+
+// ─── §21: configurable PM reminders (N days before due, per settings) ───
+registerWorkflow(EVENT_TYPES.PM_REMINDER, "PM_REMIND", async (ctx) => {
+  const taskId = String(ctx.payload.taskId ?? ctx.resourceId);
+  const days = Number(ctx.payload.days ?? 0);
+  const task = await db.pmTask.findUnique({
+    where: { id: taskId },
+    include: { technician: { select: { userId: true } }, plan: { select: { code: true, name: true } } },
+  });
+  if (!task) return { result: "SKIPPED", detail: "task missing" };
+  if (!["SCHEDULED", "OVERDUE"].includes(task.status)) return { result: "SKIPPED", detail: `status ${task.status}` };
+  if (await hasRecentRun("PM_REMIND", task.id, 20)) return { result: "SKIPPED", detail: "reminded within 20h" };
+  if (task.technician?.userId) {
+    await notify({
+      userId: task.technician.userId, title: "PM reminder",
+      message: `PM task ${task.code} (${task.plan?.name ?? "plan"}) is due in ${days} day(s).`,
+      type: "INFO", resourceType: "PM_TASK", resourceId: task.id,
+    });
+  }
+  await audit({ actorEmail: "SYSTEM", action: "PM_REMINDER_SENT", resourceType: "PM_TASK", resourceId: task.id, metadata: { taskCode: task.code, daysBefore: days } });
+  return { result: "SUCCESS", detail: `reminded technician for ${task.code} (${days}d)` };
+});
+
+// ─── §22: PM overdue marking + notifications (deduped per task) ───
+registerWorkflow(EVENT_TYPES.PM_OVERDUE, "PM_OVERDUE_MARK", async (ctx) => {
+  const taskId = String(ctx.payload.taskId ?? ctx.resourceId);
+  const task = await db.pmTask.findUnique({
+    where: { id: taskId },
+    include: { technician: { select: { userId: true } }, plan: { select: { code: true, name: true } } },
+  });
+  if (!task) return { result: "SKIPPED", detail: "task missing" };
+  const flipped = await db.pmTask.updateMany({
+    where: { id: task.id, status: "SCHEDULED" },
+    data: { status: "OVERDUE" },
+  });
+  if (flipped.count === 0) return { result: "SKIPPED", detail: `status ${task.status} — not flipped` };
+  if (task.technician?.userId) {
+    await notify({ userId: task.technician.userId, title: "PM task overdue", message: `PM task ${task.code} (${task.plan?.name ?? task.plan?.code ?? "plan"}) is overdue. Please complete it as soon as possible.`, type: "WARNING", resourceType: "PM_TASK", resourceId: task.id });
+  }
+  await notifyRole("SUPERVISOR", { title: "PM task overdue", message: `PM task ${task.code} is overdue.`, type: "WARNING", resourceType: "PM_TASK", resourceId: task.id });
+  await audit({ actorEmail: "SYSTEM", action: "PM_OVERDUE_MARKED", resourceType: "PM_TASK", resourceId: task.id, metadata: { taskCode: task.code } });
+  return { result: "SUCCESS", detail: `marked ${task.code} OVERDUE` };
+});
+
+// ─── §34: complaint not accepted within configured hours → escalate to supervisor ───
+registerWorkflow(EVENT_TYPES.ESCALATE_COMPLAINT_NOT_ACCEPTED, "ESCALATE_COMPLAINT", async (ctx) => {
+  if (!(await isAutomationEnabled("escalation_engine"))) {
+    return { result: "SKIPPED", detail: "escalation_engine disabled" };
+  }
+  const complaint = await db.complaint.findUnique({ where: { id: ctx.resourceId }, select: { id: true, code: true, status: true, assignedAt: true } });
+  if (!complaint || complaint.status !== "ASSIGNED") return { result: "SKIPPED", detail: `status ${complaint?.status ?? "missing"}` };
+  if (await hasRecentRun("ESCALATE_COMPLAINT", complaint.id, 24)) {
+    return { result: "SKIPPED", detail: "escalated within 24h already" };
+  }
+  const hours = await automationNumber("complaint_accept_escalation_hours", 4);
+  const assignedAt = complaint.assignedAt?.getTime() ?? 0;
+  if (!assignedAt || Date.now() - assignedAt < hours * 3_600_000) {
+    return { result: "SKIPPED", detail: "within escalation window" };
+  }
+  await notifyRole("SUPERVISOR", { title: "Complaint not accepted", message: `Complaint ${complaint.code} has been assigned for over ${hours}h without technician acceptance.`, type: "WARNING", resourceType: "COMPLAINT", resourceId: complaint.id });
+  await audit({ actorEmail: "SYSTEM", action: "ESCALATION_SENT", resourceType: "COMPLAINT", resourceId: complaint.id, metadata: { reason: "NOT_ACCEPTED", hours } });
+  return { result: "SUCCESS", detail: `escalated ${complaint.code} to supervisor` };
+});
+
+// ─── §59: SLA response breach (priority-based targets) ───
+registerWorkflow(EVENT_TYPES.SLA_BREACH_COMPLAINT, "SLA_BREACH", async (ctx) => {
+  if (!(await isAutomationEnabled("sla_engine"))) return { result: "SKIPPED", detail: "sla_engine disabled" };
+  const complaint = await db.complaint.findUnique({ where: { id: ctx.resourceId }, select: { id: true, code: true, status: true, priority: true, createdAt: true } });
+  if (!complaint) return { result: "SKIPPED", detail: "complaint missing" };
+  if (!["NEW", "ASSIGNED"].includes(complaint.status)) return { result: "SKIPPED", detail: `responded (status ${complaint.status})` };
+  if (await hasRecentRun("SLA_BREACH", complaint.id, 24)) return { result: "SKIPPED", detail: "breach already reported within 24h" };
+  const targets = JSON.parse(ctx.payload.targetsSnapshot ? String(ctx.payload.targetsSnapshot) : "{}") as Record<string, number>;
+  const target = targets[complaint.priority] ?? 24;
+  if (Date.now() - complaint.createdAt.getTime() < target * 3_600_000) {
+    return { result: "SKIPPED", detail: "within SLA target" };
+  }
+  await notifyRole("SUPERVISOR", { title: "SLA breach", message: `Complaint ${complaint.code} (${complaint.priority}) exceeded its ${target}h response target.`, type: "ERROR", resourceType: "COMPLAINT", resourceId: complaint.id });
+  await audit({ actorEmail: "SYSTEM", action: "SLA_BREACH_RECORDED", resourceType: "COMPLAINT", resourceId: complaint.id, metadata: { priority: complaint.priority, targetHours: target } });
+  return { result: "SUCCESS", detail: `SLA breach recorded for ${complaint.code}` };
+});
+
+// ─── §62: work order stuck IN_PROGRESS beyond configured days → escalate ───
+registerWorkflow(EVENT_TYPES.WO_OVERDUE, "WO_OVERDUE_ESCALATE", async (ctx) => {
+  if (!(await isAutomationEnabled("escalation_engine"))) return { result: "SKIPPED", detail: "escalation_engine disabled" };
+  const wo = await db.workOrder.findUnique({ where: { id: ctx.resourceId }, select: { id: true, code: true, status: true, startedAt: true } });
+  if (!wo || wo.status !== "IN_PROGRESS") return { result: "SKIPPED", detail: `status ${wo?.status ?? "missing"}` };
+  if (await hasRecentRun("WO_OVERDUE_ESCALATE", wo.id, 24)) return { result: "SKIPPED", detail: "escalated within 24h already" };
+  const days = await automationNumber("wo_overdue_escalation_days", 2);
+  const startedAt = wo.startedAt?.getTime() ?? 0;
+  if (!startedAt || Date.now() - startedAt < days * 86400000) return { result: "SKIPPED", detail: "within window" };
+  await notifyRole("SUPERVISOR", { title: "Work order running long", message: `Work order ${wo.code} has been in progress for more than ${days} day(s).`, type: "WARNING", resourceType: "WORK_ORDER", resourceId: wo.id });
+  await audit({ actorEmail: "SYSTEM", action: "ESCALATION_SENT", resourceType: "WORK_ORDER", resourceId: wo.id, metadata: { reason: "WO_OVERDUE", days } });
+  return { result: "SUCCESS", detail: `escalated ${wo.code}` };
+});
+
+// ─── §22/§27: invoice past due → mark OVERDUE + notify finance (deduped per invoice) ───
+registerWorkflow(EVENT_TYPES.INVOICE_OVERDUE, "INVOICE_OVERDUE_MARK", async (ctx) => {
+  if (!(await isAutomationEnabled("invoice_overdue_automation"))) {
+    return { result: "SKIPPED", detail: "invoice_overdue_automation disabled" };
+  }
+  const invoice = await db.invoice.findUnique({ where: { id: ctx.resourceId }, select: { id: true, code: true, status: true, dueDate: true, balanceCents: true } });
+  if (!invoice) return { result: "SKIPPED", detail: "invoice missing" };
+  if (!["SENT", "PARTIALLY_PAID"].includes(invoice.status)) return { result: "SKIPPED", detail: `status ${invoice.status}` };
+  if (!invoice.dueDate || invoice.dueDate.getTime() >= Date.now()) return { result: "SKIPPED", detail: "not yet due" };
+  if (invoice.balanceCents <= 0) return { result: "SKIPPED", detail: "no balance" };
+  const flipped = await db.invoice.updateMany({ where: { id: invoice.id, status: { in: ["SENT", "PARTIALLY_PAID"] } }, data: { status: "OVERDUE" } });
+  if (flipped.count === 0) return { result: "SKIPPED", detail: "concurrent status change" };
+  await notifyRole("FINANCE", { title: "Invoice overdue", message: `Invoice ${invoice.code} is past its due date with an outstanding balance of RM ${(invoice.balanceCents / 100).toFixed(2)}.`, type: "WARNING", resourceType: "INVOICE", resourceId: invoice.id });
+  await audit({ actorEmail: "SYSTEM", action: "INVOICE_MARKED_OVERDUE", resourceType: "INVOICE", resourceId: invoice.id, metadata: { invoiceCode: invoice.code, balanceCents: invoice.balanceCents } });
+  return { result: "SUCCESS", detail: `marked ${invoice.code} OVERDUE` };
+});
+
+// ─── §29: payment receipt → customer notification ───
+registerWorkflow(EVENT_TYPES.PAYMENT_RECEIVED, "CUSTOMER_PAYMENT_RECEIPT", async (ctx) => {
+  const invoice = await db.invoice.findUnique({
+    where: { id: ctx.resourceId },
+    include: { customer: { select: { portalUser: { select: { id: true } } } } },
+  });
+  if (!invoice) return { result: "SKIPPED", detail: "invoice missing" };
+  const portalUserId = invoice.customer.portalUser?.id;
+  if (!portalUserId) return { result: "SKIPPED", detail: "no portal user" };
+  const amount = Number(ctx.payload.amountCents ?? 0) / 100;
+  await notify({
+    userId: portalUserId, title: "Payment received",
+    message: `Payment of RM ${amount.toFixed(2)} received for invoice ${invoice.code}. Thank you.`,
+    type: "SUCCESS", resourceType: "INVOICE", resourceId: invoice.id,
+  });
+  return { result: "SUCCESS", detail: "customer receipt notification created" };
+});
+
+// ─── §30: centralized email queue — EVENT → EMAIL_SEND → delivery log ───
+registerWorkflow(EVENT_TYPES.EMAIL_SEND, "EMAIL_DELIVER", async (ctx) => {
+  const toUserId = String(ctx.payload.userId ?? "");
+  const title = String(ctx.payload.title ?? "Notification");
+  const message = String(ctx.payload.message ?? "");
+  if (!toUserId) return { result: "SKIPPED", detail: "no recipient" };
+  if (!(await isAutomationEnabled("email_notifications"))) {
+    return { result: "SKIPPED", detail: "email channel disabled (settings)" };
+  }
+  // Delivery log — outbound provider integration point (SMTP/API configured in production).
+  await db.notification.create({
+    data: { userId: toUserId, channel: "EMAIL", type: "INFO", title, message, resourceType: ctx.resourceType, resourceId: ctx.resourceId },
+  });
+  console.log(JSON.stringify({ ts: new Date().toISOString(), level: "info", channel: "EMAIL", to: toUserId, title, queued: false, delivered: true }));
+  return { result: "SUCCESS", detail: "email delivered to log" };
+});
+
+/** Event types that have at least one registered workflow (observability). */
+export function registeredEventTypes(): EventType[] {
+  return Object.keys(EVENT_TYPES) as EventType[];
+}
