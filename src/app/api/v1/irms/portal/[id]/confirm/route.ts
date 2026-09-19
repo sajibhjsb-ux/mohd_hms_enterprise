@@ -7,6 +7,7 @@ import { audit, notify } from "@/lib/hms/services";
 import { emit } from "@/lib/hms/workflows/bus";
 import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 import { buildSnapshot, type TxClient } from "@/lib/hms/irms/storage";
+import { assertTermsAccepted } from "@/lib/hms/legal/legal";
 
 const confirmSchema = z.object({
   decision: z.enum(["confirm", "reject"]),
@@ -25,6 +26,10 @@ export const POST = async (req: NextRequest, ctx: { params: Promise<{ id: string
   return handler(
     async ({ user, requestId }) => {
       const body = await parseBody(req, confirmSchema);
+
+      // Consent gate: confirming an inspection report is a customer action of
+      // legal significance — require the current Terms & Conditions first.
+      await assertTermsAccepted(user);
 
       const report = await db.inspectionReport.findUnique({
         where: { id },

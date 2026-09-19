@@ -17,6 +17,16 @@ export type SessionUser = {
   /** Backend-authoritative derived profile state (customers). */
   profileComplete?: boolean;
   missingFields?: string[];
+  /** Backend-authoritative Terms & Conditions acceptance state (see
+   *  lib/hms/legal/legal.ts). Present on session/login/verify payloads. */
+  terms?: {
+    version: string | null;
+    effectiveDate: string | null;
+    publishedAt: string | null;
+    changeSummary: string | null;
+    acceptedVersion: string | null;
+    requiresAcceptance: boolean;
+  };
 };
 
 type SessionCtx = {

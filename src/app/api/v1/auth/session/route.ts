@@ -1,14 +1,20 @@
 import { handler, ok } from "@/lib/hms/api";
 import { getSessionUser } from "@/lib/hms/auth";
 import { customerProfileState } from "@/lib/hms/customer-profile";
+import { termsStatusFor } from "@/lib/hms/legal/legal";
 
 /** Session heartbeat. Sliding renewal happens server-side, silently — no reloads.
  *  The payload carries the derived, backend-authoritative profile completion
- *  state so the shell/dashboard can gate restricted customer actions. */
+ *  state so the shell/dashboard can gate restricted customer actions, and the
+ *  Terms & Conditions acceptance state so the consent gate stays accurate even
+ *  when a new version is published mid-session. */
 export const GET = handler(
   async ({ user }) => {
     if (!user) return ok({ authenticated: false });
-    const profileState = await customerProfileState(user);
+    const [profileState, terms] = await Promise.all([
+      customerProfileState(user),
+      termsStatusFor(user),
+    ]);
     return ok({
       authenticated: true,
       user: {
@@ -20,6 +26,7 @@ export const GET = handler(
         permissions: user.permissions,
         profileComplete: profileState.profileComplete,
         missingFields: profileState.missingFields,
+        terms,
       },
       sessionExpiresAt: user.sessionExpiresAt,
     });

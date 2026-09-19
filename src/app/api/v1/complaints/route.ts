@@ -9,6 +9,7 @@ import { audit, nextNumber, notify, notifyRole } from "@/lib/hms/services";
 import { PERMISSIONS, PRIORITIES } from "@/lib/hms/constants";
 import { COMPLAINT_INCLUDE, complaintScopeWhere } from "./_lib";
 import { assertCustomerProfileComplete } from "@/lib/hms/customer-profile";
+import { assertTermsAccepted } from "@/lib/hms/legal/legal";
 import { dedupeSubmission } from "@/lib/hms/workflows/idempotency";
 import { emit } from "@/lib/hms/workflows/bus";
 import { EVENT_TYPES } from "@/lib/hms/workflows/types";
@@ -79,6 +80,10 @@ export const POST = handler(
       // record. Even direct API calls are rejected with the machine-readable
       // PROFILE_INCOMPLETE code (spec §8/§10/§12).
       await assertCustomerProfileComplete(user);
+      // Backend-authoritative consent gate: the current Terms & Conditions must
+      // have been accepted (records an append-only acceptance) before a
+      // customer can submit service requests (spec §21/§26).
+      await assertTermsAccepted(user);
       if (!user.customerId) throw Errors.forbidden("Your account is not linked to a customer.");
       customerId = user.customerId; // portal users can only file for themselves
     } else {

@@ -18,6 +18,7 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { AutomationTab } from "./automation-tab";
+import { LegalTab } from "./legal-tab";
 
 // Keep in sync with package.json version.
 const APP_VERSION = "0.2.1";
@@ -145,6 +146,7 @@ export function SettingsModule() {
           <TabsTrigger value="company">Company</TabsTrigger>
           <TabsTrigger value="localization">Localization</TabsTrigger>
           <TabsTrigger value="automation">Automation</TabsTrigger>
+          <TabsTrigger value="legal">Legal</TabsTrigger>
           <TabsTrigger value="system">System</TabsTrigger>
         </TabsList>
 
@@ -244,6 +246,11 @@ export function SettingsModule() {
         {/* ── Automation (§63/§104 — inside the existing Settings architecture) ── */}
         <TabsContent value="automation">
           <AutomationTab />
+        </TabsContent>
+
+        {/* ── Legal (Terms & Conditions / Privacy Policy — canonical versions) ── */}
+        <TabsContent value="legal">
+          <LegalTab />
         </TabsContent>
 
         {/* ── System ── */}

@@ -358,6 +358,20 @@ export function IrmsPortalPage() {
                 ? "Confirming approves this inspection report for your organisation. The inspection team is notified."
                 : "Rejecting sends the report back to the inspection team with your comment."}
             </AlertDialogDescription>
+            {/* Terms reference (spec §24) — canonical page, new tab so the
+                dialog and the customer's place in the review are not lost. */}
+            <p className="text-xs text-muted-foreground">
+              Our{" "}
+              <a
+                href="/terms"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-medium text-primary underline underline-offset-4 decoration-primary/40 hover:decoration-primary"
+              >
+                Terms &amp; Conditions
+              </a>{" "}
+              apply to portal confirmations. Confirming records that you have reviewed the report — it does not affect your rights under those Terms.
+            </p>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>

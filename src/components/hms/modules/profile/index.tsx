@@ -30,8 +30,8 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import {
-  AlertTriangle, ArrowLeft, BadgeCheck, Building2, CheckCircle2, KeyRound, Loader2,
-  Mail, MapPin, Pencil, Phone, Save, User,
+  AlertTriangle, ArrowLeft, BadgeCheck, Building2, CheckCircle2, ChevronRight, KeyRound, Loader2,
+  Mail, MapPin, Pencil, Phone, Save, ScrollText, ShieldCheck, User,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -274,7 +274,36 @@ function ProfileViewPage() {
         <p className="text-xs text-muted-foreground">
           This profile page is tailored for customer accounts. Staff profile fields can be managed by administrators.
         </p>
-      ) : null}
+      ) : (
+        // Legal (spec §27) — Terms & Conditions / Privacy Policy reachable from
+        // the customer portal profile without adding top-level navigation.
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Legal</CardTitle>
+            <CardDescription>The company's legal documents — always the current published version.</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-2 sm:grid-cols-2">
+            <button
+              type="button"
+              onClick={() => navigateTo("terms")}
+              className="flex min-h-[44px] items-center gap-2.5 rounded-lg border px-3 py-2.5 text-sm font-medium transition-colors hover:border-primary/40 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <ScrollText className="h-4 w-4 text-primary" aria-hidden />
+              <span className="flex-1 text-left">Terms &amp; Conditions</span>
+              <ChevronRight className="h-4 w-4 text-muted-foreground" aria-hidden />
+            </button>
+            <button
+              type="button"
+              onClick={() => navigateTo("privacy")}
+              className="flex min-h-[44px] items-center gap-2.5 rounded-lg border px-3 py-2.5 text-sm font-medium transition-colors hover:border-primary/40 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <ShieldCheck className="h-4 w-4 text-primary" aria-hidden />
+              <span className="flex-1 text-left">Privacy Policy</span>
+              <ChevronRight className="h-4 w-4 text-muted-foreground" aria-hidden />
+            </button>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

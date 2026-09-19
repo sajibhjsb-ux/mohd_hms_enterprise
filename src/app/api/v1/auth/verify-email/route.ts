@@ -13,6 +13,7 @@ import { handler, ok, Errors, parseBody } from "@/lib/hms/api";
 import { createSession, setSessionCookie, SESSION_TTL_MS, SESSION_REMEMBER_TTL_MS } from "@/lib/hms/auth";
 import { can } from "@/lib/hms/rbac";
 import { customerProfileState } from "@/lib/hms/customer-profile";
+import { termsStatusFor } from "@/lib/hms/legal/legal";
 import { verifyEmailOtp, clearEmailOtpDevMailbox, EMAIL_OTP_INVALID_MESSAGE } from "@/lib/hms/email-otp";
 import { rateLimit, clientIp } from "@/lib/hms/rate-limit";
 import { audit } from "@/lib/hms/services";
@@ -59,6 +60,7 @@ export const POST = handler(
 
     // Same payload shape as the login response — one client contract.
     const profileState = await customerProfileState(user);
+    const terms = await termsStatusFor(user);
     const res = NextResponse.json({
       ok: true,
       data: {
@@ -70,6 +72,7 @@ export const POST = handler(
         permissions: can(user.role as never),
         profileComplete: profileState.profileComplete,
         missingFields: profileState.missingFields,
+        terms,
       },
     });
     res.headers.set("x-session-expires-at", expiresAt.toISOString());

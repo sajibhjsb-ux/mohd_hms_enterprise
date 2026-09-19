@@ -585,6 +585,20 @@ export function ComplaintNewPage() {
               <p className="font-medium text-foreground text-sm">What happens next?</p>
               <p>On creation the complaint gets a unique number (CPT-…) and enters the standard workflow: <span className="font-medium">New → Assigned → In Progress → Completed → Confirmed → Closed</span>.</p>
               <p>Supervisors and admins are notified automatically. Technician assignment happens from the complaint details — responsibilities stay separated.</p>
+              {/* Terms reference (spec §24) — canonical page, new tab so the form
+                  state (and its autosaved draft) is never lost. */}
+              <p className="pt-1 border-t">
+                By submitting this request you confirm the information provided is accurate and accept our{" "}
+                <a
+                  href="/terms"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-medium text-primary underline underline-offset-4 decoration-primary/40 hover:decoration-primary"
+                >
+                  Terms &amp; Conditions
+                </a>
+                .
+              </p>
             </CardContent>
           </Card>
         </div>

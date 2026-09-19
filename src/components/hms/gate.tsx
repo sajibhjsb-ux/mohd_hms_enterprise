@@ -1,12 +1,36 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Image from "next/image";
 import { useSession } from "./session";
 import { AppShell } from "./shell";
 import { LoginScreen } from "./login-screen";
+import { PublicLegalView } from "./legal/public-legal-view";
+import type { LegalKind } from "@/lib/hms/legal/types";
+
+/** Public legal paths served to logged-out visitors (Terms & Conditions /
+ *  Privacy Policy). The links appear on the auth screens, in the app footer,
+ *  on documents and in the consent gate, so they must work without a session. */
+function legalKindFromPath(pathname: string): LegalKind | null {
+  const clean = pathname.replace(/\/+$/, "");
+  if (clean === "/terms") return "TERMS";
+  if (clean === "/privacy") return "PRIVACY";
+  return null;
+}
 
 export function Gate() {
   const { user, loading } = useSession();
+  // Tracked via effect (not a state initializer) so the server-rendered splash
+  // and the first client render match — no hydration mismatch.
+  const [legalKind, setLegalKind] = useState<LegalKind | null>(null);
+
+  useEffect(() => {
+    const compute = () => setLegalKind(legalKindFromPath(window.location.pathname));
+    compute();
+    window.addEventListener("popstate", compute);
+    return () => window.removeEventListener("popstate", compute);
+  }, []);
+
   if (loading) {
     return (
       // Splash container: full dynamic viewport height (splash-viewport helper in
@@ -37,6 +61,12 @@ export function Gate() {
         </div>
       </div>
     );
+  }
+  // Public legal pages: logged-out visitors get the standalone document;
+  // authenticated users get the in-app module via the shell (same canonical
+  // document either way).
+  if (legalKind) {
+    return user ? <AppShell /> : <PublicLegalView kind={legalKind} />;
   }
   return user ? <AppShell /> : <LoginScreen />;
 }

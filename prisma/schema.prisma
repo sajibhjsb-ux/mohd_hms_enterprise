@@ -9,7 +9,10 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  // NOTE: the running datastore is the SQLite file DB (db/custom.db, see .env).
+  // Production may point PostgreSQL — flip provider + DATABASE_URL together;
+  // the CLI rejects a postgres:// provider with a file: URL.
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -44,6 +47,7 @@ model User {
   notifications      Notification[]
   auditLogs          AuditLog[]
   attendance         Attendance[]
+  legalAcceptances   LegalAcceptance[]
 
   @@index([role])
   @@index([status])
@@ -936,6 +940,63 @@ model Draft {
   updatedAt DateTime @updatedAt
 
   @@unique([userId, formKey])
+}
+
+// ─────────────────────────────── LEGAL / CONSENT ───────────────────────────────
+
+// Canonical legal documents (Terms & Conditions, Privacy Policy). ONE source of
+// truth per kind: content is stored as structured PLAIN-TEXT sections (never
+// HTML — nothing to sanitize, nothing can inject markup) and rendered by the
+// /terms and /privacy pages, the customer consent gate and the public API.
+// Published versions are immutable: corrections ship as a new version, and
+// publishing a draft archives the previously published document.
+model LegalDocument {
+  id            String    @id @default(cuid())
+  // TERMS | PRIVACY
+  kind          String
+  // e.g. "1.0" — unique per kind
+  version       String
+  // DRAFT | PUBLISHED | ARCHIVED
+  status        String    @default("DRAFT")
+  // Configurable by the company; left NULL until management/legal approval —
+  // the UI then shows the document as pending effective-date approval.
+  effectiveDate DateTime?
+  publishedAt   DateTime?
+  changeSummary String    @default("")
+  // JSON: [{ id, title, body, needsReview? }] — plain text bodies.
+  sections      String
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  acceptances   LegalAcceptance[]
+
+  @@unique([kind, version])
+  @@index([kind, status])
+}
+
+// Append-only acceptance evidence: one record per user per document version.
+// Created ONLY by the accept endpoint (never by the UI directly) and never
+// editable by customers. Unique [userId, documentId] makes acceptance
+// idempotent — accepting the same version twice stores a single record.
+model LegalAcceptance {
+  id         String        @id @default(cuid())
+  userId     String
+  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  documentId String
+  document   LegalDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  // Denormalized from the document so records stay meaningful even if a
+  // document row were ever removed.
+  kind       String
+  version    String
+  // WEB_APP | CUSTOMER_ONBOARDING | … — where the acceptance happened.
+  context    String        @default("WEB_APP")
+  ip         String?
+  userAgent  String?
+  acceptedAt DateTime      @default(now())
+
+  @@unique([userId, documentId])
+  @@index([userId])
+  @@index([documentId])
 }
 
 // ─────────────────────────── WORKFLOW ENGINE (outbox + runs) ───────────────────────────

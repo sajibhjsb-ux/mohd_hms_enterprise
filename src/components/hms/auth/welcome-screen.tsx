@@ -68,8 +68,29 @@ export function AuthWelcomeScreen({
         </AuthPrimaryButton>
       </div>
 
+      {/* Real links to the canonical legal pages (Gate serves them to
+          logged-out visitors) — opened in a new tab so the auth flow state
+          is never lost. */}
       <p className="mt-4 text-xs leading-relaxed text-muted-foreground">
-        By continuing, you agree to our Terms of Service &amp; Privacy Policy.
+        By continuing, you agree to our{" "}
+        <a
+          href="/terms"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="font-medium text-foreground underline underline-offset-4 decoration-muted-foreground/50 hover:text-primary hover:decoration-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
+        >
+          Terms &amp; Conditions
+        </a>{" "}
+        &amp;{" "}
+        <a
+          href="/privacy"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="font-medium text-foreground underline underline-offset-4 decoration-muted-foreground/50 hover:text-primary hover:decoration-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
+        >
+          Privacy Policy
+        </a>
+        .
       </p>
       <p className="text-[0.7rem] text-muted-foreground/80">
         Protected enterprise system — authenticated, role-based and audit-logged.

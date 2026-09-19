@@ -35,6 +35,7 @@ import { FloatingNav } from "./shell/floating-nav";
 import { GlobalSearch, type SearchNavigateTarget } from "./shell/global-search";
 import { QrScanDialog } from "./shell/qr-dialog";
 import { RealtimeProvider } from "./realtime/realtime-provider";
+import { TermsConsentGate } from "./legal/terms-consent-gate";
 
 export function AppShell() {
   const { user } = useSession();
@@ -166,6 +167,14 @@ export function AppShell() {
 
   if (!user) return null;
 
+  // Consent gate (spec §21/§22/§26): while a customer has not accepted the
+  // current Terms & Conditions version, the portal is replaced by the consent
+  // screen — first acceptance AND the "updated" re-acceptance flow. The state
+  // is backend-authoritative (session payload), never a UI-only flag.
+  if (user.role === "CUSTOMER" && user.terms?.requiresAcceptance === true) {
+    return <TermsConsentGate />;
+  }
+
   const active = visible.find((m) => m.key === activeModule) ?? visible[0];
   const mobileNav = navVisible.filter((m) => m.mobile);
   const ActiveComponent = active?.component;
@@ -195,7 +204,29 @@ export function AppShell() {
             <span>© {new Date().getFullYear()} MOHD.HMS Enterprise — Smart Facility Maintenance Management</span>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-3">
-            <span className="hidden sm:inline">www.mohdhms.com</span>
+            {/* Canonical legal pages (spec §25) — internal SPA navigation. */}
+            <button
+              type="button"
+              onClick={() => navigateTo("terms")}
+              className="underline-offset-4 hover:underline hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
+            >
+              Terms &amp; Conditions
+            </button>
+            <button
+              type="button"
+              onClick={() => navigateTo("privacy")}
+              className="underline-offset-4 hover:underline hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
+            >
+              Privacy Policy
+            </button>
+            <a
+              href="https://www.mohdhms.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hidden sm:inline underline-offset-4 hover:underline hover:text-foreground"
+            >
+              www.mohdhms.com
+            </a>
             <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700 border-emerald-200">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 mr-1 inline-block" aria-hidden /> System healthy
             </Badge>

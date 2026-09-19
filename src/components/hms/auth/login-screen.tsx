@@ -204,7 +204,9 @@ export function AuthLoginScreen({
       </form>
 
       {/* Google sign-in auto-provisions a customer account for new people —
-          this is the application's real self-service registration path. */}
+          this is the application's real self-service registration path.
+          (Acceptance of the current Terms & Conditions is requested and
+          recorded in the portal itself, enforced by the backend.) */}
       <p className="mt-7 text-center text-sm text-muted-foreground">
         Don&apos;t have an account?{" "}
         <button
@@ -215,6 +217,30 @@ export function AuthLoginScreen({
         >
           Sign up with Google
         </button>
+      </p>
+
+      {/* Legal wording with real links to the canonical pages (new tab so the
+          login form state is never lost). */}
+      <p className="mt-4 text-center text-xs leading-relaxed text-muted-foreground">
+        By continuing, you agree to our{" "}
+        <a
+          href="/terms"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="font-medium text-foreground underline underline-offset-4 decoration-muted-foreground/50 hover:text-primary hover:decoration-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
+        >
+          Terms &amp; Conditions
+        </a>{" "}
+        and{" "}
+        <a
+          href="/privacy"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="font-medium text-foreground underline underline-offset-4 decoration-muted-foreground/50 hover:text-primary hover:decoration-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
+        >
+          Privacy Policy
+        </a>
+        .
       </p>
     </>
   );

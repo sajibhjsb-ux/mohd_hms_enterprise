@@ -9,6 +9,7 @@ import {
   LayoutDashboard, Users, Building2, UserCog, HardHat, AlertTriangle, ClipboardList,
   Wrench, CalendarClock, Boxes, ShoppingCart, FileText, Receipt, Wallet, IdCard,
   SearchCheck, BarChart3, Settings, History, Truck, QrCode, CircleUserRound,
+  ScrollText, ShieldCheck,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -47,6 +48,7 @@ import { VehiclesModule } from "./modules/vehicles";
 import { SettingsModule } from "./modules/settings";
 import { AuditModule } from "./modules/audit";
 import { ProfileModule } from "./modules/profile";
+import { TermsModule, PrivacyModule } from "./legal/legal-module";
 
 export const MODULES: ModuleDef[] = [
   { key: "dashboard", label: "Dashboard", icon: LayoutDashboard, component: DashboardModule, mobile: true },
@@ -72,4 +74,10 @@ export const MODULES: ModuleDef[] = [
   // Customer profile — entered from the header account menu (spec §34), not
   // from the module nav. Views: /profile (view), /profile/edit, /profile/complete.
   { key: "profile", label: "My Profile", shortLabel: "Profile", icon: CircleUserRound, roles: ["CUSTOMER"], navHidden: true, component: ProfileModule },
+  // Legal pages — the CANONICAL Terms & Conditions / Privacy Policy (spec §2/§3).
+  // Entered from the footer, the auth screens, the profile page and document
+  // references; hidden from the module nav on purpose (spec §27). Logged-out
+  // visitors see the same document via the Gate's public legal view.
+  { key: "terms", label: "Terms & Conditions", shortLabel: "Terms", icon: ScrollText, navHidden: true, component: TermsModule },
+  { key: "privacy", label: "Privacy Policy", shortLabel: "Privacy", icon: ShieldCheck, navHidden: true, component: PrivacyModule },
 ];

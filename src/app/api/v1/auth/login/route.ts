@@ -11,6 +11,7 @@ import {
 } from "@/lib/hms/auth";
 import { can } from "@/lib/hms/rbac";
 import { customerProfileState } from "@/lib/hms/customer-profile";
+import { termsStatusFor } from "@/lib/hms/legal/legal";
 import {
   emailOtpCooldownRemainingSec,
   issueEmailOtp,
@@ -84,7 +85,10 @@ export const POST = handler(
 
     // Profile state is derived server-side (authoritative) and customerId is
     // included so the client session is complete immediately after login.
+    // Terms acceptance state ships too, so the consent gate renders without a
+    // waiting for the first session refresh.
     const profileState = await customerProfileState(user);
+    const terms = await termsStatusFor(user);
     const res = NextResponse.json({
       ok: true,
       data: {
@@ -96,6 +100,7 @@ export const POST = handler(
         permissions: can(user.role as never),
         profileComplete: profileState.profileComplete,
         missingFields: profileState.missingFields,
+        terms,
       },
     });
     res.headers.set("x-session-expires-at", expiresAt.toISOString());

@@ -438,6 +438,9 @@ async function main() {
     tax_percent_default: "6",
     currency: "MYR",
     public_url: "https://www.mohdhms.com",
+    // Legal (Terms & Conditions): customers are asked to accept the current
+    // version in the portal before using it (toggle in Settings → Legal).
+    terms_acceptance_required: "true",
   };
   for (const [key, value] of Object.entries(settings)) {
     await db.setting.create({ data: { key, value } });
