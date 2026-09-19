@@ -156,7 +156,8 @@ export function IrmsAnalyticsPage() {
             <StatCard title="Approved" value={totalApproved} sub="monthly sum" tone="success" />
           </div>
 
-          <div className="mt-4 grid gap-4 lg:grid-cols-2">
+          {/* grid-cols-1 caps the mobile track at container width (see irms-dashboard) */}
+          <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
             <ChartCard title="Reports by status">
               <ResponsiveContainer width="100%" height={260}>
                 <BarChart data={statusData} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
@@ -255,7 +256,11 @@ function ChartCard({ title, children }: { title: string; children: React.ReactNo
   return (
     <Card className="shadow-sm">
       <CardHeader className="pb-2"><CardTitle className="text-base">{title}</CardTitle></CardHeader>
-      <CardContent>{children}</CardContent>
+      {/* overflow-hidden: recharts tooltip wrappers are absolutely positioned
+          (and visibility:hidden before hover) — unclipped they extend the
+          document width on phones, which read as a zoomed-out page. Clipping
+          at the card keeps every chart inside the viewport. */}
+      <CardContent className="overflow-hidden">{children}</CardContent>
     </Card>
   );
 }

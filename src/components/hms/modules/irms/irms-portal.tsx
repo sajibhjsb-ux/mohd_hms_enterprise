@@ -242,7 +242,7 @@ export function IrmsPortalPage() {
                             </div>
                           ) : null}
 
-                          <div className="grid gap-3 sm:grid-cols-2">
+                          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                             <div>
                               <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Summary</p>
                               <p className="mt-1 whitespace-pre-wrap text-sm">{detail.summary?.trim() || "—"}</p>

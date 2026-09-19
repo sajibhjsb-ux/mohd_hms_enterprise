@@ -25,8 +25,13 @@ function TabsList({
   return (
     <TabsPrimitive.List
       data-slot="tabs-list"
+      // max-w-full + overflow-x-auto: a tab strip wider than its container (4+
+      // tabs on a phone) scrolls LOCALLY instead of widening the whole page —
+      // the page must always fit 100vw (no browser zoom-out / pan-to-reach UI).
+      // no-scrollbar keeps the strip visually clean while wheel/touch/drag
+      // scrolling stays available on every platform.
       className={cn(
-        "bg-muted text-muted-foreground inline-flex h-9 w-fit items-center justify-center rounded-lg p-[3px]",
+        "bg-muted text-muted-foreground inline-flex h-9 w-fit max-w-full items-center justify-center overflow-x-auto rounded-lg p-[3px] no-scrollbar",
         className
       )}
       {...props}

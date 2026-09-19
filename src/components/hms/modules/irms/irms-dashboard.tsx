@@ -52,7 +52,10 @@ const SECTION_DEFS: { key: IrmsSection; label: string; seg: string[] }[] = [
 export function IrmsSectionNav({ active }: { active: IrmsSection }) {
   return (
     <nav aria-label="IRMS sections" className="mb-5 -mx-1 overflow-x-auto px-1">
-      <div className="flex w-max min-w-full items-center gap-1 rounded-lg border bg-muted/40 p-1">
+      {/* Quick-nav pill strip — w-max keeps pills on one line on desktop; on
+          phones max-w-full caps it to the viewport and the strip scrolls
+          LOCALLY (never widens the page / triggers browser zoom-out). */}
+      <div className="flex w-max min-w-full max-w-full items-center gap-1 overflow-x-auto rounded-lg border bg-muted/40 p-1 no-scrollbar">
         {SECTION_DEFS.map((s) => {
           const isActive = s.key === active;
           return (
@@ -173,7 +176,10 @@ export function IrmsDashboardPage() {
             <StatCard title="My Reports" value={kpis.mine} icon={<UserCheck className="h-5 w-5" />} href={hasPerm(user, PERMISSIONS.irms_read) ? myReportsHref : undefined} />
           </div>
 
-          <div className="mt-6 grid gap-4 lg:grid-cols-3">
+          {/* grid-cols-1 (minmax(0, 1fr)) caps the mobile track at the container
+              width — an implicit `auto` track would grow to the min-content of
+              unbreakable text and widen the whole page on phones. */}
+          <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
             {/* Recent reports */}
             <Card className="shadow-sm lg:col-span-2">
               <CardHeader className="pb-3">

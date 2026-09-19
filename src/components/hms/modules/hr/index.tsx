@@ -399,7 +399,10 @@ function HrList({ initialTab }: { initialTab?: string } = {}) {
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
             <div className="lg:col-span-2 rounded-xl border bg-card p-4">
               <div className="text-sm font-medium mb-3">Attendance — last 7 days</div>
-              <div className="h-[220px]">
+              {/* overflow-hidden clips recharts tooltip wrappers (absolutely
+                  positioned, pre-hover hidden) so the chart can never widen
+                  the page on phones. */}
+              <div className="h-[220px] overflow-hidden">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={chartData} margin={{ top: 4, right: 8, left: -22, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} />

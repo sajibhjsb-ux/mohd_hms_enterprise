@@ -5,6 +5,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { api } from "@/lib/hms/api-client";
+import { clearLastRoute } from "@/lib/hms/pwa";
 import type { Permission } from "@/lib/hms/constants";
 
 export type SessionUser = {
@@ -81,11 +82,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const signIn = useCallback(async (email: string, password: string) => {
     const res = await api.post<SessionUser>("/api/v1/auth/login", { email, password });
+    // A fresh sign-in is NOT a session restoration: drop any route persisted by
+    // the previous session so the role-based post-login landing applies.
+    clearLastRoute();
     setUser(res.data);
   }, []);
 
   const signOut = useCallback(async () => {
     await api.post("/api/v1/auth/logout").catch(() => undefined);
+    clearLastRoute();
     setUser(null);
   }, []);
 

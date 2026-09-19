@@ -223,7 +223,8 @@ export function IrmsReportDetailPage({ id }: { id: string }) {
           </div>
         }
       >
-        <div className="grid gap-4 lg:grid-cols-3">
+        {/* grid-cols-1 caps the mobile track at container width (see irms-dashboard) */}
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
           {/* Main column */}
           <div className="lg:col-span-2 space-y-4">
             <div className="rounded-xl border bg-card shadow-sm p-4 sm:p-5">

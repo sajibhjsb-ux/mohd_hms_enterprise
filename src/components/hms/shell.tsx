@@ -20,6 +20,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { ClientApiError, api } from "@/lib/hms/api-client";
+import { saveLastRoute, restoreLaunchRoute } from "@/lib/hms/pwa";
+import { saveScrollForRoute, restoreScrollForRoute } from "@/lib/hms/scroll-restore";
 import { hasPerm, useSession } from "./session";
 import { useUi } from "@/lib/hms/ui-store";
 import { ROUTE_EVENT, hrefFor, navigateTo, parsePath, replacePath } from "@/lib/hms/router";
@@ -88,7 +90,16 @@ export function AppShell() {
     if (!target || (vis.length > 0 && !vis.some((m) => m.key === target))) {
       target = vis[0]?.key ?? "dashboard";
       seg = [];
-      replacePath(hrefFor(target, seg));
+      // A bare QR deep link ("/?resource=equipment:{token}") has no module in
+      // its path, so it lands in this fallback. The deep-link effect (mounted
+      // right after this) consumes the query and navigates to the target —
+      // preserving it here (history replace) is what makes scanning an
+      // equipment QR with the phone camera actually open the equipment page
+      // instead of silently dropping the link on the dashboard. NOTE: parsePath
+      // returned null here, so the query must be recovered from the RAW path.
+      const qi = path.indexOf("?");
+      const resource = qi >= 0 ? new URLSearchParams(path.slice(qi + 1)).get("resource") : null;
+      replacePath(hrefFor(target, seg) + (resource ? `?${new URLSearchParams({ resource }).toString()}` : ""));
     }
     const routeQuery = parsed && parsed.module === target ? query : "";
     const canonicalRoute = hrefFor(target, seg) + (routeQuery ? `?${new URLSearchParams(routeQuery).toString()}` : "");
@@ -100,15 +111,31 @@ export function AppShell() {
     useUi.setState({ pageDirty: false });
     window.scrollTo(0, 0);
     appliedHashRef.current = canonicalRoute;
+    // Persist for standalone PWA relaunches (an installed PWA always reopens at
+    // start_url "/" — without this the user lands on Dashboard every time).
+    saveLastRoute(canonicalRoute);
     return appliedHashRef.current;
   }, []);
 
   // Path ⇄ store sync. Mounted once the user is authenticated so role-based
   // fallbacks resolve; also handles direct URLs (/complaints/{id}) after login.
+  //
+  // ROUTE PRESERVATION (refresh / PWA relaunch): the URL is authoritative.
+  // A browser refresh re-requests the exact URL, so applyRoute(currentPath())
+  // keeps the user on /hr, /irms/{id}, /complaints/{id}… — never Dashboard.
+  // A standalone PWA relaunch always boots at start_url "/"; restoreLaunchRoute
+  // swaps that for the last visited route (same-origin, history replace) so
+  // reopening the installed app resumes where the user left off. Post-login
+  // role-dashboard redirects are unaffected (the key is cleared on sign-in/out).
   useEffect(() => {
     if (!user) return;
     const currentPath = () => window.location.pathname + window.location.search;
-    applyRoute(currentPath() || `/${visibleRef.current[0]?.key ?? "dashboard"}`);
+    const restored = restoreLaunchRoute();
+    const bootPath = restored || currentPath() || `/${visibleRef.current[0]?.key ?? "dashboard"}`;
+    applyRoute(bootPath);
+    // Restore the previous scroll position for THIS route (refresh/relaunch
+    // only — in-app navigation intentionally starts at the top).
+    restoreScrollForRoute(bootPath);
     const onRouteChange = () => {
       const next = currentPath();
       if (useUi.getState().pageDirty && next !== appliedHashRef.current) {
@@ -126,6 +153,36 @@ export function AppShell() {
       window.removeEventListener(ROUTE_EVENT, onRouteChange);
     };
   }, [user, applyRoute]);
+
+  // Scroll memory: continuously save (path, scrollY) pairs so a refresh or PWA
+  // relaunch can restore where the user was on THIS route. The pair is captured
+  // at scroll time (not at timer fire) so a navigation mid-throttle can never
+  // write the old page's position onto the new page's entry. Session storage
+  // scopes entries to the tab — back/forward and other devices are untouched.
+  useEffect(() => {
+    if (!user) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const onScroll = () => {
+      const route = window.location.pathname + window.location.search;
+      const y = window.scrollY;
+      if (timer) return;
+      timer = setTimeout(() => {
+        timer = null;
+        saveScrollForRoute(route, y);
+      }, 150);
+    };
+    const flush = () => {
+      if (timer) { clearTimeout(timer); timer = null; }
+      saveScrollForRoute(window.location.pathname + window.location.search, window.scrollY);
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("pagehide", flush);
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("pagehide", flush);
+      if (timer) clearTimeout(timer);
+    };
+  }, [user]);
 
   // Deep link handling (QR scans land on /?resource=equipment:{qrToken})
   useEffect(() => {

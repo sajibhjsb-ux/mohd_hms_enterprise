@@ -76,10 +76,68 @@ function installDismissedRecently(): boolean {
   }
 }
 
-function isStandalone(): boolean {
+export function isStandalone(): boolean {
   if (typeof window === "undefined") return false;
   const iosStandalone = (window.navigator as unknown as { standalone?: boolean }).standalone === true;
   return window.matchMedia?.("(display-mode: standalone)")?.matches || iosStandalone;
+}
+
+/* ─────────────────── PWA launch route restoration ──────────────────────
+ * An installed PWA always relaunches at its manifest start_url ("/"), which
+ * previously dropped the user back on the Dashboard every time the app was
+ * reopened — even though they had been mid-module (HR, IRMS, a complaint
+ * detail…) when they left. The URL/router is authoritative for real refreshes
+ * (a browser reload re-requests the same URL), so the ONLY genuinely lost
+ * case is the standalone cold start at start_url. For that case — and only
+ * that case — the last visited in-app route is persisted (localStorage) and
+ * restored with a history REPLACE (no new entry, Back stays natural).
+ *
+ * The key is cleared on explicit sign-in/sign-out (session.tsx) so the
+ * post-login role-dashboard redirect (spec: login ≠ refresh) is preserved,
+ * and a stale route from a previous account can never leak across logins.
+ */
+
+const LAST_ROUTE_KEY = "hms:lastRoute";
+
+/** Persist the current in-app route for standalone relaunch restoration. */
+export function saveLastRoute(path: string): void {
+  try {
+    if (!path || !path.startsWith("/") || path === "/") return;
+    localStorage.setItem(LAST_ROUTE_KEY, JSON.stringify({ path, at: Date.now() }));
+  } catch { /* storage unavailable — restoration is best-effort */ }
+}
+
+/** Forget the persisted route (explicit sign-in / sign-out). */
+export function clearLastRoute(): void {
+  try {
+    localStorage.removeItem(LAST_ROUTE_KEY);
+  } catch { /* storage unavailable */ }
+}
+
+/**
+ * Called ONCE when the authenticated app shell mounts. If the app booted at
+ * the bare start_url ("/", no query — i.e. a standalone relaunch or cold open,
+ * never an in-app navigation) in standalone/PWA display mode, swap the URL to
+ * the last visited route and return it; the shell then applies it as a normal
+ * route. Returns null when the boot URL must be respected as-is.
+ */
+export function restoreLaunchRoute(): string | null {
+  if (typeof window === "undefined") return null;
+  // Only the bare root qualifies: "/" with no query. QR deep links
+  // (/?resource=…) and any direct URL keep their exact location.
+  if (window.location.pathname !== "/" || window.location.search !== "") return null;
+  if (!isStandalone()) return null; // plain browser open at "/" → dashboard (existing policy)
+  try {
+    const raw = localStorage.getItem(LAST_ROUTE_KEY);
+    if (!raw) return null;
+    const saved = JSON.parse(raw) as { path?: unknown };
+    const path = typeof saved?.path === "string" ? saved.path : null;
+    if (!path || path === "/" || !path.startsWith("/") || path.startsWith("//")) return null;
+    window.history.replaceState(null, "", path);
+    return path;
+  } catch {
+    return null;
+  }
 }
 
 export function dismissInstall(): void {

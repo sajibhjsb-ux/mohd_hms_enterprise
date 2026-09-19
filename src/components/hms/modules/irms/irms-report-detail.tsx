@@ -277,7 +277,7 @@ export function IrmsReportDetailPage({ id }: { id: string }) {
 
             <Card className="shadow-sm">
               <CardHeader className="pb-2"><CardTitle className="text-base">Work description</CardTitle></CardHeader>
-              <CardContent className="grid gap-4 text-sm sm:grid-cols-2">
+              <CardContent className="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
                 <Block label="Task description" value={detail.taskDescription} />
                 <Block label="Scope" value={detail.scope} />
                 <Block label="Corrective actions" value={detail.correctiveActions} />
