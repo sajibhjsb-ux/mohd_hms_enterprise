@@ -1,14 +1,16 @@
 "use client";
-// SCREEN 3 — Email verification (6-digit OTP).
+// FORGOT PASSWORD — step 2: verify the 6-digit PASSWORD_RESET OTP.
 // Talks ONLY to the real backend:
-//   • POST /api/v1/auth/verify-email  → server-side code validation, marks the
-//     email verified, opens the session, returns the standard payload.
-//   • POST /api/v1/auth/resend-verification → server-enforced cooldown; the
-//     countdown is driven by the returned resendAfterSec (never hardcoded).
-// The code is never placed in URLs, storage or logs; inputs are numeric,
-// paste-capable, auto-advancing, backspace-aware and disabled while verifying.
+//   • POST /api/v1/auth/forgot-password/verify-otp → server-side validation;
+//     on success the server issues a short-lived single-use reset
+//     authorization (held in memory ONLY — never in URLs or storage).
+//   • POST /api/v1/auth/forgot-password/resend → server-enforced cooldown;
+//     the countdown is driven by the returned resendAfterSec (never hardcoded).
+// Inputs are numeric, paste-capable, auto-advancing, backspace-aware and
+// disabled while verifying. Every failure shape shows the server's generic
+// message — nothing about account or code state leaks.
 
-import { useCallback, useState } from "react";
+import { useState } from "react";
 import { REGEXP_ONLY_DIGITS } from "input-otp";
 import { ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -17,30 +19,28 @@ import { ClientApiError, api } from "@/lib/hms/api-client";
 import { useResendCountdown, fmtResendCountdown } from "./use-resend-countdown";
 import { AuthError, AuthPrimaryButton, BackButton } from "./auth-ui";
 
-export function AuthOtpVerificationScreen({
+export function AuthResetOtpScreen({
   email,
   initialResendAfterSec,
-  remember,
+  sentNotice,
   onBack,
-  onAuthenticated,
+  onVerified,
 }: {
   email: string;
   initialResendAfterSec: number;
-  remember: boolean;
+  /** Generic anti-enumeration notice returned by the request step. */
+  sentNotice: string | null;
   onBack: () => void;
-  onAuthenticated: () => Promise<void>;
+  /** Server verified the OTP and issued the one-time reset authorization. */
+  onVerified: (resetToken: string) => void;
 }) {
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [resendBusy, setResendBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [info, setInfo] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(sentNotice);
   // Server-authoritative countdown (ticks only while > 0).
   const { secondsLeft, restart } = useResendCountdown(initialResendAfterSec);
-
-  const complete = useCallback(async () => {
-    await onAuthenticated();
-  }, [onAuthenticated]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -48,11 +48,16 @@ export function AuthOtpVerificationScreen({
     setError(null);
     setBusy(true);
     try {
-      await api.post("/api/v1/auth/verify-email", { email, code, remember });
-      await complete();
+      const res = await api.post<{ resetToken: string }>(
+        "/api/v1/auth/forgot-password/verify-otp",
+        { email, code }
+      );
+      // Only the server can open the New Password step (route bypass is
+      // impossible without this one-time authorization).
+      onVerified(res.data.resetToken);
     } catch (err) {
       if (err instanceof ClientApiError && err.code === "NETWORK") {
-        setError("Unable to connect. Please check your connection and try again.");
+        setError("An internet connection is required to reset your password.");
       } else {
         setError(err instanceof ClientApiError ? err.message : "Something went wrong. Please try again.");
       }
@@ -67,19 +72,21 @@ export function AuthOtpVerificationScreen({
     setError(null);
     setInfo(null);
     try {
-      const res = await api.post<{ resendAfterSec: number }>("/api/v1/auth/resend-verification", { email });
+      const res = await api.post<{ resendAfterSec: number }>(
+        "/api/v1/auth/forgot-password/resend",
+        { email }
+      );
       restart(res.data.resendAfterSec);
       setCode("");
-      setInfo(`A new verification code was sent to ${email}.`);
+      setInfo("A new verification code was sent.");
     } catch (err) {
       if (err instanceof ClientApiError && err.status === 429) {
         // Server cooldown still active — mirror its remaining time exactly.
         const match = err.message.match(/in (\d+)s/);
-        const remaining = match ? Number(match[1]) : 30;
-        restart(remaining);
+        restart(match ? Number(match[1]) : 60);
         setError(err.message);
       } else if (err instanceof ClientApiError && err.code === "NETWORK") {
-        setError("Unable to connect. Please check your connection and try again.");
+        setError("An internet connection is required to reset your password.");
       } else {
         setError(err instanceof ClientApiError ? err.message : "Something went wrong. Please try again.");
       }
@@ -91,7 +98,7 @@ export function AuthOtpVerificationScreen({
   return (
     <form onSubmit={submit} noValidate>
       <div className="flex items-center gap-3">
-        <BackButton onClick={onBack} label="Back to login" />
+        <BackButton onClick={onBack} label="Back to email entry" />
       </div>
 
       <div className="mt-5 space-y-1.5">
@@ -116,7 +123,7 @@ export function AuthOtpVerificationScreen({
           pattern={REGEXP_ONLY_DIGITS}
           inputMode="numeric"
           autoComplete="one-time-code"
-          aria-label="6-digit verification code"
+          aria-label="6-digit password reset verification code"
           containerClassName="justify-center gap-1.5 sm:gap-2.5"
         >
           <InputOTPGroup className="flex items-center gap-1.5 sm:gap-2.5">

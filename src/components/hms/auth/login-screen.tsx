@@ -3,20 +3,14 @@
 // Visual redesign ONLY — the authentication flow is the existing one:
 // browser → POST /api/v1/auth/login (rate-limited) → DB session cookie →
 // RBAC session → existing dashboard routing / customer profile onboarding.
-// Forgot Password uses the existing /api/v1/auth/forgot-password flow.
+// "Forgot Password?" opens the REAL recovery flow (Email → OTP → New
+// Password → Success → Login) — see ./auth-flow.tsx and the
+// /api/v1/auth/forgot-password/* endpoints.
 
 import { useEffect, useRef, useState } from "react";
 import { ArrowRight, Eye, EyeOff, Lock, Mail } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ClientApiError, api } from "@/lib/hms/api-client";
@@ -41,6 +35,7 @@ export function AuthLoginScreen({
   onRememberChange,
   onAuthenticated,
   onOtpRequired,
+  onForgotPassword,
 }: {
   onBack: () => void;
   autoFocusEmail: boolean;
@@ -52,6 +47,8 @@ export function AuthLoginScreen({
   onAuthenticated: () => Promise<void>;
   /** Server requires email verification first (6-digit code sent). */
   onOtpRequired: (email: string, resendAfterSec: number) => void;
+  /** Open the real Forgot Password flow (dedicated screen, not a modal). */
+  onForgotPassword: () => void;
 }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -59,12 +56,6 @@ export function AuthLoginScreen({
   const [busy, setBusy] = useState(false);
   const [googleBusy, setGoogleBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // Forgot password — existing backend flow, unchanged.
-  const [forgotOpen, setForgotOpen] = useState(false);
-  const [forgotEmail, setForgotEmail] = useState("");
-  const [forgotMsg, setForgotMsg] = useState<string | null>(null);
-  const [forgotBusy, setForgotBusy] = useState(false);
 
   const emailRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
@@ -102,21 +93,6 @@ export function AuthLoginScreen({
       }
     } finally {
       setBusy(false);
-    }
-  }
-
-  async function sendReset() {
-    setForgotBusy(true);
-    setForgotMsg(null);
-    try {
-      const res = await api.post<{ message: string }>("/api/v1/auth/forgot-password", {
-        email: forgotEmail.trim().toLowerCase(),
-      });
-      setForgotMsg(res.data.message);
-    } catch (err) {
-      setForgotMsg(err instanceof ClientApiError ? err.message : "Something went wrong. Please try again.");
-    } finally {
-      setForgotBusy(false);
     }
   }
 
@@ -199,7 +175,7 @@ export function AuthLoginScreen({
           <button
             type="button"
             className="text-sm font-semibold text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
-            onClick={() => setForgotOpen(true)}
+            onClick={onForgotPassword}
           >
             Forgot Password?
           </button>
@@ -240,42 +216,6 @@ export function AuthLoginScreen({
           Sign up with Google
         </button>
       </p>
-
-      <Dialog open={forgotOpen} onOpenChange={setForgotOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Reset your password</DialogTitle>
-            <DialogDescription>
-              Enter your account email. If it exists, a reset link will be sent.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div className="space-y-2">
-              <Label htmlFor="forgot-email">Email</Label>
-              <Input
-                id="forgot-email"
-                type="email"
-                inputMode="email"
-                autoComplete="username"
-                value={forgotEmail}
-                onChange={(e) => setForgotEmail(e.target.value)}
-                placeholder="you@example.com"
-              />
-            </div>
-            {forgotMsg ? (
-              <p className="rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">{forgotMsg}</p>
-            ) : null}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setForgotOpen(false)}>
-              Close
-            </Button>
-            <Button onClick={sendReset} disabled={forgotBusy || !forgotEmail.includes("@")}>
-              {forgotBusy ? "Sending…" : "Send reset link"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </>
   );
 }
