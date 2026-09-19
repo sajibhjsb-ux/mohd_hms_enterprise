@@ -14,7 +14,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Users, UserCheck, CalendarOff, UserX, Clock, CalendarPlus, Plus, Check, X, Info,
+  Users, UserCheck, CalendarOff, UserX, Clock, CalendarPlus, Plus, Check, X, Info, FileText,
 } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api, qs } from "@/lib/hms/api-client";
@@ -37,6 +37,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { HrAttendancePage } from "./attendance-page";
 import { HrLeaveNewPage } from "./leave-page";
 import { HrDepartmentNewPage } from "./department-page";
+import { LettersHome } from "./letters/letters-home";
+import { LetterWizardPage } from "./letters/wizard";
+import { LetterEditorPage } from "./letters/editor";
+import { TemplatesManagerPage } from "./letters/templates-manager";
+import { TemplateEditorPage } from "./letters/template-editor";
+import { LetterHistoryPage } from "./letters/history";
 
 // ── Types ──
 
@@ -94,6 +100,24 @@ const todayInput = () => toDateInput(new Date());
 
 export function HrModule() {
   const seg = useUi((s) => s.pages["hr"]) ?? [];
+
+  // Letters subtree — custom segment parsing (pageFromSeg drops 3rd segments:
+  //   /hr/letters/templates/{id} needs the id):
+  //   ["letters"]                    → routed to the Letters tab (list page)
+  //   ["letters", "new"]             → Create Letter wizard
+  //   ["letters", "templates"]       → Templates manager
+  //   ["letters", "templates", id]   → Template editor
+  //   ["letters", "history"]         → Letter history
+  //   ["letters", letterId]          → Letter workspace
+  if (seg[0] === "letters") {
+    const [, a, b] = seg;
+    if (!a) return <HrList initialTab="letters" />;
+    if (a === "new") return <LetterWizardPage />;
+    if (a === "templates") return b ? <TemplateEditorPage templateId={b} /> : <TemplatesManagerPage />;
+    if (a === "history") return <LetterHistoryPage />;
+    return <LetterEditorPage letterId={a} />;
+  }
+
   const page = pageFromSeg(seg);
 
   if (page.view === "attendance" && page.id) return <HrAttendancePage attendanceId={page.id} />;
@@ -104,7 +128,7 @@ export function HrModule() {
 
 // ── List page ──
 
-function HrList() {
+function HrList({ initialTab }: { initialTab?: string } = {}) {
   const { user } = useSession();
   const { toast } = useToast();
 
@@ -129,7 +153,7 @@ function HrList() {
   const [leaveStatus, setLeaveStatus] = useState("ALL");
   const [leaveLoading, setLeaveLoading] = useState(true);
 
-  const [tab, setTab] = useState("attendance");
+  const [tab, setTab] = useState(initialTab ?? "attendance");
 
   const [busyLeaveId, setBusyLeaveId] = useState<string | null>(null);
 
@@ -336,6 +360,9 @@ function HrList() {
         actions={
           canManage ? (
             <>
+              <Button variant="outline" size="sm" onClick={() => navigateTo("hr", ["letters", "new"])}>
+                <FileText className="h-4 w-4 mr-1.5" /> Create Letter
+              </Button>
               <Button variant="outline" size="sm" onClick={() => openPage(["attendance", "new"])}>
                 <Clock className="h-4 w-4 mr-1.5" /> Mark Attendance
               </Button>
@@ -422,10 +449,15 @@ function HrList() {
       {/* ── Tabs ── */}
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="mb-4">
+          <TabsTrigger value="letters"><FileText className="h-4 w-4 mr-1.5" /> Letters</TabsTrigger>
           <TabsTrigger value="employees"><Users className="h-4 w-4 mr-1.5" /> Employees</TabsTrigger>
           <TabsTrigger value="attendance"><Clock className="h-4 w-4 mr-1.5" /> Attendance</TabsTrigger>
           <TabsTrigger value="leave"><CalendarPlus className="h-4 w-4 mr-1.5" /> Leave</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="letters">
+          <LettersHome />
+        </TabsContent>
 
         <TabsContent value="employees">
           {!canReadEmployees ? (

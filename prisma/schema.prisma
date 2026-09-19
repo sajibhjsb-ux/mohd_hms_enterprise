@@ -203,6 +203,7 @@ model Employee {
   updatedAt  DateTime  @updatedAt
 
   leaveRequests LeaveRequest[]
+  letters       Letter[]
   attendance    Attendance[]
 }
 
@@ -997,6 +998,170 @@ model LegalAcceptance {
   @@unique([userId, documentId])
   @@index([userId])
   @@index([documentId])
+}
+
+// ─────────────────────────── HR LETTERS (template engine + generation) ───────────────────────────
+// Enterprise letter generation: reusable TEMPLATES (versioned, immutable
+// snapshots) → LETTERS created from a template with structured data → optional
+// AI draft for the body only (template structure stays deterministic) → human
+// review/approval workflow → FINAL PDF stored in S3 object storage (MinIO API)
+// with metadata in the database. Finalized letters are immutable: the rendered
+// document and its template snapshot never change after finalization.
+model LetterTemplate {
+  id          String @id @default(cuid())
+  // Human template code, e.g. LOU-001 / LOA-001 / SUB-001 (unique).
+  code        String @unique
+  name        String
+  // LOU | LOA | SUBMISSION | CLARIFICATION | APPOINTMENT | CONFIRMATION |
+  // WARNING | EMPLOYMENT | VERIFICATION | TRAINING | REFERENCE | GENERAL | CUSTOM
+  letterType  String
+  description String  @default("")
+  department  String  @default("HR")
+  // Current content version (incremented on every content edit; every bump
+  // writes an immutable LetterTemplateVersion snapshot).
+  version     Int     @default(1)
+  // ACTIVE | INACTIVE | ARCHIVED
+  status      String  @default("ACTIVE")
+  language    String  @default("en")
+  pageSize    String  @default("A4")
+  defaultFont String  @default("Helvetica")
+  effectiveDate DateTime?
+  // Default template for its letter type (one per type).
+  isDefault   Boolean @default(false)
+  // Approved instruction set for the AI drafting assistant (§3/§9).
+  aiInstructions String @default("")
+  subjectHint    String @default("")
+  // Deterministic body skeleton with {{PLACEHOLDERS}}; the {{BODY}} slot is
+  // where the AI-generated (or manually written) content is placed (§46).
+  bodyTemplate   String @default("")
+  closingTemplate String @default("Yours faithfully,")
+  // JSON: TemplateField[] — { key, label, type, required, options?, hint?, ai? }
+  fieldsJson  String @default("[]")
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  versions LetterTemplateVersion[]
+  letters  Letter[]
+
+  @@index([letterType, status])
+}
+
+// Immutable content snapshot per template version. Letters reference the exact
+// version + carry their own snapshot, so editing a template NEVER changes
+// previously generated letters (§27 — auditability).
+model LetterTemplateVersion {
+  id            String         @id @default(cuid())
+  templateId    String
+  template      LetterTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  version       Int
+  // JSON snapshot of all content-bearing template fields at this version.
+  snapshotJson  String
+  createdById   String?
+  createdByName String         @default("")
+  createdAt     DateTime       @default(now())
+
+  @@unique([templateId, version])
+  @@index([templateId])
+}
+
+model Letter {
+  id           String  @id @default(cuid())
+  // Configurable official reference, e.g. HMS/HR/LOU/2026/0001 (§17) —
+  // generated server-side from a Counter (transactional, no duplicates).
+  letterNumber String  @unique
+  letterType   String
+  templateId   String?
+  template     LetterTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  // Exact template version used (§27).
+  templateVersion Int  @default(1)
+  // Immutable content snapshot of the template at creation time.
+  templateSnapshotJson String @default("{}")
+  // DRAFT | AI_GENERATED | UNDER_REVIEW | APPROVED | REJECTED | FINALIZED | SENT | ARCHIVED
+  status       String  @default("DRAFT")
+  // Official letter date (server clock / Asia/Brunei authoritative, §18).
+  letterDate   DateTime @default(now())
+
+  // Structured field values keyed by template field key (JSON).
+  dataJson    String  @default("{}")
+  // AI/human-authored content that fills the template's {{BODY}} slot (§46).
+  bodySlot    String  @default("")
+  // Fully rendered body = template wrapper with {{BODY}} ← bodySlot resolved.
+  // `body` is what preview + PDF print; `bodySlot` is what the AI writes and
+  // the human edits — the wrapper is always re-rendered from the template
+  // snapshot so AI/human can never break the template structure (§11).
+  subject     String  @default("")
+  body        String  @default("")
+  salutation  String  @default("")
+  closing     String  @default("Yours faithfully,")
+  // TEMPLATE | AI | HUMAN_EDITED — what last wrote the body (§45 content
+  // protection: regeneration never silently overwrites human edits).
+  contentSource String @default("TEMPLATE")
+
+  // Denormalized for list/search/filter performance (§29/§30).
+  recipientName    String @default("")
+  recipientCompany String @default("")
+  // Optional employee/customer link for auto-population + scoping (§31/§32).
+  employeeId String?
+  employee   Employee? @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+
+  // Signatory (§22) — signature image lives in object storage, never in the DB.
+  signatoryName     String @default("")
+  signatoryPosition String @default("")
+  signatorySignatureKey String @default("")
+
+  // Final document object keys (S3/MinIO, §23): letters/{year}/{type}/{id}/final.pdf
+  pdfObjectKey  String @default("")
+  pdfSizeBytes  Int    @default(0)
+  finalizedAt   DateTime?
+
+  // Workflow (§16)
+  createdById    String?
+  createdByName  String  @default("")
+  updatedById    String?
+  approvedById   String?
+  approvedByName String  @default("")
+  approvedAt     DateTime?
+  sentAt         DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  attachments LetterAttachment[]
+  events      LetterEvent[]
+
+  @@index([status])
+  @@index([letterType])
+  @@index([createdAt])
+}
+
+model LetterAttachment {
+  id        String  @id @default(cuid())
+  letterId  String
+  letter    Letter  @relation(fields: [letterId], references: [id], onDelete: Cascade)
+  name      String
+  objectKey String
+  sizeBytes Int     @default(0)
+  mimeType  String  @default("")
+  uploadedById String?
+  createdAt DateTime @default(now())
+
+  @@index([letterId])
+}
+
+// Append-only letter activity trail (§43) — complements the central AuditLog
+// with a letter-scoped timeline rendered in the UI.
+model LetterEvent {
+  id        String  @id @default(cuid())
+  letterId  String
+  letter    Letter  @relation(fields: [letterId], references: [id], onDelete: Cascade)
+  action    String // CREATED | AI_GENERATED | AI_REGENERATED | AI_ACTION | EDITED | SUBMITTED | APPROVED | REJECTED | FINALIZED | SENT | SHARED | DOWNLOADED | ARCHIVED | SIGNATURE_SET | ATTACHMENT_ADDED | ATTACHMENT_REMOVED
+  detail    String  @default("")
+  actorId   String?
+  actorName String  @default("")
+  createdAt DateTime @default(now())
+
+  @@index([letterId, createdAt])
 }
 
 // ─────────────────────────── WORKFLOW ENGINE (outbox + runs) ───────────────────────────

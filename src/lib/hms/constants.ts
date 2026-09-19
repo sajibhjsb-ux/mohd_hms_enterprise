@@ -44,6 +44,16 @@ export const PERMISSIONS = {
   employees_delete: "employees.delete",
   hr_read: "hr.read",
   hr_manage: "hr.manage",
+  // HR letters (enterprise letter template + generation system)
+  letters_view: "letters.view",
+  letters_create: "letters.create",
+  letters_edit: "letters.edit",
+  letters_ai: "letters.ai",
+  letters_approve: "letters.approve",
+  letters_finalize: "letters.finalize",
+  letters_send: "letters.send",
+  letters_delete: "letters.delete",
+  letters_templates: "letters.templates",
   // equipment
   equipment_read: "equipment.read",
   equipment_create: "equipment.create",
@@ -154,6 +164,11 @@ const HR_PERMS: Permission[] = [
   PERMISSIONS.employees_read, PERMISSIONS.employees_create, PERMISSIONS.employees_update,
   PERMISSIONS.hr_read, PERMISSIONS.hr_manage,
   PERMISSIONS.reports_read, PERMISSIONS.reports_export,
+  // HR letters — HR prepares, generates AI drafts and manages templates;
+  // approval stays with ADMIN/SUPER_ADMIN (segregation of duties, spec §16).
+  PERMISSIONS.letters_view, PERMISSIONS.letters_create, PERMISSIONS.letters_edit,
+  PERMISSIONS.letters_ai, PERMISSIONS.letters_templates, PERMISSIONS.letters_finalize,
+  PERMISSIONS.letters_send, PERMISSIONS.letters_delete,
 ];
 
 export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
@@ -214,6 +229,24 @@ export const INVOICE_STATUSES = ["DRAFT", "SENT", "PARTIALLY_PAID", "PAID", "OVE
 export const QUOTATION_STATUSES = ["DRAFT", "SENT", "APPROVED", "REJECTED", "EXPIRED", "CONVERTED"] as const;
 export const PO_STATUSES = ["DRAFT", "PENDING_APPROVAL", "APPROVED", "REJECTED", "PARTIALLY_RECEIVED", "RECEIVED", "CANCELLED"] as const;
 export const PM_FREQUENCIES = ["WEEKLY", "MONTHLY", "QUARTERLY", "SEMI_ANNUAL", "ANNUAL"] as const;
+
+// ── HR letter workflow (spec §16) ──
+// DRAFT — being prepared · AI_GENERATED — AI draft awaiting human review ·
+// UNDER_REVIEW — submitted for approval · APPROVED — approved, ready to finalize ·
+// REJECTED — sent back for changes · FINALIZED — immutable final PDF stored ·
+// SENT — emailed/shared · ARCHIVED — closed.
+export const LETTER_STATUSES = ["DRAFT", "AI_GENERATED", "UNDER_REVIEW", "APPROVED", "REJECTED", "FINALIZED", "SENT", "ARCHIVED"] as const;
+export type LetterStatus = (typeof LETTER_STATUSES)[number];
+export const LETTER_TRANSITIONS: Record<string, string[]> = {
+  DRAFT: ["AI_GENERATED", "UNDER_REVIEW"],
+  AI_GENERATED: ["UNDER_REVIEW", "DRAFT"],
+  UNDER_REVIEW: ["APPROVED", "REJECTED"],
+  REJECTED: ["DRAFT", "UNDER_REVIEW"],
+  APPROVED: ["FINALIZED"],
+  FINALIZED: ["SENT", "ARCHIVED"],
+  SENT: ["ARCHIVED"],
+  ARCHIVED: [],
+};
 
 export const FREQUENCY_DAYS: Record<string, number> = {
   WEEKLY: 7,
@@ -280,6 +313,10 @@ export const STATUS_TONE: Record<string, string> = {
   SICK: "bg-orange-100 text-orange-800",
   UNPAID: "bg-stone-200 text-stone-600",
   OTHER: "bg-stone-200 text-stone-600",
+  AI_GENERATED: "bg-violet-100 text-violet-800",
+  UNDER_REVIEW: "bg-amber-100 text-amber-800",
+  FINALIZED: "bg-emerald-100 text-emerald-800",
+  ARCHIVED: "bg-stone-200 text-stone-600",
 };
 
 export function humanize(s: string | null | undefined): string {

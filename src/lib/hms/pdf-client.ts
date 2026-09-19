@@ -18,7 +18,8 @@ export type PdfType =
   | "purchase-order"
   | "equipment-report"
   | "pm-task"
-  | "payment-receipt";
+  | "payment-receipt"
+  | "letter";
 
 export class PdfClientError extends Error {
   status: number;
