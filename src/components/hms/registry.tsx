@@ -20,7 +20,6 @@ export type ModuleDef = {
   icon: LucideIcon;
   roles?: string[];
   permissions?: Permission[];
-  mobile?: boolean; // candidate for mobile bottom nav
   /** Reachable page but hidden from floating/mobile navigation (e.g. profile,
    *  which is entered from the header account menu). Routing still resolves. */
   navHidden?: boolean;
@@ -51,10 +50,13 @@ import { ProfileModule } from "./modules/profile";
 import { TermsModule, PrivacyModule } from "./legal/legal-module";
 
 export const MODULES: ModuleDef[] = [
-  { key: "dashboard", label: "Dashboard", icon: LayoutDashboard, component: DashboardModule, mobile: true },
-  { key: "complaints", label: "Complaints", shortLabel: "Complaints", icon: AlertTriangle, permissions: ["complaints.read"], component: ComplaintsModule, mobile: true },
+  // NOTE: the mobile bottom navigation layout (Dashboard · Complaints · QR
+  // center · Invoices · More + RBAC fallbacks) is owned by shell/mobile-nav.tsx
+  // — this registry stays the single catalog of module definitions.
+  { key: "dashboard", label: "Dashboard", icon: LayoutDashboard, component: DashboardModule },
+  { key: "complaints", label: "Complaints", shortLabel: "Complaints", icon: AlertTriangle, permissions: ["complaints.read"], component: ComplaintsModule },
   { key: "work-orders", label: "Work Orders", shortLabel: "Work", icon: ClipboardList, permissions: ["work_orders.read"], component: WorkOrdersModule },
-  { key: "equipment", label: "Equipment", icon: QrCode, permissions: ["equipment.read"], component: EquipmentModule, mobile: true },
+  { key: "equipment", label: "Equipment", icon: QrCode, permissions: ["equipment.read"], component: EquipmentModule },
   { key: "pm", label: "Preventive Maintenance", shortLabel: "PM", icon: CalendarClock, permissions: ["pm.read"], component: PmModule },
   { key: "customers", label: "Customers", icon: Building2, permissions: ["customers.read"], component: CustomersModule },
   { key: "users", label: "Users", icon: Users, permissions: ["users.read"], component: UsersModule },
@@ -63,12 +65,12 @@ export const MODULES: ModuleDef[] = [
   { key: "inventory", label: "Inventory", icon: Boxes, permissions: ["inventory.read"], component: InventoryModule },
   { key: "purchases", label: "Purchases", icon: ShoppingCart, permissions: ["purchases.read"], component: PurchasesModule },
   { key: "quotations", label: "Quotations", icon: FileText, permissions: ["quotations.read"], component: QuotationsModule },
-  { key: "invoices", label: "Invoices", icon: Receipt, permissions: ["invoices.read"], component: InvoicesModule, mobile: true },
+  { key: "invoices", label: "Invoices", icon: Receipt, permissions: ["invoices.read"], component: InvoicesModule },
   { key: "finance", label: "Finance", icon: Wallet, permissions: ["finance.read", "invoices.read"], component: FinanceModule },
   { key: "hr", label: "HR", icon: UserCog, permissions: ["hr.read", "employees.read"], component: HrModule },
   { key: "irms", label: "IRMS Inspections", shortLabel: "IRMS", icon: SearchCheck, permissions: ["irms.read", "irms.portal"], component: IrmsModule },
   { key: "vehicles", label: "Vehicles", icon: Truck, permissions: ["vehicles.read"], component: VehiclesModule },
-  { key: "reports", label: "Reports", icon: BarChart3, permissions: ["reports.read"], component: ReportsModule, mobile: true },
+  { key: "reports", label: "Reports", icon: BarChart3, permissions: ["reports.read"], component: ReportsModule },
   { key: "audit", label: "Audit Logs", shortLabel: "Audit", icon: History, roles: ["SUPER_ADMIN", "ADMIN"], permissions: ["audit.read"], component: AuditModule },
   { key: "settings", label: "Settings", icon: Settings, roles: ["SUPER_ADMIN", "ADMIN"], permissions: ["settings.read"], component: SettingsModule },
   // Customer profile — entered from the header account menu (spec §34), not

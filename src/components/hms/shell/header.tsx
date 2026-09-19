@@ -1,8 +1,12 @@
 "use client";
 
 // MOHD.HMS ENTERPRISE — premium top header (reference design).
-// Left: canonical logo/branding · Center: global search trigger (Ctrl/⌘K)
-// Right: QR scanner · Notifications · Theme · Language · User profile.
+// Three logical zones. MOBILE (<lg): [ LOGO ]·spacer·[ Search 🔍 ][ Bell ][ Avatar ]
+// — search is a compact icon inside the RIGHT action group, never a standalone
+// centered element. DESKTOP (≥lg): logo · centered global-search pill (Ctrl/⌘K)
+// · QR scanner · Notifications · Theme · Language · User profile.
+// On mobile the QR action lives in the floating bottom navigation's center slot
+// (shell/mobile-nav.tsx), so the header QR button is desktop-only.
 // Self-contained notification polling; reuses existing session + theme systems.
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -122,8 +126,10 @@ export function TopHeader({ onOpenSearch, onOpenQr, onSelectModule, onOpenChange
             </div>
           </button>
 
-          {/* Global search — large pill (desktop) / icon (mobile) */}
-          <div className="flex-1 flex justify-center min-w-0">
+          {/* Global search — centered pill on DESKTOP only. On mobile the flex-1
+              spacer keeps the logo left and the action group right; search is a
+              compact icon inside that group (never an isolated center element). */}
+          <div className="hidden lg:flex flex-1 justify-center min-w-0">
             <button
               onClick={onOpenSearch}
               className={cn(
@@ -142,13 +148,27 @@ export function TopHeader({ onOpenSearch, onOpenQr, onSelectModule, onOpenChange
             </button>
           </div>
 
-          {/* Right cluster */}
+          {/* Right action group — search · notifications · profile share one
+              vertical centerline; the group hugs the right edge on mobile. */}
           <div className="ml-auto flex items-center gap-0.5 sm:gap-1">
+            {/* Compact mobile search — opens the SAME global search dialog. */}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="rounded-full h-10 w-10 sm:h-9 sm:w-9 lg:hidden"
+              onClick={onOpenSearch}
+              aria-label="Search"
+              data-testid="mobile-search-button"
+            >
+              <Search className="h-5 w-5" aria-hidden />
+            </Button>
+
             <LiveIndicator />
             {canScan ? (
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button variant="ghost" size="icon" className="rounded-full hidden sm:inline-flex" onClick={onOpenQr} aria-label="Open QR scanner">
+                  {/* Desktop-only here — mobile/tablet use the bottom-nav center QR. */}
+                  <Button variant="ghost" size="icon" className="rounded-full hidden lg:inline-flex" onClick={onOpenQr} aria-label="Open QR scanner">
                     <QrCode className="h-5 w-5" aria-hidden />
                   </Button>
                 </TooltipTrigger>
@@ -254,7 +274,7 @@ function NotifMenu({ notifs, unread, onOpen, markAllRead, markRead }: {
   return (
     <DropdownMenu open={open} onOpenChange={(o) => { setOpen(o); if (o) onOpen(); }}>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" className="relative rounded-full" aria-label={`Notifications (${unread} unread)`}>
+        <Button variant="ghost" size="icon" className="relative rounded-full h-10 w-10 sm:h-9 sm:w-9" aria-label={`Notifications (${unread} unread)`}>
           <Bell className="h-5 w-5" aria-hidden />
           {unread > 0 ? (
             <span className="absolute -top-0.5 -right-0.5 h-4 min-w-4 px-1 rounded-full bg-destructive text-white text-[10px] font-semibold flex items-center justify-center tabular-nums">
@@ -330,7 +350,7 @@ function ProfileMenu({ onToggleTheme, themeMounted, themeDark, onSignOut, onOpen
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" className="rounded-full pl-1 pr-1.5 sm:pr-2.5 gap-2">
+        <Button variant="ghost" aria-label="Profile" className="rounded-full pl-1 pr-1.5 sm:pr-2.5 gap-2 h-10 sm:h-9">
           <span className="h-9 w-9 rounded-full bg-primary/10 text-primary text-xs font-semibold flex items-center justify-center">{initials(user.name)}</span>
           <span className="hidden md:block text-left leading-tight">
             <span className="block text-sm font-medium max-w-[10rem] truncate">{user.name}</span>

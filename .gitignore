@@ -69,3 +69,4 @@ dev.log
 
 # mini-service dev logs
 mini-services/*/storage.log
+qa/

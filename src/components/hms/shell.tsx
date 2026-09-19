@@ -15,7 +15,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -28,10 +27,11 @@ import { MODULES, type ModuleDef } from "./registry";
 import { humanize } from "@/lib/hms/constants";
 import { cn } from "@/lib/utils";
 import { initials } from "@/lib/hms/format";
-import { LayoutGrid, Loader2, ShieldCheck } from "lucide-react";
+import { Loader2, ShieldCheck } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { TopHeader } from "./shell/header";
 import { FloatingNav } from "./shell/floating-nav";
+import { MobileNav } from "./shell/mobile-nav";
 import { GlobalSearch, type SearchNavigateTarget } from "./shell/global-search";
 import { QrScanDialog } from "./shell/qr-dialog";
 import { RealtimeProvider } from "./realtime/realtime-provider";
@@ -46,7 +46,6 @@ export function AppShell() {
   const setChangePwOpen = useUi((s) => s.setChangePwOpen);
   const [searchOpen, setSearchOpen] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
-  const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   /** Hash the user asked for while a dirty form blocked navigation. */
   const [pendingNav, setPendingNav] = useState<string | null>(null);
@@ -176,12 +175,13 @@ export function AppShell() {
   }
 
   const active = visible.find((m) => m.key === activeModule) ?? visible[0];
-  const mobileNav = navVisible.filter((m) => m.mobile);
   const ActiveComponent = active?.component;
 
   return (
     <RealtimeProvider>
-    <div className="min-h-screen flex flex-col bg-[radial-gradient(60rem_30rem_at_50%_-10%,oklch(0.95_0.05_152/0.6),transparent)] dark:bg-none">
+    {/* --hms-mobile-nav-h is measured by MobileNav (bar + safe-area + QR rise +
+        gap) so the footer and every page element clear the floating bottom nav */}
+    <div className="min-h-screen flex flex-col bg-[radial-gradient(60rem_30rem_at_50%_-10%,oklch(0.95_0.05_152/0.6),transparent)] dark:bg-none pb-[var(--hms-mobile-nav-h,102px)] lg:pb-0">
       <TopHeader
         onOpenSearch={() => setSearchOpen(true)}
         onOpenQr={() => setQrOpen(true)}
@@ -192,7 +192,7 @@ export function AppShell() {
       <FloatingNav visible={navVisible} activeModule={activeModule} onSelect={switchModule} />
 
       {/* Content — aligned with the floating navigation grid */}
-      <main className="flex-1 mx-auto w-full max-w-[1500px] px-4 sm:px-6 py-5 pb-24 lg:pb-8" id="main-content">
+      <main className="flex-1 mx-auto w-full max-w-[1500px] px-4 sm:px-6 py-5 lg:pb-8" id="main-content">
         {ActiveComponent ? <ActiveComponent /> : null}
       </main>
 
@@ -234,52 +234,13 @@ export function AppShell() {
         </div>
       </footer>
 
-      {/* Mobile bottom navigation */}
-      <nav aria-label="Mobile navigation" className="lg:hidden fixed bottom-0 inset-x-0 z-40 border-t bg-background/90 backdrop-blur-md no-print pb-[env(safe-area-inset-bottom)]">
-        <div className="grid grid-cols-5">
-          {mobileNav.slice(0, 4).map((m) => (
-            <button
-              key={m.key}
-              onClick={() => switchModule(m.key)}
-              aria-current={activeModule === m.key ? "page" : undefined}
-              className={cn(
-                "flex flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium min-h-[44px]",
-                activeModule === m.key ? "text-primary" : "text-muted-foreground"
-              )}
-            >
-              <m.icon className="h-5 w-5" aria-hidden />
-              {m.shortLabel ?? m.label}
-            </button>
-          ))}
-          <Sheet open={mobileMoreOpen} onOpenChange={setMobileMoreOpen}>
-            <SheetTrigger asChild>
-              <button className="flex flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium text-muted-foreground min-h-[44px]">
-                <LayoutGrid className="h-5 w-5" aria-hidden /> More
-              </button>
-            </SheetTrigger>
-            <SheetContent side="bottom" className="rounded-t-2xl">
-              <SheetHeader>
-                <SheetTitle>All modules</SheetTitle>
-              </SheetHeader>
-              <div className="grid grid-cols-3 gap-2 pb-6">
-                {navVisible.map((m) => (
-                  <button
-                    key={m.key}
-                    onClick={() => { switchModule(m.key); setMobileMoreOpen(false); }}
-                    className={cn(
-                      "flex flex-col items-center gap-1.5 rounded-xl border p-3 text-xs font-medium",
-                      activeModule === m.key ? "border-primary bg-primary/5 text-primary" : "text-muted-foreground"
-                    )}
-                  >
-                    <m.icon className="h-5 w-5" aria-hidden />
-                    {m.shortLabel ?? m.label}
-                  </button>
-                ))}
-              </div>
-            </SheetContent>
-          </Sheet>
-        </div>
-      </nav>
+      {/* Mobile floating bottom navigation — 5-slot grid, QR scanner center */}
+      <MobileNav
+        modules={navVisible}
+        activeModule={activeModule}
+        onSelect={switchModule}
+        onOpenQr={() => setQrOpen(true)}
+      />
 
       {/* Overlays (utility dialogs only — business CRUD uses dedicated pages) */}
       <ChangePasswordDialog open={changePwOpen} onOpenChange={setChangePwOpen} />
