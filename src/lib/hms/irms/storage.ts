@@ -1,23 +1,31 @@
-// MOHD.HMS ENTERPRISE — IRMS filesystem storage + shared inspection helpers.
+// MOHD.HMS ENTERPRISE — IRMS object storage (S3/MinIO) + shared inspection helpers.
 //
-// CONTRACT (docs/irms-contracts.md §Storage layout):
-//   Base dir: path.join(process.cwd(), "uploads", "irms")
-//   Photos:     {reportId}/{photoId}-{variant}.{ext}   variant ∈ original|display|thumb
-//   Signatures: {reportId}/signatures/{signatureId}.png
-//   DB stores RELATIVE paths (from uploads/irms). Originals are stored EXACTLY as
-//   uploaded (non-destructive); display (≤1600px jpeg q82) and thumb (≤320px jpeg
-//   q78) variants are EXIF-rotated. EXIF subset exposed is sanitized — NEVER GPS.
+// CONTRACT (docs/irms-contracts.md §Storage — S3 edition):
+//   Bucket:     S3_BUCKET (hms-files) on the app's S3-compatible object store.
+//   Object keys: irms/{reportId}/{photoId}-{variant}.{ext}   variant ∈ original|display|thumb
+//                irms/{reportId}/signatures/{signatureId}.png
+//   DB stores OBJECT KEYS in storagePath/displayPath/thumbPath. Originals are
+//   stored EXACTLY as uploaded (non-destructive); display (≤1600px jpeg q82)
+//   and thumb (≤320px jpeg q78) variants are EXIF-rotated. EXIF subset exposed
+//   is sanitized — NEVER GPS.
 //
-// This module also hosts the small shared server-side helpers every IRMS route
-// needs (photo DTO shaping, canonical ordering, overdue predicate, report
-// snapshot/restore) so route files never drift from the contract.
+// Upload validation follows the pipeline spec:
+//   §4  — validate ACTUAL bytes (magic-number sniffing); never trust the
+//         client's MIME type or filename extension alone, and never reject a
+//         valid image merely because its declared MIME is imperfect.
+//   §5  — validate → decode → EXIF-rotate → normalize → variants → store →
+//         confirm object → DB metadata → response (DB row is only kept when
+//         the objects exist; failures clean up rows AND objects).
+//   §7  — JPEG / PNG / WebP supported; HEIC/HEIF detected and rejected with a
+//         specific, actionable message (never a generic processing error).
+//   §16 — no DB record without its objects; no orphan objects after failure.
+//   §19 — every failure maps to a stable error code + honest user message.
 
 import "server-only";
-import path from "path";
-import { promises as fs } from "fs";
 import sharp from "sharp";
 import { db } from "@/lib/db";
 import { Errors } from "@/lib/hms/api";
+import { storage, StorageError } from "@/lib/hms/storage";
 import { PERMISSIONS, IRMS_PHOTO_CATEGORIES, IRMS_PHOTO_PREFIX } from "@/lib/hms/constants";
 import { roleCan } from "@/lib/hms/rbac";
 import type { SessionUser } from "@/lib/hms/auth";
@@ -25,10 +33,27 @@ import type { Prisma } from "@prisma/client";
 
 export type TxClient = Prisma.TransactionClient;
 
-export const IRMS_UPLOAD_ROOT = path.join(process.cwd(), "uploads", "irms");
-
-const ALLOWED_MIME = new Set(["image/jpeg", "image/png", "image/webp"]);
+/** S3 key prefix for every IRMS object (module namespace inside the bucket). */
+export const IRMS_KEY_PREFIX = "irms";
 export const MAX_UPLOAD_BYTES = 15 * 1024 * 1024; // 15MB per file (§Storage)
+
+// ─── Upload error taxonomy (§19) ─────────────────────────────────────────────
+
+export type UploadErrorCode =
+  | "INVALID_FILE"
+  | "UNSUPPORTED_FORMAT"
+  | "FILE_TOO_LARGE"
+  | "IMAGE_PROCESSING_FAILED"
+  | "STORAGE_UPLOAD_FAILED";
+
+/** Upload failure with a stable code and an honest, actionable user message. */
+export class UploadValidationError extends Error {
+  code: UploadErrorCode;
+  constructor(code: UploadErrorCode, message: string) {
+    super(message);
+    this.code = code;
+  }
+}
 
 const MIME_BY_EXT: Record<string, string> = {
   jpg: "image/jpeg",
@@ -44,30 +69,54 @@ function extForMime(mime: string): string {
   return "bin";
 }
 
-/** Safe-join guard: the resolved path must stay inside uploads/irms (§49 path traversal). */
-export function resolveFile(relPath: string): string {
-  const base = path.resolve(IRMS_UPLOAD_ROOT);
-  const abs = path.resolve(base, relPath);
-  if (abs !== base && !abs.startsWith(base + path.sep)) {
-    throw new Error("Invalid storage path.");
+// ─── Content sniffing (§4 — bytes are the source of truth) ───────────────────
+
+export type SniffedImage = { mime: string; ext: string };
+
+/** HEIC/HEIF/AVIF ISO-BMFF brands (ftyp box) — detectable, not decodable by sharp. */
+const FTYP_UNSUPPORTED = new Set([
+  "heic", "heix", "hevc", "hevx", "heim", "heis", "hevm", "hevs", "heif", "mif1", "msf1", "avif",
+]);
+
+/**
+ * Detect the real image type from magic bytes. Throws UploadValidationError
+ * with a specific code when the bytes are not a supported, decodable image.
+ */
+export function sniffImageType(buf: Buffer): SniffedImage {
+  if (!buf || buf.length < 12) {
+    throw new UploadValidationError("INVALID_FILE", "We could not read this image. Please try another photo.");
   }
-  return abs;
+  // JPEG: FF D8 FF (+ any third byte: E0/E1/EE/DB…)
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return { mime: "image/jpeg", ext: "jpg" };
+  // PNG: 89 50 4E 47 0D 0A 1A 0A
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return { mime: "image/png", ext: "png" };
+  // WebP: "RIFF" .... "WEBP"
+  if (buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WEBP") {
+    return { mime: "image/webp", ext: "webp" };
+  }
+  // ISO-BMFF (HEIC/HEIF/AVIF): "....ftyp" + brand — give the actionable hint.
+  if (buf.toString("ascii", 4, 8) === "ftyp") {
+    const brand = buf.toString("ascii", 8, 12).toLowerCase();
+    if (FTYP_UNSUPPORTED.has(brand)) {
+      throw new UploadValidationError(
+        "UNSUPPORTED_FORMAT",
+        "HEIC/HEIF images are not supported. Please set your phone camera format to JPEG (Most Compatible) and try again.",
+      );
+    }
+  }
+  throw new UploadValidationError("INVALID_FILE", "We could not read this image. Please try another photo.");
 }
 
-/** MIME + size + extension whitelist for photo uploads (§Storage). */
+/** MIME + size + content validation for photo uploads (§4/§9/§29). */
 export function assertImageUpload(file: File): void {
-  if (!(file instanceof File)) throw Errors.badRequest("Upload must be a file.");
-  if (!ALLOWED_MIME.has(file.type)) {
-    throw Errors.badRequest("Only JPEG, PNG or WebP images are allowed.");
-  }
-  const ext = path.extname(file.name || "").replace(".", "").toLowerCase();
-  if (ext && !(ext in MIME_BY_EXT)) {
-    throw Errors.badRequest("File extension does not match an allowed image type (jpg, jpeg, png, webp).");
-  }
+  if (!(file instanceof File)) throw new UploadValidationError("INVALID_FILE", "Upload must be a file.");
+  if (file.size <= 0) throw new UploadValidationError("INVALID_FILE", "This file is empty.");
   if (file.size > MAX_UPLOAD_BYTES) {
-    throw Errors.badRequest("Image exceeds the 15MB upload limit.");
+    throw new UploadValidationError("FILE_TOO_LARGE", `Image is too large. Maximum allowed size is ${Math.floor(MAX_UPLOAD_BYTES / (1024 * 1024))} MB.`);
   }
-  if (file.size <= 0) throw Errors.badRequest("Uploaded file is empty.");
+  // NOTE: declared MIME and extension are intentionally NOT rejection criteria
+  // (§4) — mobile cameras frequently report imperfect values. The actual bytes
+  // are validated by sniffImageType() before anything is stored.
 }
 
 // ─── EXIF (sanitized subset — Model/DateTimeOriginal/Make/Orientation, never GPS) ───
@@ -209,36 +258,56 @@ export type PhotoVariantsResult = {
   exif: string; // sanitized JSON subset — NEVER GPS
 };
 
+/** One photo fully decoded in memory (variants + metadata) before anything is stored. */
+type PreparedPhoto = {
+  original: Buffer;
+  display: Buffer;
+  thumb: Buffer;
+  sniffed: SniffedImage;
+  width: number;
+  height: number;
+  exif: string;
+  cameraModel: string;
+  takenAt: Date | null;
+};
+
+export type PreparedPhotoInternal = PreparedPhoto;
+
+/** Deterministic, collision-safe object keys: {module}/{reportId}/{photoId}-{variant}.{ext} (§14). */
+export function photoObjectKeys(reportId: string, photoId: string, ext: string): { original: string; display: string; thumb: string } {
+  return {
+    original: `${IRMS_KEY_PREFIX}/${reportId}/${photoId}-original.${ext}`,
+    display: `${IRMS_KEY_PREFIX}/${reportId}/${photoId}-display.jpg`,
+    thumb: `${IRMS_KEY_PREFIX}/${reportId}/${photoId}-thumb.jpg`,
+  };
+}
+
 /**
- * Save one uploaded photo non-destructively:
- *  - original: exactly the uploaded bytes;
- *  - display: EXIF-rotated, max edge 1600px, jpeg q82;
- *  - thumb:   EXIF-rotated, max edge 320px, jpeg q78.
+ * §5/§16 — validate + decode + derive ALL variants in memory first. A corrupt
+ * or unsupported image fails HERE, before any DB row or object is created.
  */
-export async function savePhotoVariants(file: File, reportId: string, photoId: string): Promise<PhotoVariantsResult> {
+export async function preparePhotoUpload(file: File): Promise<PreparedPhoto> {
   const buf = Buffer.from(await file.arrayBuffer());
-  const dir = reportId;
-  await fs.mkdir(resolveFile(dir), { recursive: true });
+  const sniffed = sniffImageType(buf); // §4 — bytes decide, not the client MIME
 
-  const ext = extForMime(file.type || "image/jpeg");
-  const storagePath = path.join(dir, `${photoId}-original.${ext}`);
-  await fs.writeFile(resolveFile(storagePath), buf); // as-uploaded, untouched (§14/§16)
-
-  const display = await sharp(buf)
-    .rotate() // bake EXIF orientation into processed variants only
-    .resize({ width: 1600, height: 1600, fit: "inside", withoutEnlargement: true })
-    .jpeg({ quality: 82 })
-    .toBuffer();
-  const thumb = await sharp(buf)
-    .rotate()
-    .resize({ width: 320, height: 320, fit: "inside", withoutEnlargement: true })
-    .jpeg({ quality: 78 })
-    .toBuffer();
-
-  const displayPath = path.join(dir, `${photoId}-display.jpg`);
-  const thumbPath = path.join(dir, `${photoId}-thumb.jpg`);
-  await fs.writeFile(resolveFile(displayPath), display);
-  await fs.writeFile(resolveFile(thumbPath), thumb);
+  // Decode/normalize in memory: a decoder failure must not leave orphans.
+  let display: Buffer;
+  let thumb: Buffer;
+  try {
+    display = await sharp(buf)
+      .rotate() // bake EXIF orientation into processed variants only (§6)
+      .resize({ width: 1600, height: 1600, fit: "inside", withoutEnlargement: true })
+      .jpeg({ quality: 82 })
+      .toBuffer();
+    thumb = await sharp(buf)
+      .rotate()
+      .resize({ width: 320, height: 320, fit: "inside", withoutEnlargement: true })
+      .jpeg({ quality: 78 })
+      .toBuffer();
+  } catch (err) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: "error", msg: "image.processing.failed", mime: file.type, sniffed: sniffed.mime, size: buf.length, error: String(err) }));
+    throw new UploadValidationError("IMAGE_PROCESSING_FAILED", "We could not read this image. Please try another photo.");
+  }
 
   let width = 0;
   let height = 0;
@@ -252,22 +321,61 @@ export async function savePhotoVariants(file: File, reportId: string, photoId: s
 
   const { subset, takenAt } = sanitizeExif(buf);
   return {
-    storagePath,
-    displayPath,
-    thumbPath,
+    original: buf,
+    display,
+    thumb,
+    sniffed,
     width,
     height,
-    sizeBytes: buf.length,
-    mimeType: file.type || "image/jpeg",
     cameraModel: subset.Model ?? "",
     takenAt,
     exif: JSON.stringify(subset), // Model/DateTimeOriginal/Make/Orientation only — never GPS
   };
 }
 
+/**
+ * §16 — store the confirmed variants in the object store. The DB row is only
+ * completed by the caller AFTER this succeeds; if any object fails, the
+ * already-uploaded objects are removed so no orphans remain.
+ */
+export async function storePreparedPhoto(prepared: PreparedPhoto, keys: { original: string; display: string; thumb: string }): Promise<PhotoVariantsResult> {
+  try {
+    await storage.put(keys.original, prepared.original, prepared.sniffed.mime); // as-uploaded, untouched (§14/§48)
+    await storage.put(keys.display, prepared.display, "image/jpeg");
+    await storage.put(keys.thumb, prepared.thumb, "image/jpeg");
+  } catch (err) {
+    await deleteFiles([keys.original, keys.display, keys.thumb]);
+    if (err instanceof StorageError || err instanceof UploadValidationError) {
+      throw new UploadValidationError("STORAGE_UPLOAD_FAILED", "Storage service is temporarily unavailable. Please try again.");
+    }
+    throw err;
+  }
+  return {
+    storagePath: keys.original,
+    displayPath: keys.display,
+    thumbPath: keys.thumb,
+    width: prepared.width,
+    height: prepared.height,
+    sizeBytes: prepared.original.length,
+    mimeType: prepared.sniffed.mime,
+    cameraModel: prepared.cameraModel,
+    takenAt: prepared.takenAt,
+    exif: prepared.exif,
+  };
+}
+
+/**
+ * Save one uploaded photo non-destructively (single-file convenience used by
+ * tests/tools): prepare in memory → store objects → return variant metadata.
+ */
+export async function savePhotoVariants(file: File, reportId: string, photoId: string): Promise<PhotoVariantsResult> {
+  const prepared = await preparePhotoUpload(file);
+  return storePreparedPhoto(prepared, photoObjectKeys(reportId, photoId, prepared.sniffed.ext));
+}
+
 // ─── Signatures ──────────────────────────────────────────────────────────────
 
-/** Accepts a PNG Blob/File or a dataURL/base64 string; validates the PNG magic; saves as-is. */
+/** Accepts a PNG Blob/File or a dataURL/base64 string; validates the PNG magic; stores as-is. */
 export async function saveSignature(data: Blob | string, reportId: string, signatureId: string): Promise<{ storagePath: string; sizeBytes: number }> {
   let buf: Buffer;
   if (typeof data === "string") {
@@ -277,50 +385,42 @@ export async function saveSignature(data: Blob | string, reportId: string, signa
   } else {
     buf = Buffer.from(await data.arrayBuffer());
   }
-  if (buf.length === 0) throw Errors.badRequest("Signature image is empty.");
-  if (buf.length > MAX_UPLOAD_BYTES) throw Errors.badRequest("Signature image exceeds the 15MB limit.");
+  if (buf.length === 0) throw new UploadValidationError("INVALID_FILE", "Signature image is empty.");
+  if (buf.length > MAX_UPLOAD_BYTES) {
+    throw new UploadValidationError("FILE_TOO_LARGE", `Signature image exceeds the ${Math.floor(MAX_UPLOAD_BYTES / (1024 * 1024))} MB limit.`);
+  }
   const isPng = buf.length > 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47;
-  if (!isPng) throw Errors.badRequest("Signature image must be a PNG.");
-  const rel = path.join(reportId, "signatures", `${signatureId}.png`);
-  const abs = resolveFile(rel);
-  await fs.mkdir(path.dirname(abs), { recursive: true });
-  await fs.writeFile(abs, buf);
-  return { storagePath: rel, sizeBytes: buf.length };
+  if (!isPng) throw new UploadValidationError("UNSUPPORTED_FORMAT", "Signature image must be a PNG.");
+  const key = `${IRMS_KEY_PREFIX}/${reportId}/signatures/${signatureId}.png`;
+  await storage.put(key, buf, "image/png");
+  return { storagePath: key, sizeBytes: buf.length };
 }
 
 // ─── File serving / deletion ─────────────────────────────────────────────────
 
-/** Read a stored variant file; null when missing (caller turns this into 404). */
-export async function readVariantFile(relPath: string | null | undefined): Promise<{ buffer: Buffer; contentType: string } | null> {
-  if (!relPath) return null;
-  try {
-    const buffer = await fs.readFile(resolveFile(relPath));
-    const ext = path.extname(relPath).slice(1).toLowerCase();
-    return { buffer, contentType: MIME_BY_EXT[ext] ?? "application/octet-stream" };
-  } catch {
-    return null;
+/** Read a stored variant from object storage; null when missing (caller turns this into 404). */
+export async function readVariantFile(key: string | null | undefined): Promise<{ buffer: Buffer; contentType: string } | null> {
+  if (!key) return null;
+  const obj = await storage.get(key);
+  if (!obj) return null;
+  // Prefer the stored content type; fall back to the key extension when the
+  // object was uploaded without usable metadata.
+  if (obj.contentType && obj.contentType !== "application/octet-stream") return obj;
+  const ext = key.slice(key.lastIndexOf(".") + 1).toLowerCase();
+  return { buffer: obj.buffer, contentType: MIME_BY_EXT[ext] ?? obj.contentType };
+}
+
+/** Best-effort delete of specific stored objects (never throws, idempotent). */
+export async function deleteFiles(keys: (string | null | undefined)[]): Promise<void> {
+  for (const key of keys) {
+    if (!key) continue;
+    await storage.remove(key);
   }
 }
 
-/** Best-effort delete of specific stored files (never throws). */
-export async function deleteFiles(relPaths: (string | null | undefined)[]): Promise<void> {
-  for (const rel of relPaths) {
-    if (!rel) continue;
-    try {
-      await fs.unlink(resolveFile(rel));
-    } catch {
-      // already gone — deletion is idempotent
-    }
-  }
-}
-
-/** Remove a report's whole storage folder (report delete only). */
+/** Remove a report's whole storage namespace (report delete only). */
 export async function deleteReportDir(reportId: string): Promise<void> {
-  try {
-    await fs.rm(resolveFile(reportId), { recursive: true, force: true });
-  } catch {
-    // best-effort
-  }
+  await storage.removePrefix(`${IRMS_KEY_PREFIX}/${reportId}/`);
 }
 
 // ─── Photo numbering (§Storage) ──────────────────────────────────────────────

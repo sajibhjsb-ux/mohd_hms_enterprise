@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { handler, ok, okList, parseBody, Errors } from "@/lib/hms/api";
+import { handler, ok, okList, parseBody, Errors, ApiError } from "@/lib/hms/api";
 import type { SessionUser } from "@/lib/hms/auth";
 import { PERMISSIONS, IRMS_SIGNATURE_ROLES } from "@/lib/hms/constants";
 import { roleCan } from "@/lib/hms/rbac";
 import { audit } from "@/lib/hms/services";
 import { emit } from "@/lib/hms/workflows/bus";
 import { EVENT_TYPES } from "@/lib/hms/workflows/types";
-import { saveSignature } from "@/lib/hms/irms/storage";
+import { saveSignature, UploadValidationError } from "@/lib/hms/irms/storage";
 
 function withId(fn: (id: string, ctx: { req: NextRequest; user: SessionUser }) => Promise<NextResponse>) {
   return async (req: NextRequest, ctx: { params: Promise<{ id: string }> }) => {
@@ -106,7 +106,10 @@ export const POST = withId(
       if (!portalClient) throw Errors.forbidden("Only the owning customer (during client review) or a supervisor can sign as client.");
     }
 
-    const saved = await saveSignature(image, id, crypto.randomUUID());
+    const saved = await saveSignature(image, id, crypto.randomUUID()).catch((err) => {
+      if (err instanceof UploadValidationError) throw new ApiError(422, err.code, err.message);
+      throw err;
+    });
 
     // Keep history — a new row is always created, never overwritten (§9).
     const signature = await db.inspectionSignature.create({

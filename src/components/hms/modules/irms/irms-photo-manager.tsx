@@ -73,9 +73,20 @@ type UploadItem = { key: string; file: File; progress: number; status: UploadSta
 
 const MAX_PARALLEL = 3;
 const ALL = "ALL";
+// Mirrors the server-side limit (§9) so oversized files fail fast with an
+// honest message instead of burning bandwidth on a doomed request.
+const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
+const IMAGE_EXT_RE = /\.(jpe?g|png|webp)$/i;
+const HEIC_EXT_RE = /\.(heic|heif|avif)$/i;
 
 function uid(): string {
   return `u${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** Some Android pickers report an empty MIME — the extension decides then. */
+function looksLikeImage(f: File): boolean {
+  if (f.type) return f.type.startsWith("image/") || IMAGE_EXT_RE.test(f.name);
+  return IMAGE_EXT_RE.test(f.name) || HEIC_EXT_RE.test(f.name);
 }
 
 function humanSize(bytes: number | null | undefined): string {
@@ -91,6 +102,8 @@ function uploadFile(url: string, file: File, category: string, onProgress: (pct:
     const xhr = new XMLHttpRequest();
     xhr.open("POST", url);
     xhr.withCredentials = true;
+    // §18 — never leave the UI stuck "processing" forever on a dead socket.
+    xhr.timeout = 180_000;
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) onProgress(Math.min(99, Math.round((e.loaded / e.total) * 100)));
     };
@@ -106,7 +119,8 @@ function uploadFile(url: string, file: File, category: string, onProgress: (pct:
         reject(new ClientApiError(msg, "UPLOAD_FAILED", xhr.status));
       }
     };
-    xhr.onerror = () => reject(new ClientApiError("Network error during upload.", "NETWORK", 0));
+    xhr.onerror = () => reject(new ClientApiError("Upload failed. Please check your connection and try again.", "NETWORK", 0));
+    xhr.ontimeout = () => reject(new ClientApiError("Upload failed. Please check your connection and try again.", "NETWORK", 0));
     xhr.onabort = () => reject(new DOMException("Upload canceled", "AbortError"));
     const onAbort = () => xhr.abort();
     signal.addEventListener("abort", onAbort, { once: true });
@@ -286,13 +300,30 @@ export function IrmsPhotoManager({
   }, [sortedPhotos]);
 
   // ── Upload queue (max 3 parallel) ──
+  // §9/§19 — fail fast with a specific, actionable message; a file that can
+  // never succeed never silently disappears nor reaches the server blind.
   const addFiles = useCallback((files: File[]) => {
-    const images = files.filter((f) => f.type.startsWith("image/"));
-    if (images.length === 0) return;
-    setUploads((prev) => [
-      ...prev,
-      ...images.map((f) => ({ key: uid(), file: f, progress: 0, status: "queued" as const })),
-    ]);
+    const items: UploadItem[] = [];
+    for (const f of files) {
+      if (!looksLikeImage(f)) {
+        items.push({ key: uid(), file: f, progress: 0, status: "error", error: "Unsupported file type. Please upload JPEG, PNG or WebP images." });
+        continue;
+      }
+      if (HEIC_EXT_RE.test(f.name) || f.type === "image/heic" || f.type === "image/heif" || f.type === "image/avif") {
+        items.push({ key: uid(), file: f, progress: 0, status: "error", error: "HEIC/HEIF isn't supported. Set your phone camera to JPEG (Most Compatible) and try again." });
+        continue;
+      }
+      if (f.size > MAX_UPLOAD_BYTES) {
+        items.push({ key: uid(), file: f, progress: 0, status: "error", error: `Image is too large. Maximum allowed size is ${Math.floor(MAX_UPLOAD_BYTES / (1024 * 1024))} MB.` });
+        continue;
+      }
+      if (f.size <= 0) {
+        items.push({ key: uid(), file: f, progress: 0, status: "error", error: "This file is empty. Please choose another photo." });
+        continue;
+      }
+      items.push({ key: uid(), file: f, progress: 0, status: "queued" });
+    }
+    if (items.length > 0) setUploads((prev) => [...prev, ...items]);
   }, []);
 
   useEffect(() => {
@@ -475,6 +506,17 @@ export function IrmsPhotoManager({
 
   const activeUploads = uploads.length;
 
+  // §21 — honest queue accounting. Never show a bare "0 photos" while files
+  // are queued/uploading/failed: the server count is labeled and the queue
+  // states are always broken out. (Plain derivation — must run on every
+  // render, before any early return, to keep hook order stable.)
+  let doneUploads = 0, failedUploads = 0, inFlightUploads = 0;
+  for (const u of uploads) {
+    if (u.status === "done") doneUploads += 1;
+    else if (u.status === "error") failedUploads += 1;
+    else if (u.status === "queued" || u.status === "uploading") inFlightUploads += 1;
+  }
+
   return (
     <div className="space-y-4">
       {/* Upload zone */}
@@ -535,7 +577,7 @@ export function IrmsPhotoManager({
                   <div className="flex items-center gap-2">
                     <Paperclip className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
                     <span className="min-w-0 flex-1 truncate text-sm" title={u.file.name}>{u.file.name}</span>
-                    {u.status === "uploading" ? <span className="text-xs tabular-nums text-muted-foreground">{u.progress}%</span> : null}
+                    {u.status === "uploading" ? <span className="text-xs tabular-nums text-muted-foreground">{u.progress >= 99 ? "Processing…" : `${u.progress}%`}</span> : null}
                     {u.status === "queued" ? <span className="text-xs text-muted-foreground">Queued…</span> : null}
                     {u.status === "done" ? <CheckCheck className="h-4 w-4 text-emerald-600" aria-label="Uploaded" /> : null}
                     {u.status === "error" ? <X className="h-4 w-4 text-red-600" aria-label="Upload failed" /> : null}
@@ -593,7 +635,11 @@ export function IrmsPhotoManager({
               : orderState === "error" ? <span className="text-destructive">Order not saved — restored from server</span>
               : "Drag thumbnails (or use ↑/↓) to set the order within a category."}
           </span>
-        ) : <span className="text-xs text-muted-foreground">{sortedPhotos.length} photo{sortedPhotos.length === 1 ? "" : "s"} · tap a photo to view details</span>}
+        ) : <span className="text-xs text-muted-foreground">
+          {sortedPhotos.length} photo{sortedPhotos.length === 1 ? "" : "s"} stored
+          {activeUploads > 0 ? ` · queue: ${doneUploads} uploaded${failedUploads ? `, ${failedUploads} failed` : ""}${inFlightUploads ? `, ${inFlightUploads} in progress` : ""}` : ""}
+          {" · tap a photo to view details"}
+        </span>}
 
         {selection.size > 0 ? (
           <TooltipProvider delayDuration={200}>

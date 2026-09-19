@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { handler, okList, ok as okJson, Errors } from "@/lib/hms/api";
+import { handler, okList, ok as okJson, Errors, ApiError } from "@/lib/hms/api";
 import type { SessionUser } from "@/lib/hms/auth";
 import { PERMISSIONS, IRMS_PHOTO_CATEGORIES } from "@/lib/hms/constants";
 import { audit } from "@/lib/hms/services";
@@ -11,9 +11,12 @@ import {
   canonicalPhotoOrder,
   deleteFiles,
   photoItemDto,
+  photoObjectKeys,
+  preparePhotoUpload,
   regeneratePhotoNo,
   requirePhotoEditor,
-  savePhotoVariants,
+  storePreparedPhoto,
+  UploadValidationError,
   type TxClient,
 } from "@/lib/hms/irms/storage";
 
@@ -38,9 +41,15 @@ export const GET = withId(
   }
 );
 
-// ── 8b. POST — multipart upload (one or many), sharp variants, numbering ────
+// ── 8b. POST — multipart upload (one or many), S3 variants, numbering ───────
 
 const MAX_FILES_PER_REQUEST = 24;
+
+/** Upload-validation failures keep their honest code + user-facing message. */
+function failUpload(err: unknown): never {
+  if (err instanceof UploadValidationError) throw new ApiError(422, err.code, err.message);
+  throw err instanceof Error ? err : Errors.badRequest("Upload failed.");
+}
 
 export const POST = withId(
   async (id, { req, user }) => {
@@ -62,30 +71,49 @@ export const POST = withId(
     if (files.length > MAX_FILES_PER_REQUEST) {
       throw Errors.badRequest(`Too many files in one request (max ${MAX_FILES_PER_REQUEST}).`);
     }
-    for (const f of files) assertImageUpload(f);
 
-    const maxSort = await db.inspectionPhoto.aggregate({ where: { reportId: id }, _max: { sortOrder: true } });
-    let nextSort = (maxSort._max.sortOrder ?? 0) + 1;
-
-    const created: Awaited<ReturnType<typeof db.inspectionPhoto.create>>[] = [];
+    // Phase 1 — validate + decode + derive ALL variants in memory FIRST (§5).
+    // A corrupt/unsupported/oversized image fails here with a specific code
+    // and honest message BEFORE any DB row or object is created (§16/§46 —
+    // no partial state, never a generic "could not be processed").
+    const prepared = [];
     for (const file of files) {
-      const row = await db.inspectionPhoto.create({
-        data: {
-          reportId: id,
-          category,
-          sortOrder: nextSort++,
-          uploadedById: user.id,
-        },
-      });
       try {
-        const variants = await savePhotoVariants(file, id, row.id);
-        const updated = await db.inspectionPhoto.update({ where: { id: row.id }, data: { ...variants } });
-        created.push(updated);
-      } catch {
+        assertImageUpload(file);
+        prepared.push(await preparePhotoUpload(file));
+      } catch (err) {
+        failUpload(err);
+      }
+    }
+
+    // Phase 2 — persist: create row → store objects (confirmed) → complete row.
+    // Any failure deletes that row AND its objects with a rollback of rows
+    // created during this request — no DB record without its objects, no
+    // orphan objects (§16).
+    const created: Awaited<ReturnType<typeof db.inspectionPhoto.create>>[] = [];
+    try {
+      const maxSort = await db.inspectionPhoto.aggregate({ where: { reportId: id }, _max: { sortOrder: true } });
+      let nextSort = (maxSort._max.sortOrder ?? 0) + 1;
+      for (const item of prepared) {
+        const row = await db.inspectionPhoto.create({
+          data: { reportId: id, category, sortOrder: nextSort++, uploadedById: user.id },
+        });
+        try {
+          const keys = photoObjectKeys(id, row.id, item.sniffed.ext);
+          const variants = await storePreparedPhoto(item, keys);
+          const updated = await db.inspectionPhoto.update({ where: { id: row.id }, data: { ...variants } });
+          created.push(updated);
+        } catch (err) {
+          await db.inspectionPhoto.delete({ where: { id: row.id } }).catch(() => undefined);
+          throw err;
+        }
+      }
+    } catch (err) {
+      for (const row of created) {
         await db.inspectionPhoto.delete({ where: { id: row.id } }).catch(() => undefined);
         await deleteFiles([row.storagePath, row.displayPath, row.thumbPath]);
-        throw Errors.badRequest(`One of the images could not be processed (${file.name || "unnamed"}).`);
       }
+      failUpload(err);
     }
 
     // Renumber the whole category set inside one transaction (§Storage numbering).

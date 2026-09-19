@@ -22,11 +22,21 @@ DRAFT →(submit)→ SUBMITTED →(review)→ IN_REVIEW →(manager_approve)→ 
   approve also allowed directly from MANAGER_APPROVAL (client review skipped) and from CLIENT_REVIEW (by staff).
 CLIENT_REVIEW customer confirm/reject via portal routes.
 
-## Storage layout (filesystem, NOT in PostgreSQL)
-Base dir: `path.join(process.cwd(), "uploads", "irms")`. Photos: `{reportId}/{photoId}-{variant}.{ext}`
-variant ∈ original|display|thumb. Signatures: `{reportId}/signatures/{signatureId}.png`.
-Store RELATIVE paths (from uploads/irms) in DB columns storagePath/displayPath/thumbPath.
-MIME whitelist: image/jpeg, image/png, image/webp. Max upload size 15MB per file.
+## Storage layout (S3-compatible object store — MinIO API, NOT in PostgreSQL, NOT local files)
+Authoritative store: the app's S3-compatible object storage (service `mini-services/object-storage`
+on 127.0.0.1:3090 in dev; real MinIO in production via S3_* env). Bucket: `hms-files` (S3_BUCKET).
+Object keys (single namespace inside the bucket): `irms/{reportId}/{photoId}-{variant}.{ext}`
+variant ∈ original|display|thumb; signatures `irms/{reportId}/signatures/{signatureId}.png`.
+DB columns storagePath/displayPath/thumbPath store the full OBJECT KEY (server-generated only —
+client filenames never become keys). Access is ALWAYS through authenticated, RBAC-checked API
+routes (photos/[id]/file, signatures/[id]/file) — the bucket is never public and browsers never
+talk to S3 directly.
+Upload validation: bytes are sniffed (JPEG/PNG/WebP magic) — declared MIME/extension are not
+rejection criteria (§4); HEIC/HEIF detected via ftyp brand and rejected with an actionable message.
+Upload pipeline: validate → decode variants in memory → store objects → confirm → DB row
+completed → response. Failures clean up rows AND objects (no orphans; §16). Errors carry stable
+codes: INVALID_FILE / UNSUPPORTED_FORMAT / FILE_TOO_LARGE / IMAGE_PROCESSING_FAILED /
+STORAGE_UPLOAD_FAILED. Max upload size 15MB per file.
 sharp processing: rotate() (EXIF orientation) → display = max edge 1600px jpeg q82; thumb = max edge 320px jpeg q78.
 Original stored EXACTLY as uploaded (non-destructive, §14/§16). Never delete originals when annotating.
 photoNo numbering: per category prefix (B/A/P/D/I/C/F/E) + 3-digit sequence in sortOrder order, regenerated

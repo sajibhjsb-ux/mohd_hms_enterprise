@@ -1,0 +1,11 @@
+{
+  "name": "hms-object-storage",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "bun index.ts"
+  },
+  "dependencies": {
+    "s3rver": "^3.7.1"
+  }
+}

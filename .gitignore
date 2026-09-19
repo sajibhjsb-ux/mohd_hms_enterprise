@@ -63,3 +63,9 @@ dev.log
 
 # IRMS media storage (filesystem; originals never in git)
 /uploads
+
+# object storage data (local S3 service)
+/.storage
+
+# mini-service dev logs
+mini-services/*/storage.log
