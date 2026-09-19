@@ -1,9 +1,11 @@
 // MOHD.HMS ENTERPRISE — Backend scheduler / worker (§35).
 // Runs inside the Next.js server process, started from src/instrumentation.ts at
 // boot. It never depends on a browser tab being open:
-//   • every 10s — outbox worker tick (process due DomainEvents)
+//   • every 10s — outbox worker tick (process due DomainEvents) + email worker
+//     tick (deliver due queued emails — the ONE email delivery loop)
 //   • every 60s — business scans that raise events: PM due/reminders/overdue,
-//     complaint acceptance escalation, SLA breach, WO running-long, invoice overdue
+//     complaint acceptance escalation, SLA breach, WO running-long, invoice
+//     overdue, invoice due-soon, quotation expiring
 // Every scan is deduplicated (no repeated event spam, §22/§108) and runs in
 // try/catch so one failing scan never starves the others.
 
@@ -15,6 +17,8 @@ import { tickWorkflowEngine } from "./engine";
 import { dispatchPendingEvents } from "@/lib/hms/realtime/dispatcher";
 import { EVENT_TYPES } from "./types";
 import { pmReminderDays, slaTargetsHours, automationNumber, isAutomationEnabled } from "./settings";
+import { bootstrapEmailSystem } from "@/lib/hms/email/bootstrap";
+import { tickEmailWorker } from "@/lib/hms/email/service";
 
 const g = globalThis as unknown as { __hmsSchedulerBooted?: boolean; __hmsSchedulerScanRunning?: boolean };
 
@@ -137,6 +141,36 @@ async function scanInvoiceOverdue(): Promise<void> {
   }
 }
 
+// ── Email automation scans (§33 delayed emails — same scheduler, no second one) ──
+
+/** Invoices becoming due within 3 days → INVOICE_DUE_SOON (customer reminder). */
+async function scanInvoiceDueSoon(): Promise<void> {
+  const soon = new Date(Date.now() + 3 * 86_400_000);
+  const invoices = await db.invoice.findMany({
+    where: { status: { in: ["SENT", "PARTIALLY_PAID"] }, dueDate: { gte: new Date(), lte: soon }, balanceCents: { gt: 0 } },
+    select: { id: true, code: true },
+    take: 100,
+  });
+  for (const inv of invoices) {
+    if (await recentEvent(EVENT_TYPES.INVOICE_DUE_SOON, inv.id, 40)) continue;
+    await emit({ type: EVENT_TYPES.INVOICE_DUE_SOON, resourceType: "INVOICE", resourceId: inv.id, payload: { invoiceId: inv.id }, actorType: "SYSTEM" });
+  }
+}
+
+/** Quotations expiring within 7 days → QUOTATION_EXPIRING (sales reminder). */
+async function scanQuotationExpiring(): Promise<void> {
+  const soon = new Date(Date.now() + 7 * 86_400_000);
+  const quotations = await db.quotation.findMany({
+    where: { status: "SENT", validUntil: { gte: new Date(), lte: soon } },
+    select: { id: true, code: true },
+    take: 100,
+  });
+  for (const q of quotations) {
+    if (await recentEvent(EVENT_TYPES.QUOTATION_EXPIRING, q.id, 40)) continue;
+    await emit({ type: EVENT_TYPES.QUOTATION_EXPIRING, resourceType: "QUOTATION", resourceId: q.id, payload: { quotationId: q.id }, actorType: "SYSTEM" });
+  }
+}
+
 async function runScans(): Promise<void> {
   if (g.__hmsSchedulerScanRunning) return;
   g.__hmsSchedulerScanRunning = true;
@@ -145,6 +179,8 @@ async function runScans(): Promise<void> {
     await scanEscalations();
     await scanSla();
     await scanInvoiceOverdue();
+    await scanInvoiceDueSoon();
+    await scanQuotationExpiring();
   } catch (e) {
     console.error("scheduler-scan-failed", e);
   } finally {
@@ -157,8 +193,14 @@ export function startScheduler(): void {
   if (g.__hmsSchedulerBooted) return;
   g.__hmsSchedulerBooted = true;
   console.log(JSON.stringify({ ts: new Date().toISOString(), level: "info", msg: "workflow-scheduler-started" }));
+  // Email system bootstrap (templates + automations + engine handlers) — idempotent.
+  void bootstrapEmailSystem();
   setTimeout(() => { void tickWorkflowEngine(); }, 2_000);
   setInterval(() => { void tickWorkflowEngine(); }, 10_000);
+  // Email worker — the ONE delivery loop for queued emails (spec: reuse the
+  // existing scheduler; no second scheduler). Same cadence as the engine tick.
+  setTimeout(() => { void tickEmailWorker(); }, 8_000);
+  setInterval(() => { void tickEmailWorker(); }, 10_000);
   // Realtime dispatch safety net (STEP 7/22): pushes committed outbox events to
   // the realtime service. emit() also kicks this directly for low latency.
   setInterval(() => { void dispatchPendingEvents(); }, 2_000);

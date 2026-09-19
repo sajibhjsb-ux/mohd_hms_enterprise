@@ -417,7 +417,10 @@ registerWorkflow(EVENT_TYPES.PAYMENT_RECEIVED, "CUSTOMER_PAYMENT_RECEIPT", async
   return { result: "SUCCESS", detail: "customer receipt notification created" };
 });
 
-// ─── §30: centralized email queue — EVENT → EMAIL_SEND → delivery log ───
+// ─── §30: centralized email queue — EVENT → EMAIL_SEND → EmailService ───
+// The EMAIL_SEND event is the generic email channel: the recipient receives the
+// SAME message in-app (Notification row) and by email (GENERAL_NOTIFICATION
+// template) — separate delivery channels over the same domain event (§51).
 registerWorkflow(EVENT_TYPES.EMAIL_SEND, "EMAIL_DELIVER", async (ctx) => {
   const toUserId = String(ctx.payload.userId ?? "");
   const title = String(ctx.payload.title ?? "Notification");
@@ -426,12 +429,26 @@ registerWorkflow(EVENT_TYPES.EMAIL_SEND, "EMAIL_DELIVER", async (ctx) => {
   if (!(await isAutomationEnabled("email_notifications"))) {
     return { result: "SKIPPED", detail: "email channel disabled (settings)" };
   }
-  // Delivery log — outbound provider integration point (SMTP/API configured in production).
+  // In-app visible record (existing behavior, keeps every notification surface working).
   await db.notification.create({
     data: { userId: toUserId, channel: "EMAIL", type: "INFO", title, message, resourceType: ctx.resourceType, resourceId: ctx.resourceId },
   });
-  console.log(JSON.stringify({ ts: new Date().toISOString(), level: "info", channel: "EMAIL", to: toUserId, title, queued: false, delivered: true }));
-  return { result: "SUCCESS", detail: "email delivered to log" };
+  // REAL delivery through the ONE centralized EmailService (queued → worker → SMTP).
+  const { queueDirect } = await import("@/lib/hms/email/service");
+  const user = await db.user.findUnique({ where: { id: toUserId }, select: { email: true, name: true } });
+  if (!user) return { result: "SKIPPED", detail: "recipient user missing" };
+  const queued = await queueDirect({
+    templateKey: "GENERAL_NOTIFICATION",
+    to: user.email,
+    toUserId,
+    category: "SYSTEM",
+    relatedType: ctx.resourceType,
+    relatedId: ctx.resourceId,
+    data: { NOTIFICATION_TITLE: title, NOTIFICATION_MESSAGE: message, USER_NAME: user.name },
+  });
+  if (!queued.ok) return { result: "SKIPPED", detail: `email not queued: ${queued.reason}` };
+  console.log(JSON.stringify({ ts: new Date().toISOString(), level: "info", channel: "EMAIL", to: user.email, title, queued: true }));
+  return { result: "SUCCESS", detail: "email queued via EmailService" };
 });
 
 /** Event types that have at least one registered workflow (observability). */

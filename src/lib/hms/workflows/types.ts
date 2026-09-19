@@ -30,9 +30,11 @@ export const EVENT_TYPES = {
   // Quotations (§24)
   QUOTATION_SENT: "QUOTATION_SENT",
   QUOTATION_ACCEPTED: "QUOTATION_ACCEPTED",
+  QUOTATION_EXPIRING: "QUOTATION_EXPIRING",
   // Invoices / payments (§26/§27)
   INVOICE_SENT: "INVOICE_SENT",
   INVOICE_OVERDUE: "INVOICE_OVERDUE",
+  INVOICE_DUE_SOON: "INVOICE_DUE_SOON",
   PAYMENT_RECEIVED: "PAYMENT_RECEIVED",
   // Inspections (§70)
   INSPECTION_COMPLETED: "INSPECTION_COMPLETED",
@@ -47,6 +49,8 @@ export const EVENT_TYPES = {
   WO_OVERDUE: "WO_OVERDUE",
   // Email queue (§30) — centralized EmailService input
   EMAIL_SEND: "EMAIL_SEND",
+  // HR letters (email automations on the letter workflow)
+  LETTER_APPROVED: "LETTER_APPROVED",
   // ─── Realtime broadcast events (FULL REALTIME UPDATE SYSTEM) ───
   // These extend the same outbox vocabulary so every business mutation that
   // should reach connected portals is persisted in the ONE authoritative

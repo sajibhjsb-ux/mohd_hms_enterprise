@@ -18,6 +18,7 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { AutomationTab } from "./automation-tab";
+import { EmailTab } from "./email-tab";
 import { LegalTab } from "./legal-tab";
 
 // Keep in sync with package.json version.
@@ -51,6 +52,8 @@ export function SettingsModule() {
   const { toast } = useToast();
 
   const canManage = hasPerm(user, PERMISSIONS.settings_manage);
+  // Email admin area (§30) — only visible to roles holding the email view permission.
+  const canViewEmail = hasPerm(user, PERMISSIONS.email_view);
 
   const [values, setValues] = useState<Record<string, string>>({});
   const [saved, setSaved] = useState<Record<string, string>>({});
@@ -142,10 +145,11 @@ export function SettingsModule() {
       <PageHeader title="Settings" subtitle="Company configuration and system information" />
 
       <Tabs defaultValue="company">
-        <TabsList className="mb-4">
+        <TabsList className="mb-4 flex-wrap h-auto">
           <TabsTrigger value="company">Company</TabsTrigger>
           <TabsTrigger value="localization">Localization</TabsTrigger>
           <TabsTrigger value="automation">Automation</TabsTrigger>
+          {canViewEmail ? <TabsTrigger value="email">Email</TabsTrigger> : null}
           <TabsTrigger value="legal">Legal</TabsTrigger>
           <TabsTrigger value="system">System</TabsTrigger>
         </TabsList>
@@ -247,6 +251,13 @@ export function SettingsModule() {
         <TabsContent value="automation">
           <AutomationTab />
         </TabsContent>
+
+        {/* ── Email (§30 — centralized EmailService administration) ── */}
+        {canViewEmail ? (
+          <TabsContent value="email">
+            <EmailTab />
+          </TabsContent>
+        ) : null}
 
         {/* ── Legal (Terms & Conditions / Privacy Policy — canonical versions) ── */}
         <TabsContent value="legal">

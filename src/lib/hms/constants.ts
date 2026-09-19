@@ -105,6 +105,12 @@ export const PERMISSIONS = {
   settings_read: "settings.read",
   settings_manage: "settings.manage",
   audit_read: "audit.read",
+  // email automation + configuration (centralized EmailService admin area)
+  email_view: "email.view", // access the email admin area, logs and health
+  email_config: "email.config", // SMTP configuration edit + test connection/send
+  email_templates: "email.templates", // template create/edit/publish/duplicate/test
+  email_automations: "email.automations", // automation create/edit/enable/disable
+  email_actions: "email.actions", // retry/cancel queued or failed emails
   // vehicles
   vehicles_read: "vehicles.read",
   vehicles_manage: "vehicles.manage",

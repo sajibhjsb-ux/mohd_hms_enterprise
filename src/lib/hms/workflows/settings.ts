@@ -25,8 +25,10 @@ export const AUTOMATION_SETTING_DEFAULTS = {
   sla_engine: "on",
   /** §22: mark SENT invoices OVERDUE past due date + notify finance. */
   invoice_overdue_automation: "on",
-  /** §30: email queue (logged deliveries; provider integration point). */
+  /** §30: email queue (delivered by the centralized EmailService/SMTP). */
   email_notifications: "off",
+  /** §39: per-automation hourly send cap — one faulty automation can never flood. */
+  email_max_per_automation_hour: "60",
   /** §31/§32: outbound channels — enabled only when a provider is configured. */
   whatsapp_notifications: "off",
   push_notifications: "off",
@@ -43,17 +45,20 @@ export const AUTOMATION_SETTING_DEFAULTS = {
 export type AutomationSettingKey = keyof typeof AUTOMATION_SETTING_DEFAULTS;
 
 const CACHE_TTL_MS = 60_000;
-let cache: { at: number; values: Record<string, string> } | null = null;
+// globalThis — see email/config.ts: route and scheduler module instances must
+// share one cache so a settings write is visible to the worker immediately.
+const SETTINGS_G = globalThis as unknown as { __hmsAutomationSettingsCache?: { at: number; values: Record<string, string> } | null };
 
 export async function getAutomationSettings(): Promise<Record<string, string>> {
-  if (cache && Date.now() - cache.at < CACHE_TTL_MS) return cache.values;
+  const cached = SETTINGS_G.__hmsAutomationSettingsCache;
+  if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.values;
   const rows = await db.setting.findMany({ where: { key: { startsWith: "automation." } } });
   const values: Record<string, string> = { ...AUTOMATION_SETTING_DEFAULTS };
   for (const row of rows) {
     const shortKey = row.key.replace("automation.", "");
     if (shortKey in AUTOMATION_SETTING_DEFAULTS && row.value !== "") values[shortKey] = row.value;
   }
-  cache = { at: Date.now(), values };
+  SETTINGS_G.__hmsAutomationSettingsCache = { at: Date.now(), values };
   return values;
 }
 
@@ -76,7 +81,7 @@ export async function updateAutomationSettings(updates: Record<string, string>):
       create: { key: `automation.${key}`, value },
     });
   }
-  cache = null;
+  SETTINGS_G.__hmsAutomationSettingsCache = null;
   return getAutomationSettings();
 }
 

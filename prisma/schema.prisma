@@ -1220,3 +1220,161 @@ model WorkflowRun {
   @@index([workflow, startedAt])
   @@index([resourceType, resourceId])
 }
+
+// ─────────────────────────── EMAIL AUTOMATION + CONFIGURATION ───────────────────────────
+// ONE centralized email system (spec: Email Automation + Email Configuration).
+//   EmailConfig          — singleton SMTP/provider configuration (secret AES-GCM encrypted,
+//                          NEVER returned to the frontend in plaintext)
+//   EmailTemplate(+Ver)  — versioned HTML templates (content edit = version bump +
+//                          immutable snapshot; sent logs store the exact version used)
+//   EmailAutomation      — event-driven rules resolved from DomainEvent outbox events
+//                          (idempotent per [eventId, automationId], controlled conditions)
+//   EmailLog             — the ONE authoritative email job/history record
+//                          (QUEUED → PROCESSING → SMTP_ACCEPTED → SENT | FAILED → DEAD_LETTER,
+//                          CANCELED; retries with backoff; attachment refs point at MinIO)
+
+model EmailConfig {
+  id            String    @id @default("singleton")
+  provider      String    @default("SMTP") // SMTP (Mailflare endpoint in production)
+  smtpHost      String    @default("")
+  smtpPort      Int       @default(587)
+  // NONE | SSL | STARTTLS
+  smtpSecurity  String    @default("STARTTLS")
+  smtpUser      String    @default("")
+  // AES-256-GCM encrypted; plaintext never stored, never logged, never sent to the client.
+  smtpSecretEnc String    @default("")
+  fromName      String    @default("")
+  fromEmail     String    @default("")
+  replyTo       String    @default("")
+  timeoutMs     Int       @default(15000)
+  testRecipient String    @default("")
+  // Set the first time the configuration becomes usable (host + from configured).
+  configuredAt  DateTime?
+  lastVerifyAt  DateTime?
+  lastVerifyOk  Boolean?
+  updatedAt     DateTime  @updatedAt
+}
+
+model EmailTemplate {
+  id          String    @id @default(cuid())
+  // Canonical variable key, e.g. PASSWORD_RESET_OTP, INVOICE_SENT, COMPLAINT_ASSIGNED.
+  key         String    @unique
+  name        String
+  // AUTHENTICATION | CUSTOMER | COMPLAINTS | WORK_ORDERS | QUOTATIONS | INVOICES | PAYMENTS
+  // | PURCHASES | HR | PROJECTS | IRMS | LETTERS | SYSTEM | REPORTS
+  category    String    @default("SYSTEM")
+  description String    @default("")
+  subject     String    @default("")
+  bodyHtml    String    @default("")
+  // JSON array of variable names this template may use (drives the UI variable chips).
+  variables   String    @default("[]")
+  isActive    Boolean   @default(true)
+  isSystem    Boolean   @default(true) // canonical catalog (extensible, not deletable while referenced)
+  // Security-critical templates (OTP) can never be disabled/skipped by user preferences.
+  critical    Boolean   @default(false)
+  version     Int       @default(1)
+  deletedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  versions EmailTemplateVersion[]
+
+  @@index([category, isActive])
+}
+
+// Immutable snapshot written on every content-affecting edit (subject/body).
+model EmailTemplateVersion {
+  id         String        @id @default(cuid())
+  templateId String
+  template   EmailTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  version    Int
+  subject    String        @default("")
+  bodyHtml   String        @default("")
+  editedBy   String        @default("")
+  createdAt  DateTime      @default(now())
+
+  @@unique([templateId, version])
+}
+
+model EmailAutomation {
+  id         String   @id @default(cuid())
+  name       String
+  // DomainEvent type that triggers this automation (COMPLAINT_ASSIGNED, INVOICE_SENT, …).
+  eventType  String
+  templateKey String
+  // JSON RecipientRule: { kind: CUSTOMER|RELATED_USER|ROLE|MODULE_MAILBOX|FIXED, value? }
+  recipientRule String @default("{}")
+  // Optional per-automation sender identity override (must be admin-configured).
+  senderName String   @default("")
+  senderEmail String  @default("")
+  replyTo    String   @default("")
+  // Optional delayed sending (minutes after the event commits).
+  delayMinutes Int    @default(0)
+  // JSON [{field,op,value}] — evaluated server-side against resolved, authorized data.
+  conditions String   @default("[]")
+  // JSON AttachmentSpec[]: { kind: INVOICE_PDF|QUOTATION_PDF|WO_PDF|INSPECTION_PDF|LETTER_PDF }
+  // resolved through authorized application entities — never raw object keys.
+  attachments String  @default("[]")
+  enabled    Boolean  @default(true)
+  // Security-critical automations cannot be disabled without SUPER_ADMIN.
+  critical   Boolean  @default(false)
+  maxAttempts Int     @default(3)
+  // Extra dedupe window (hours) for alert-style events (0 = idempotency key only).
+  dedupeHours Int     @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  logs EmailLog[]
+
+  @@unique([eventType, name])
+  @@index([eventType, enabled])
+}
+
+model EmailLog {
+  id           String    @id @default(cuid())
+  // QUEUED | PROCESSING | SMTP_ACCEPTED | SENT | FAILED | DEAD_LETTER | CANCELED
+  status       String    @default("QUEUED")
+  // DomainEvent id that produced this email ("" for direct/admin sends).
+  eventId      String    @default("")
+  automationId String?
+  automation   EmailAutomation? @relation(fields: [automationId], references: [id], onDelete: SetNull)
+  templateKey  String    @default("")
+  templateVersion Int    @default(0)
+  category     String    @default("SYSTEM")
+  toEmail      String
+  toUserId     String    @default("")
+  cc           String    @default("")
+  bcc          String    @default("")
+  replyTo      String    @default("")
+  fromName     String    @default("")
+  fromEmail    String    @default("")
+  subject      String    @default("")
+  // Rendered body (retention-controlled: pruned by the worker after the window).
+  bodyHtml     String    @default("")
+  bodyPrunedAt DateTime?
+  relatedType  String    @default("")
+  relatedId    String    @default("")
+  attemptCount Int       @default(0)
+  maxAttempts  Int       @default(3)
+  scheduledAt  DateTime  @default(now())
+  sentAt       DateTime?
+  failedAt     DateTime?
+  lastError    String    @default("")
+  // TEMPORARY | PERMANENT | AUTHENTICATION | RECIPIENT | RATE_LIMIT | NETWORK | PROVIDER | CONFIG
+  errorClass   String    @default("")
+  messageId    String    @default("")
+  providerResponse String @default("")
+  // JSON [{kind,label,filename,key}] — references ONLY (files live in MinIO).
+  attachmentRefs String  @default("[]")
+  // Admin test sends are always clearly marked.
+  isTest       Boolean   @default(false)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@unique([eventId, automationId])
+  @@index([status, scheduledAt])
+  @@index([category, createdAt])
+  @@index([toEmail, createdAt])
+  @@index([relatedType, relatedId])
+  @@index([automationId, createdAt])
+}

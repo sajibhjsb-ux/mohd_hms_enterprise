@@ -24,6 +24,7 @@ import "server-only";
 import { createHash, randomInt, timingSafeEqual } from "crypto";
 import { db } from "@/lib/db";
 import { Errors } from "./api";
+import { sendOtpEmail, type QueueResult } from "./email/service";
 
 export const EMAIL_OTP_PURPOSES = ["EMAIL_VERIFICATION", "PASSWORD_RESET"] as const;
 export type EmailOtpPurpose = (typeof EMAIL_OTP_PURPOSES)[number];
@@ -124,8 +125,15 @@ export async function issueEmailOtp(
     create: { ...data, userId: user.id, purpose },
   });
 
-  // Delivery: EMAIL channel (provider configured via env in production).
+  // Delivery: THE centralized EmailService (template PASSWORD_RESET_OTP /
+  // EMAIL_VERIFICATION_OTP → queued → worker → SMTP). Critical mail — never
+  // gated by the channel switch or user preferences (§40). The queued row is
+  // the honest delivery record; failures are visible in the email logs.
   // Diagnostic log deliberately contains NO code value (security contract).
+  const queued: QueueResult = await sendOtpEmail({ user, purpose, code }).catch((err): QueueResult => {
+    console.error(JSON.stringify({ ts: now.toISOString(), level: "error", msg: "otp-email-queue-failed", purpose, err: err instanceof Error ? err.message : String(err) }));
+    return { ok: false, reason: "queue failed" };
+  });
   console.log(JSON.stringify({
     ts: now.toISOString(),
     level: "info",
@@ -136,7 +144,7 @@ export async function issueEmailOtp(
         ? "MOHD.HMS Enterprise Password Reset Verification Code"
         : "Your MOHD.HMS Enterprise verification code",
     purpose,
-    queued: true,
+    queued: queued.ok,
   }));
   // Dev mailbox (same sandbox pattern as the rest of the email flows): lets
   // admins complete the flow locally; never exposed to unauthenticated

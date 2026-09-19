@@ -39,7 +39,7 @@ const TOGGLES: { key: string; label: string; hint: string }[] = [
   { key: "escalation_engine", label: "Escalation engine", hint: "Unaccepted complaints and long-running work orders escalate to supervisors." },
   { key: "sla_engine", label: "SLA engine", hint: "Track response targets per priority and report breaches." },
   { key: "invoice_overdue_automation", label: "Invoice overdue automation", hint: "Past-due invoices are marked OVERDUE and Finance is notified." },
-  { key: "email_notifications", label: "Email notification queue", hint: "Queued emails are delivered to the notification log (provider integration point)." },
+  { key: "email_notifications", label: "Email notification queue", hint: "Queued emails are delivered by the centralized EmailService through the configured SMTP provider (Settings → Email)." },
   { key: "whatsapp_notifications", label: "WhatsApp notifications", hint: "Requires a configured provider — events are recorded when disabled." },
   { key: "push_notifications", label: "Push notifications", hint: "Requires Firebase configuration." },
 ];
@@ -48,6 +48,7 @@ const NUMBERS: { key: string; label: string; hint: string }[] = [
   { key: "complaint_accept_escalation_hours", label: "Complaint acceptance escalation (hours)", hint: "How long a complaint may stay assigned before escalating." },
   { key: "wo_overdue_escalation_days", label: "Work order running-long escalation (days)", hint: "Days in progress before supervisor escalation." },
   { key: "pm_reminder_days", label: "PM reminder days (comma separated)", hint: "Days before PM due date to remind the technician." },
+  { key: "email_max_per_automation_hour", label: "Email max sends per automation per hour", hint: "Rate limit that stops one faulty automation from flooding mailboxes." },
 ];
 
 function when(iso: string | null | undefined): string {

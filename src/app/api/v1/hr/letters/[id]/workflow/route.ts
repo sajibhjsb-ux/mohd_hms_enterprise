@@ -27,6 +27,8 @@ import { roleCan } from "@/lib/hms/rbac";
 import { buildLetterPdf, letterPdfKey } from "@/lib/hms/letters/pdf";
 import { storage, StorageError } from "@/lib/hms/storage";
 import { audit, notify } from "@/lib/hms/services";
+import { emit } from "@/lib/hms/workflows/bus";
+import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 import type { Permission } from "@/lib/hms/constants";
 
 const workflowSchema = z.object({
@@ -114,6 +116,9 @@ export const POST = handler(
           },
         });
         await audit({ actorId: user.id, actorEmail: user.email, action: "LETTER_APPROVED", resourceType: "LETTER", resourceId: letter.id, metadata: { letterNumber: letter.letterNumber, approvedBy: user.name } });
+        // Email automation (§49): after the business write commits, the outbox
+        // event drives the HR mailbox notification through the EmailService.
+        await emit({ type: EVENT_TYPES.LETTER_APPROVED, resourceType: "LETTER", resourceId: letter.id, payload: { letterNumber: letter.letterNumber, subject: letter.subject }, actorType: "USER", actorId: user.id });
         return ok({ id: updated.id, status: updated.status, approvedByName: updated.approvedByName });
       }
 
@@ -189,16 +194,21 @@ export const POST = handler(
           events: { create: ev("SENT", `Email queued to ${to}`) },
         },
       });
-      // Existing notification EMAIL channel — delivery is queued/logged here
-      // and delivered by the configured provider in production (§34).
+      // REAL delivery through the centralized EmailService (§49): the finalized
+      // letter PDF is attached from MinIO by the email worker. The recipient is
+      // the explicit send target — never an arbitrary address from the client.
+      const { queueLetterEmail } = await import("@/lib/hms/email/service");
+      const emailQueued = await queueLetterEmail({ letterId: letter.id, to, subject: body.subject ?? letter.subject });
       await notify({
         userId: user.id,
         title: `Letter ${letter.letterNumber} sent`,
-        message: `Letter ${letter.letterNumber} was queued for delivery to ${to}. Subject: ${body.subject ?? letter.subject}`,
-        type: "INFO",
+        message: emailQueued.ok
+          ? `Letter ${letter.letterNumber} was queued for delivery to ${to}. Subject: ${body.subject ?? letter.subject}`
+          : `Letter ${letter.letterNumber} send queued, but the email could not be enqueued: ${emailQueued.reason ?? "unknown"}`,
+        type: emailQueued.ok ? "INFO" : "WARNING",
         resourceType: "LETTER",
         resourceId: letter.id,
-        channels: ["IN_APP", "EMAIL"],
+        channels: ["IN_APP"], // the letter email itself is queued via EmailService (no duplicate)
       });
       await audit({ actorId: user.id, actorEmail: user.email, action: "LETTER_SENT", resourceType: "LETTER", resourceId: letter.id, metadata: { letterNumber: letter.letterNumber, to, subject: body.subject ?? letter.subject } });
       return ok({ id: updated.id, status: updated.status, sentTo: to });

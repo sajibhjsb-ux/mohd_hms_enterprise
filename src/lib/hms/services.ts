@@ -82,8 +82,29 @@ export async function notify(input: NotifyInput) {
         });
         notificationId = row.id;
       } else {
-        // Outbound EMAIL/WHATSAPP are logged for the delivery pipeline
-        // (provider integration point in production).
+        // Outbound WHATSAPP/PUSH are logged for the delivery pipeline (provider
+        // integration point in production). EMAIL is delivered by the ONE
+        // centralized EmailService (queued → worker → SMTP, §51 — same business
+        // event, separate delivery channel).
+        if (channel === "EMAIL") {
+          try {
+            const { queueDirect } = await import("@/lib/hms/email/service");
+            const recipient = await db.user.findUnique({ where: { id: input.userId }, select: { email: true, name: true } });
+            if (recipient?.email) {
+              await queueDirect({
+                templateKey: "GENERAL_NOTIFICATION",
+                to: recipient.email,
+                toUserId: input.userId,
+                category: "SYSTEM",
+                relatedType: input.resourceType,
+                relatedId: input.resourceId,
+                data: { NOTIFICATION_TITLE: input.title, NOTIFICATION_MESSAGE: input.message, USER_NAME: recipient.name },
+              });
+            }
+          } catch (e) {
+            console.error("email-channel-queue-failed", e);
+          }
+        }
         console.log(JSON.stringify({ ts: new Date().toISOString(), level: "info", channel, to: input.userId, title: input.title, queued: true }));
       }
     }
