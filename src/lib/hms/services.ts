@@ -105,6 +105,26 @@ export async function notify(input: NotifyInput) {
             console.error("email-channel-queue-failed", e);
           }
         }
+        // WHATSAPP channel — delivered by the ONE centralized WhatsAppService
+        // (queued → worker → OpenWA gateway). Best-effort, never blocking.
+        if (channel === "WHATSAPP") {
+          try {
+            const { queueDirect } = await import("@/lib/hms/whatsapp/service");
+            const recipient = await db.user.findUnique({ where: { id: input.userId }, select: { phone: true, name: true } });
+            if (recipient?.phone) {
+              await queueDirect({
+                templateKey: "GENERAL_NOTIFICATION",
+                toPhone: recipient.phone,
+                category: "NOTIFICATION",
+                relatedType: input.resourceType,
+                relatedId: input.resourceId,
+                data: { NOTIFICATION_TITLE: input.title, NOTIFICATION_MESSAGE: input.message, USER_NAME: recipient.name ?? "" },
+              });
+            }
+          } catch (e) {
+            console.error("whatsapp-channel-queue-failed", e);
+          }
+        }
         console.log(JSON.stringify({ ts: new Date().toISOString(), level: "info", channel, to: input.userId, title: input.title, queued: true }));
       }
     }

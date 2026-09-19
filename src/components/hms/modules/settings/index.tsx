@@ -20,6 +20,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { AutomationTab } from "./automation-tab";
 import { EmailTab } from "./email-tab";
 import { LegalTab } from "./legal-tab";
+import { WhatsAppTab } from "./whatsapp-tab";
 
 // Keep in sync with package.json version.
 const APP_VERSION = "0.2.1";
@@ -54,6 +55,8 @@ export function SettingsModule() {
   const canManage = hasPerm(user, PERMISSIONS.settings_manage);
   // Email admin area (§30) — only visible to roles holding the email view permission.
   const canViewEmail = hasPerm(user, PERMISSIONS.email_view);
+  // WhatsApp admin area (§8) — only visible to roles holding the WhatsApp view permission.
+  const canViewWhatsApp = hasPerm(user, PERMISSIONS.whatsapp_view);
 
   const [values, setValues] = useState<Record<string, string>>({});
   const [saved, setSaved] = useState<Record<string, string>>({});
@@ -150,6 +153,7 @@ export function SettingsModule() {
           <TabsTrigger value="localization">Localization</TabsTrigger>
           <TabsTrigger value="automation">Automation</TabsTrigger>
           {canViewEmail ? <TabsTrigger value="email">Email</TabsTrigger> : null}
+          {canViewWhatsApp ? <TabsTrigger value="whatsapp">WhatsApp</TabsTrigger> : null}
           <TabsTrigger value="legal">Legal</TabsTrigger>
           <TabsTrigger value="system">System</TabsTrigger>
         </TabsList>
@@ -256,6 +260,13 @@ export function SettingsModule() {
         {canViewEmail ? (
           <TabsContent value="email">
             <EmailTab />
+          </TabsContent>
+        ) : null}
+
+        {/* ── WhatsApp (§8 — centralized WhatsApp/OpenWA administration) ── */}
+        {canViewWhatsApp ? (
+          <TabsContent value="whatsapp">
+            <WhatsAppTab />
           </TabsContent>
         ) : null}
 

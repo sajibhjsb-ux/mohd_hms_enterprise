@@ -70,3 +70,5 @@ dev.log
 # mini-service dev logs
 mini-services/*/storage.log
 qa/
+# Vendored OpenWA gateway clone (pinned third-party deployment — see mini-services/WHATSAPP-GATEWAY.md)
+mini-services/openwa/

@@ -111,6 +111,14 @@ export const PERMISSIONS = {
   email_templates: "email.templates", // template create/edit/publish/duplicate/test
   email_automations: "email.automations", // automation create/edit/enable/disable
   email_actions: "email.actions", // retry/cancel queued or failed emails
+  // WhatsApp automation + configuration (OpenWA gateway admin area)
+  whatsapp_view: "whatsapp.view", // access the WhatsApp admin area + inbox
+  whatsapp_config: "whatsapp.config", // gateway connection configuration edit
+  whatsapp_connect: "whatsapp.connect", // connect/disconnect/reconnect session + QR
+  whatsapp_send: "whatsapp.send", // send/reply/test messages
+  whatsapp_templates: "whatsapp.templates", // template create/edit/version
+  whatsapp_automations: "whatsapp.automations", // automation create/edit/enable/disable
+  whatsapp_actions: "whatsapp.actions", // retry/cancel queued or failed messages
   // vehicles
   vehicles_read: "vehicles.read",
   vehicles_manage: "vehicles.manage",
@@ -125,6 +133,8 @@ const SUPERVISOR_PERMS: Permission[] = [
   PERMISSIONS.customers_read,
   PERMISSIONS.employees_read,
   PERMISSIONS.equipment_read, PERMISSIONS.equipment_create, PERMISSIONS.equipment_update,
+  // WhatsApp inbox access (conversation view + replies; no gateway config)
+  PERMISSIONS.whatsapp_view, PERMISSIONS.whatsapp_send,
   PERMISSIONS.complaints_read, PERMISSIONS.complaints_create, PERMISSIONS.complaints_assign, PERMISSIONS.complaints_update, PERMISSIONS.complaints_close,
   PERMISSIONS.work_orders_read, PERMISSIONS.work_orders_create, PERMISSIONS.work_orders_assign, PERMISSIONS.work_orders_update, PERMISSIONS.work_orders_complete,
   PERMISSIONS.pm_read, PERMISSIONS.pm_manage,

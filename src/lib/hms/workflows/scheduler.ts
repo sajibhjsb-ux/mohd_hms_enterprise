@@ -19,6 +19,8 @@ import { EVENT_TYPES } from "./types";
 import { pmReminderDays, slaTargetsHours, automationNumber, isAutomationEnabled } from "./settings";
 import { bootstrapEmailSystem } from "@/lib/hms/email/bootstrap";
 import { tickEmailWorker } from "@/lib/hms/email/service";
+import { bootstrapWhatsAppSystem } from "@/lib/hms/whatsapp/bootstrap";
+import { tickWhatsAppWorker } from "@/lib/hms/whatsapp/service";
 
 const g = globalThis as unknown as { __hmsSchedulerBooted?: boolean; __hmsSchedulerScanRunning?: boolean };
 
@@ -195,12 +197,18 @@ export function startScheduler(): void {
   console.log(JSON.stringify({ ts: new Date().toISOString(), level: "info", msg: "workflow-scheduler-started" }));
   // Email system bootstrap (templates + automations + engine handlers) — idempotent.
   void bootstrapEmailSystem();
+  // WhatsApp system bootstrap (templates + automations + engine handlers) — idempotent.
+  void bootstrapWhatsAppSystem();
   setTimeout(() => { void tickWorkflowEngine(); }, 2_000);
   setInterval(() => { void tickWorkflowEngine(); }, 10_000);
   // Email worker — the ONE delivery loop for queued emails (spec: reuse the
   // existing scheduler; no second scheduler). Same cadence as the engine tick.
   setTimeout(() => { void tickEmailWorker(); }, 8_000);
   setInterval(() => { void tickEmailWorker(); }, 10_000);
+  // WhatsApp worker — the ONE delivery loop for queued WhatsApp messages
+  // (OpenWA gateway transport). Same scheduler, same cadence.
+  setTimeout(() => { void tickWhatsAppWorker(); }, 9_000);
+  setInterval(() => { void tickWhatsAppWorker(); }, 10_000);
   // Realtime dispatch safety net (STEP 7/22): pushes committed outbox events to
   // the realtime service. emit() also kicks this directly for low latency.
   setInterval(() => { void dispatchPendingEvents(); }, 2_000);

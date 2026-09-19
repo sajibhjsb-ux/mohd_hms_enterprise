@@ -38,30 +38,31 @@ model User {
   updatedAt     DateTime  @updatedAt
   createdBy     String?
 
-  sessions           Session[]
-  passwordResets     PasswordResetToken[]
-  emailOtps          EmailOtp[]
-  pushSubscriptions  PushSubscription[]
-  technicianProfile  TechnicianProfile?
-  employee           Employee?
-  notifications      Notification[]
-  auditLogs          AuditLog[]
-  attendance         Attendance[]
-  legalAcceptances   LegalAcceptance[]
+  sessions          Session[]
+  passwordResets    PasswordResetToken[]
+  emailOtps         EmailOtp[]
+  pushSubscriptions PushSubscription[]
+  technicianProfile TechnicianProfile?
+  employee          Employee?
+  notifications     Notification[]
+  auditLogs         AuditLog[]
+  attendance        Attendance[]
+  legalAcceptances  LegalAcceptance[]
+  whatsappContacts  WhatsAppContact[]    @relation("WhatsAppContactUser")
 
   @@index([role])
   @@index([status])
 }
 
 model Session {
-  id        String   @id @default(cuid())
-  token     String   @unique
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  expiresAt DateTime
-  ip        String?
-  userAgent String?
-  createdAt DateTime @default(now())
+  id         String   @id @default(cuid())
+  token      String   @unique
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt  DateTime
+  ip         String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
   lastSeenAt DateTime @default(now())
 
   @@index([userId])
@@ -123,22 +124,22 @@ model PushSubscription {
 }
 
 model TechnicianProfile {
-  id             String  @id @default(cuid())
-  userId         String  @unique
-  user           User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  employeeNo     String  @unique
-  skills         String  @default("") // comma separated
-  specialty      String  @default("GENERAL")
-  hourlyRateCents Int    @default(0)
-  status         String  @default("AVAILABLE") // AVAILABLE | ON_JOB | OFF_DUTY
-  vehicleId      String? @unique
+  id              String  @id @default(cuid())
+  userId          String  @unique
+  user            User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  employeeNo      String  @unique
+  skills          String  @default("") // comma separated
+  specialty       String  @default("GENERAL")
+  hourlyRateCents Int     @default(0)
+  status          String  @default("AVAILABLE") // AVAILABLE | ON_JOB | OFF_DUTY
+  vehicleId       String? @unique
 
-  complaints      Complaint[] @relation("assignedComplaints")
-  workOrders      WorkOrder[] @relation("assignedWorkOrders")
-  pmPlans         PmPlan[]    @relation("assignedPmPlans")
-  pmTasks         PmTask[]    @relation("assignedPmTasks")
-  inspections     InspectionReport[] @relation("inspectorReports")
-  vehicles        Vehicle[]   @relation("vehicleAssignee")
+  complaints  Complaint[]        @relation("assignedComplaints")
+  workOrders  WorkOrder[]        @relation("assignedWorkOrders")
+  pmPlans     PmPlan[]           @relation("assignedPmPlans")
+  pmTasks     PmTask[]           @relation("assignedPmTasks")
+  inspections InspectionReport[] @relation("inspectorReports")
+  vehicles    Vehicle[]          @relation("vehicleAssignee")
 }
 
 // ─────────────────────────── CUSTOMERS ───────────────────────────
@@ -162,14 +163,16 @@ model Customer {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  portalUser  User?
-  equipment   Equipment[]
-  complaints  Complaint[]
-  workOrders  WorkOrder[]
-  quotations  Quotation[]
-  invoices    Invoice[]
-  payments    Payment[]
-  irmsProjects IrmsProject[]
+  portalUser            User?
+  equipment             Equipment[]
+  complaints            Complaint[]
+  workOrders            WorkOrder[]
+  quotations            Quotation[]
+  invoices              Invoice[]
+  payments              Payment[]
+  irmsProjects          IrmsProject[]
+  whatsappContacts      WhatsAppContact[]
+  whatsappConversations WhatsAppConversation[] @relation("WhatsAppConversationCustomer")
 }
 
 // ─────────────────────────── HR / EMPLOYEES ───────────────────────────
@@ -183,24 +186,24 @@ model Department {
 }
 
 model Employee {
-  id         String    @id @default(cuid())
-  employeeNo String    @unique
-  userId     String?   @unique
-  user       User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
-  firstName  String
-  lastName   String
+  id           String      @id @default(cuid())
+  employeeNo   String      @unique
+  userId       String?     @unique
+  user         User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  firstName    String
+  lastName     String
   departmentId String?
-  department Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
-  position   String    @default("")
-  email      String    @default("")
-  phone      String    @default("")
-  address    String    @default("")
-  country    String    @default("Brunei Darussalam")
-  joinDate   DateTime?
-  salaryCents Int      @default(0)
-  status     String    @default("ACTIVE") // ACTIVE | ON_LEAVE | TERMINATED
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
+  department   Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  position     String      @default("")
+  email        String      @default("")
+  phone        String      @default("")
+  address      String      @default("")
+  country      String      @default("Brunei Darussalam")
+  joinDate     DateTime?
+  salaryCents  Int         @default(0)
+  status       String      @default("ACTIVE") // ACTIVE | ON_LEAVE | TERMINATED
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
 
   leaveRequests LeaveRequest[]
   letters       Letter[]
@@ -208,34 +211,34 @@ model Employee {
 }
 
 model Attendance {
-  id         String   @id @default(cuid())
+  id         String    @id @default(cuid())
   employeeId String
-  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee   Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   userId     String?
-  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  user       User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
   date       DateTime
-  status     String   @default("PRESENT") // PRESENT | ABSENT | LEAVE | HALF_DAY
+  status     String    @default("PRESENT") // PRESENT | ABSENT | LEAVE | HALF_DAY
   checkIn    DateTime?
   checkOut   DateTime?
-  notes      String   @default("")
+  notes      String    @default("")
 
   @@unique([employeeId, date])
   @@index([date])
 }
 
 model LeaveRequest {
-  id         String   @id @default(cuid())
-  employeeId String
-  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  type       String   @default("ANNUAL") // ANNUAL | SICK | UNPAID | OTHER
-  startDate  DateTime
-  endDate    DateTime
-  days       Int      @default(1)
-  reason     String   @default("")
-  status     String   @default("PENDING") // PENDING | APPROVED | REJECTED
+  id           String    @id @default(cuid())
+  employeeId   String
+  employee     Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  type         String    @default("ANNUAL") // ANNUAL | SICK | UNPAID | OTHER
+  startDate    DateTime
+  endDate      DateTime
+  days         Int       @default(1)
+  reason       String    @default("")
+  status       String    @default("PENDING") // PENDING | APPROVED | REJECTED
   approvedById String?
-  approvedAt DateTime?
-  createdAt  DateTime @default(now())
+  approvedAt   DateTime?
+  createdAt    DateTime  @default(now())
 
   @@index([status])
 }
@@ -272,41 +275,41 @@ model Equipment {
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
-  complaints    Complaint[]
-  workOrders    WorkOrder[]
-  pmPlans       PmPlan[]
-  pmTasks       PmTask[]
-  inspections   InspectionReport[]
+  complaints  Complaint[]
+  workOrders  WorkOrder[]
+  pmPlans     PmPlan[]
+  pmTasks     PmTask[]
+  inspections InspectionReport[]
 }
 
 // ─────────────────────────── COMPLAINTS ───────────────────────────
 
 model Complaint {
-  id                  String    @id @default(cuid())
-  code                String    @unique
-  customerId          String
-  customer            Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  equipmentId         String?
-  equipment           Equipment? @relation(fields: [equipmentId], references: [id], onDelete: SetNull)
-  title               String
-  description         String
-  priority            String    @default("MEDIUM") // LOW | MEDIUM | HIGH | URGENT
+  id                   String             @id @default(cuid())
+  code                 String             @unique
+  customerId           String
+  customer             Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  equipmentId          String?
+  equipment            Equipment?         @relation(fields: [equipmentId], references: [id], onDelete: SetNull)
+  title                String
+  description          String
+  priority             String             @default("MEDIUM") // LOW | MEDIUM | HIGH | URGENT
   // NEW → ASSIGNED → IN_PROGRESS → COMPLETED → CONFIRMED → CLOSED
-  status              String    @default("NEW")
-  createdById         String?
+  status               String             @default("NEW")
+  createdById          String?
   assignedTechnicianId String?
-  assignedTechnician  TechnicianProfile? @relation("assignedComplaints", fields: [assignedTechnicianId], references: [id], onDelete: SetNull)
-  assignedAt          DateTime?
-  acceptedAt          DateTime?
-  startedAt           DateTime?
-  completedAt         DateTime?
-  confirmedAt         DateTime?
-  closedAt            DateTime?
-  resolutionNotes     String    @default("")
-  customerFeedback    String    @default("")
-  customerRating      Int?
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
+  assignedTechnician   TechnicianProfile? @relation("assignedComplaints", fields: [assignedTechnicianId], references: [id], onDelete: SetNull)
+  assignedAt           DateTime?
+  acceptedAt           DateTime?
+  startedAt            DateTime?
+  completedAt          DateTime?
+  confirmedAt          DateTime?
+  closedAt             DateTime?
+  resolutionNotes      String             @default("")
+  customerFeedback     String             @default("")
+  customerRating       Int?
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
 
   statusHistory ComplaintStatusHistory[]
   workOrders    WorkOrder[]
@@ -330,39 +333,39 @@ model ComplaintStatusHistory {
 // ─────────────────────────── WORK ORDERS ───────────────────────────
 
 model WorkOrder {
-  id             String    @id @default(cuid())
-  code           String    @unique
-  complaintId    String?
-  complaint      Complaint? @relation(fields: [complaintId], references: [id], onDelete: SetNull)
-  customerId     String
-  customer       Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  equipmentId    String?
-  equipment      Equipment? @relation(fields: [equipmentId], references: [id], onDelete: SetNull)
-  technicianId   String?
-  technician     TechnicianProfile? @relation("assignedWorkOrders", fields: [technicianId], references: [id], onDelete: SetNull)
-  title          String
-  description    String    @default("")
-  priority       String    @default("MEDIUM")
-  status         String    @default("PENDING") // PENDING | ACCEPTED | IN_PROGRESS | ON_HOLD | COMPLETED | CANCELLED
-  scheduledDate  DateTime?
-  startedAt      DateTime?
-  completedAt    DateTime?
-  labourHours    Float     @default(0)
-  labourRateCents Int      @default(0)
-  labourTotalCents Int    @default(0)
-  materialsTotalCents Int  @default(0)
-  totalCents     Int       @default(0)
-  notes          String    @default("")
-  customerConfirmed Boolean @default(false)
-  confirmedAt    DateTime?
-  invoiceId      String?
-  invoice        Invoice?  @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  id                  String             @id @default(cuid())
+  code                String             @unique
+  complaintId         String?
+  complaint           Complaint?         @relation(fields: [complaintId], references: [id], onDelete: SetNull)
+  customerId          String
+  customer            Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  equipmentId         String?
+  equipment           Equipment?         @relation(fields: [equipmentId], references: [id], onDelete: SetNull)
+  technicianId        String?
+  technician          TechnicianProfile? @relation("assignedWorkOrders", fields: [technicianId], references: [id], onDelete: SetNull)
+  title               String
+  description         String             @default("")
+  priority            String             @default("MEDIUM")
+  status              String             @default("PENDING") // PENDING | ACCEPTED | IN_PROGRESS | ON_HOLD | COMPLETED | CANCELLED
+  scheduledDate       DateTime?
+  startedAt           DateTime?
+  completedAt         DateTime?
+  labourHours         Float              @default(0)
+  labourRateCents     Int                @default(0)
+  labourTotalCents    Int                @default(0)
+  materialsTotalCents Int                @default(0)
+  totalCents          Int                @default(0)
+  notes               String             @default("")
+  customerConfirmed   Boolean            @default(false)
+  confirmedAt         DateTime?
+  invoiceId           String?
+  invoice             Invoice?           @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
 
-  checklist WorkOrderChecklistItem[]
-  materials WorkOrderMaterial[]
-  irmsReports InspectionReport[] @relation("irmsWorkOrders")
+  checklist   WorkOrderChecklistItem[]
+  materials   WorkOrderMaterial[]
+  irmsReports InspectionReport[]       @relation("irmsWorkOrders")
 
   @@index([status])
   @@index([customerId])
@@ -379,54 +382,54 @@ model WorkOrderChecklistItem {
 }
 
 model WorkOrderMaterial {
-  id             String         @id @default(cuid())
-  workOrderId    String
-  workOrder      WorkOrder      @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  id              String         @id @default(cuid())
+  workOrderId     String
+  workOrder       WorkOrder      @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
   inventoryItemId String?
-  inventoryItem  InventoryItem? @relation(fields: [inventoryItemId], references: [id], onDelete: SetNull)
-  name           String
-  quantity       Float
-  unit           String         @default("pcs")
-  unitCostCents  Int            @default(0)
-  totalCents     Int            @default(0)
+  inventoryItem   InventoryItem? @relation(fields: [inventoryItemId], references: [id], onDelete: SetNull)
+  name            String
+  quantity        Float
+  unit            String         @default("pcs")
+  unitCostCents   Int            @default(0)
+  totalCents      Int            @default(0)
 }
 
 // ─────────────────────────── PREVENTIVE MAINTENANCE ───────────────────────────
 
 model PmPlan {
-  id                  String    @id @default(cuid())
-  code                String    @unique
-  name                String
-  equipmentId         String
-  equipment           Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
-  frequency           String    @default("MONTHLY") // WEEKLY | MONTHLY | QUARTERLY | SEMI_ANNUAL | ANNUAL
+  id                   String             @id @default(cuid())
+  code                 String             @unique
+  name                 String
+  equipmentId          String
+  equipment            Equipment          @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  frequency            String             @default("MONTHLY") // WEEKLY | MONTHLY | QUARTERLY | SEMI_ANNUAL | ANNUAL
   assignedTechnicianId String?
-  assignedTechnician  TechnicianProfile? @relation("assignedPmPlans", fields: [assignedTechnicianId], references: [id], onDelete: SetNull)
-  checklistTemplate   String    @default("[]") // JSON string of labels
-  active              Boolean   @default(true)
-  nextDueDate         DateTime?
-  lastCompletedAt     DateTime?
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
+  assignedTechnician   TechnicianProfile? @relation("assignedPmPlans", fields: [assignedTechnicianId], references: [id], onDelete: SetNull)
+  checklistTemplate    String             @default("[]") // JSON string of labels
+  active               Boolean            @default(true)
+  nextDueDate          DateTime?
+  lastCompletedAt      DateTime?
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
 
   tasks PmTask[]
 }
 
 model PmTask {
-  id             String    @id @default(cuid())
-  code           String    @unique
-  planId         String
-  plan           PmPlan    @relation(fields: [planId], references: [id], onDelete: Cascade)
-  equipmentId    String
-  equipment      Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
-  technicianId   String?
-  technician     TechnicianProfile? @relation("assignedPmTasks", fields: [technicianId], references: [id], onDelete: SetNull)
-  dueDate        DateTime
-  status         String    @default("SCHEDULED") // SCHEDULED | OVERDUE | IN_PROGRESS | COMPLETED | SKIPPED
-  completedAt    DateTime?
-  notes          String    @default("")
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  id           String             @id @default(cuid())
+  code         String             @unique
+  planId       String
+  plan         PmPlan             @relation(fields: [planId], references: [id], onDelete: Cascade)
+  equipmentId  String
+  equipment    Equipment          @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  technicianId String?
+  technician   TechnicianProfile? @relation("assignedPmTasks", fields: [technicianId], references: [id], onDelete: SetNull)
+  dueDate      DateTime
+  status       String             @default("SCHEDULED") // SCHEDULED | OVERDUE | IN_PROGRESS | COMPLETED | SKIPPED
+  completedAt  DateTime?
+  notes        String             @default("")
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
 
   checklist PmTaskChecklistItem[]
 }
@@ -443,70 +446,70 @@ model PmTaskChecklistItem {
 // ─────────────────────────── IRMS (Inspections) ───────────────────────────
 
 model IrmsProject {
-  id          String    @id @default(cuid())
-  code        String    @unique
-  name        String
-  customerId  String?
-  customer    Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
-  siteLocation String   @default("")
-  description String    @default("")
-  status      String    @default("ACTIVE") // PLANNING | ACTIVE | ON_HOLD | COMPLETED
-  startDate   DateTime?
-  endDate     DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id           String    @id @default(cuid())
+  code         String    @unique
+  name         String
+  customerId   String?
+  customer     Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  siteLocation String    @default("")
+  description  String    @default("")
+  status       String    @default("ACTIVE") // PLANNING | ACTIVE | ON_HOLD | COMPLETED
+  startDate    DateTime?
+  endDate      DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   inspections InspectionReport[]
 }
 
 model InspectionReport {
-  id               String    @id @default(cuid())
-  code             String    @unique
-  projectId        String
-  project          IrmsProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  equipmentId      String?
-  equipment        Equipment? @relation(fields: [equipmentId], references: [id], onDelete: SetNull)
-  workOrderId      String?
-  workOrder        WorkOrder? @relation("irmsWorkOrders", fields: [workOrderId], references: [id], onDelete: SetNull)
-  title            String
-  type             String    @default("ROUTINE") // ROUTINE | SAFETY | EQUIPMENT | PROJECT | OTHER
-  priority         String    @default("MEDIUM") // LOW | MEDIUM | HIGH | URGENT
-  inspectionDate   DateTime
-  inspectorId      String?
-  inspector        TechnicianProfile? @relation("inspectorReports", fields: [inspectorId], references: [id], onDelete: SetNull)
-  status           String    @default("DRAFT") // DRAFT | SUBMITTED | IN_REVIEW | MANAGER_APPROVAL | CLIENT_REVIEW | APPROVED | REJECTED | ARCHIVED
-  summary          String    @default("")
-  overallCondition String    @default("GOOD") // EXCELLENT | GOOD | FAIR | POOR | CRITICAL
-  recommendations  String    @default("")
+  id                String             @id @default(cuid())
+  code              String             @unique
+  projectId         String
+  project           IrmsProject        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  equipmentId       String?
+  equipment         Equipment?         @relation(fields: [equipmentId], references: [id], onDelete: SetNull)
+  workOrderId       String?
+  workOrder         WorkOrder?         @relation("irmsWorkOrders", fields: [workOrderId], references: [id], onDelete: SetNull)
+  title             String
+  type              String             @default("ROUTINE") // ROUTINE | SAFETY | EQUIPMENT | PROJECT | OTHER
+  priority          String             @default("MEDIUM") // LOW | MEDIUM | HIGH | URGENT
+  inspectionDate    DateTime
+  inspectorId       String?
+  inspector         TechnicianProfile? @relation("inspectorReports", fields: [inspectorId], references: [id], onDelete: SetNull)
+  status            String             @default("DRAFT") // DRAFT | SUBMITTED | IN_REVIEW | MANAGER_APPROVAL | CLIENT_REVIEW | APPROVED | REJECTED | ARCHIVED
+  summary           String             @default("")
+  overallCondition  String             @default("GOOD") // EXCELLENT | GOOD | FAIR | POOR | CRITICAL
+  recommendations   String             @default("")
   // ── Work details (report builder tab 2) ──
-  jobOrderNo       String    @default("")
-  building         String    @default("")
-  floor            String    @default("")
-  room             String    @default("")
-  taskDescription  String    @default("")
-  scope            String    @default("")
-  notes            String    @default("")
-  correctiveActions String   @default("")
-  rootCause        String    @default("")
-  safetyNotes      String    @default("")
-  materials        String    @default("")
-  labourHours      Float     @default(0)
-  completionPercent Int      @default(0)
+  jobOrderNo        String             @default("")
+  building          String             @default("")
+  floor             String             @default("")
+  room              String             @default("")
+  taskDescription   String             @default("")
+  scope             String             @default("")
+  notes             String             @default("")
+  correctiveActions String             @default("")
+  rootCause         String             @default("")
+  safetyNotes       String             @default("")
+  materials         String             @default("")
+  labourHours       Float              @default(0)
+  completionPercent Int                @default(0)
   // ── Workflow / portal ──
-  customerVisible  Boolean   @default(false) // shared to the customer portal once APPROVED
-  revision         Int       @default(0)
-  clientComment    String    @default("")
-  submittedAt      DateTime?
-  submittedById    String?
-  reviewedAt       DateTime?
-  reviewedById     String?
-  approvedAt       DateTime?
-  approvedById     String?
-  rejectedAt       DateTime?
-  rejectedById     String?
-  archivedAt       DateTime?
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  customerVisible   Boolean            @default(false) // shared to the customer portal once APPROVED
+  revision          Int                @default(0)
+  clientComment     String             @default("")
+  submittedAt       DateTime?
+  submittedById     String?
+  reviewedAt        DateTime?
+  reviewedById      String?
+  approvedAt        DateTime?
+  approvedById      String?
+  rejectedAt        DateTime?
+  rejectedById      String?
+  archivedAt        DateTime?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
 
   findings   InspectionFinding[]
   photos     InspectionPhoto[]
@@ -540,9 +543,9 @@ model InspectionPhoto {
   swRef        String           @default("")
   room         String           @default("")
   building     String           @default("")
-  storagePath  String @default("") // original file (relative to uploads/irms/)
-  displayPath  String @default("") // processed display image (max 1600px, EXIF-rotated)
-  thumbPath    String @default("") // 320px thumbnail
+  storagePath  String           @default("") // original file (relative to uploads/irms/)
+  displayPath  String           @default("") // processed display image (max 1600px, EXIF-rotated)
+  thumbPath    String           @default("") // 320px thumbnail
   width        Int              @default(0)
   height       Int              @default(0)
   sizeBytes    Int              @default(0)
@@ -576,16 +579,16 @@ model InspectionSignature {
 
 // ── IRMS approval audit trail (every workflow transition) ──
 model InspectionApproval {
-  id          String           @id @default(cuid())
-  reportId    String
-  report      InspectionReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
-  step        String // SUBMIT | REVIEW | MANAGER_APPROVAL | CLIENT_REQUEST | CLIENT_APPROVE | APPROVE | REJECT | ARCHIVE | REOPEN
-  fromStatus  String
-  toStatus    String
-  comment     String           @default("")
-  userId      String?
-  userName    String           @default("")
-  createdAt   DateTime         @default(now())
+  id         String           @id @default(cuid())
+  reportId   String
+  report     InspectionReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  step       String // SUBMIT | REVIEW | MANAGER_APPROVAL | CLIENT_REQUEST | CLIENT_APPROVE | APPROVE | REJECT | ARCHIVE | REOPEN
+  fromStatus String
+  toStatus   String
+  comment    String           @default("")
+  userId     String?
+  userName   String           @default("")
+  createdAt  DateTime         @default(now())
 
   @@index([reportId, createdAt])
 }
@@ -626,99 +629,99 @@ model Supplier {
 }
 
 model InventoryItem {
-  id             String   @id @default(cuid())
-  sku            String   @unique
-  name           String
-  category       String   @default("GENERAL")
-  unit           String   @default("pcs")
-  stockQty       Float    @default(0)
-  minStockQty    Float    @default(0)
-  unitCostCents  Int      @default(0)
-  supplierId     String?
-  supplier       Supplier? @relation(fields: [supplierId], references: [id], onDelete: SetNull)
-  status         String   @default("ACTIVE")
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id            String    @id @default(cuid())
+  sku           String    @unique
+  name          String
+  category      String    @default("GENERAL")
+  unit          String    @default("pcs")
+  stockQty      Float     @default(0)
+  minStockQty   Float     @default(0)
+  unitCostCents Int       @default(0)
+  supplierId    String?
+  supplier      Supplier? @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  status        String    @default("ACTIVE")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
-  movements        StockMovement[]
-  woMaterials      WorkOrderMaterial[]
-  quotationItems   QuotationItem[]
-  purchaseItems    PurchaseItem[]
+  movements      StockMovement[]
+  woMaterials    WorkOrderMaterial[]
+  quotationItems QuotationItem[]
+  purchaseItems  PurchaseItem[]
 }
 
 model StockMovement {
-  id           String        @id @default(cuid())
-  itemId       String
-  item         InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
-  type         String // RECEIVE | ISSUE | RETURN | ADJUST
-  quantity     Float // signed
-  balanceAfter Float
-  referenceType String @default("MANUAL") // MANUAL | WORK_ORDER | PURCHASE | QUOTATION
-  referenceId  String @default("")
-  note         String @default("")
-  createdById  String?
-  createdAt    DateTime @default(now())
+  id            String        @id @default(cuid())
+  itemId        String
+  item          InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  type          String // RECEIVE | ISSUE | RETURN | ADJUST
+  quantity      Float // signed
+  balanceAfter  Float
+  referenceType String        @default("MANUAL") // MANUAL | WORK_ORDER | PURCHASE | QUOTATION
+  referenceId   String        @default("")
+  note          String        @default("")
+  createdById   String?
+  createdAt     DateTime      @default(now())
 
   @@index([itemId])
 }
 
 model PurchaseOrder {
-  id             String    @id @default(cuid())
-  code           String    @unique
-  supplierId     String
-  supplier       Supplier  @relation(fields: [supplierId], references: [id], onDelete: Cascade)
-  orderDate      DateTime  @default(now())
-  expectedDate   DateTime?
-  status         String    @default("DRAFT") // DRAFT | PENDING_APPROVAL | APPROVED | REJECTED | PARTIALLY_RECEIVED | RECEIVED | CANCELLED
-  subtotalCents  Int       @default(0)
-  taxCents       Int       @default(0)
-  totalCents     Int       @default(0)
-  notes          String    @default("")
-  approvedById   String?
-  approvedAt     DateTime?
-  receivedAt     DateTime?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  id            String    @id @default(cuid())
+  code          String    @unique
+  supplierId    String
+  supplier      Supplier  @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  orderDate     DateTime  @default(now())
+  expectedDate  DateTime?
+  status        String    @default("DRAFT") // DRAFT | PENDING_APPROVAL | APPROVED | REJECTED | PARTIALLY_RECEIVED | RECEIVED | CANCELLED
+  subtotalCents Int       @default(0)
+  taxCents      Int       @default(0)
+  totalCents    Int       @default(0)
+  notes         String    @default("")
+  approvedById  String?
+  approvedAt    DateTime?
+  receivedAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   items PurchaseItem[]
 }
 
 model PurchaseItem {
-  id            String        @id @default(cuid())
+  id            String         @id @default(cuid())
   poId          String
-  po            PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
+  po            PurchaseOrder  @relation(fields: [poId], references: [id], onDelete: Cascade)
   itemId        String?
   item          InventoryItem? @relation(fields: [itemId], references: [id], onDelete: SetNull)
   description   String
   quantity      Float
   unitCostCents Int
   totalCents    Int
-  receivedQty   Float         @default(0)
+  receivedQty   Float          @default(0)
 }
 
 // ─────────────────────────── QUOTATIONS ───────────────────────────
 
 model Quotation {
-  id              String    @id @default(cuid())
-  code            String    @unique
-  customerId      String
-  customer        Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  quotationDate   DateTime  @default(now())
-  validUntil      DateTime?
-  status          String    @default("DRAFT") // DRAFT | SENT | APPROVED | REJECTED | EXPIRED | CONVERTED
-  subtotalCents   Int       @default(0)
-  discountCents   Int       @default(0)
-  taxCents        Int       @default(0)
-  shippingCents   Int       @default(0)
-  totalCents      Int       @default(0)
-  labourCostCents Int       @default(0)
-  materialCostCents Int     @default(0)
-  notes           String    @default("")
-  terms           String    @default("")
+  id                 String    @id @default(cuid())
+  code               String    @unique
+  customerId         String
+  customer           Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  quotationDate      DateTime  @default(now())
+  validUntil         DateTime?
+  status             String    @default("DRAFT") // DRAFT | SENT | APPROVED | REJECTED | EXPIRED | CONVERTED
+  subtotalCents      Int       @default(0)
+  discountCents      Int       @default(0)
+  taxCents           Int       @default(0)
+  shippingCents      Int       @default(0)
+  totalCents         Int       @default(0)
+  labourCostCents    Int       @default(0)
+  materialCostCents  Int       @default(0)
+  notes              String    @default("")
+  terms              String    @default("")
   convertedInvoiceId String?
-  createdById     String?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  createdById        String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
   items    QuotationItem[]
   invoices Invoice[]
@@ -743,48 +746,48 @@ model QuotationItem {
 // ─────────────────────────── INVOICES / PAYMENTS ───────────────────────────
 
 model Invoice {
-  id             String    @id @default(cuid())
-  code           String    @unique
-  customerId     String
-  customer       Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  quotationId    String?
-  quotation      Quotation? @relation(fields: [quotationId], references: [id], onDelete: SetNull)
-  workOrderId    String?
-  complaintId    String?
-  invoiceDate    DateTime  @default(now())
-  dueDate        DateTime?
-  status         String    @default("DRAFT") // DRAFT | SENT | PARTIALLY_PAID | PAID | OVERDUE | CANCELLED
-  subtotalCents  Int       @default(0)
-  discountCents  Int       @default(0)
-  taxCents       Int       @default(0)
-  shippingCents  Int       @default(0)
-  totalCents     Int       @default(0)
-  paidCents      Int       @default(0)
-  balanceCents   Int       @default(0)
-  notes          String    @default("")
-  terms          String    @default("")
-  sentAt         DateTime?
-  createdById    String?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  id            String     @id @default(cuid())
+  code          String     @unique
+  customerId    String
+  customer      Customer   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  quotationId   String?
+  quotation     Quotation? @relation(fields: [quotationId], references: [id], onDelete: SetNull)
+  workOrderId   String?
+  complaintId   String?
+  invoiceDate   DateTime   @default(now())
+  dueDate       DateTime?
+  status        String     @default("DRAFT") // DRAFT | SENT | PARTIALLY_PAID | PAID | OVERDUE | CANCELLED
+  subtotalCents Int        @default(0)
+  discountCents Int        @default(0)
+  taxCents      Int        @default(0)
+  shippingCents Int        @default(0)
+  totalCents    Int        @default(0)
+  paidCents     Int        @default(0)
+  balanceCents  Int        @default(0)
+  notes         String     @default("")
+  terms         String     @default("")
+  sentAt        DateTime?
+  createdById   String?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
 
-  items    InvoiceItem[]
-  payments Payment[]
+  items      InvoiceItem[]
+  payments   Payment[]
   workOrders WorkOrder[]
 }
 
 model InvoiceItem {
-  id              String    @id @default(cuid())
+  id              String  @id @default(cuid())
   invoiceId       String
-  invoice         Invoice   @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-  kind            String    @default("MATERIAL")
+  invoice         Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  kind            String  @default("MATERIAL")
   description     String
-  quantity        Float     @default(1)
-  unit            String    @default("pcs")
-  unitPriceCents  Int       @default(0)
-  discountPercent Float     @default(0)
-  taxPercent      Float     @default(0)
-  totalCents      Int       @default(0)
+  quantity        Float   @default(1)
+  unit            String  @default("pcs")
+  unitPriceCents  Int     @default(0)
+  discountPercent Float   @default(0)
+  taxPercent      Float   @default(0)
+  totalCents      Int     @default(0)
 }
 
 model Payment {
@@ -837,40 +840,40 @@ model Transaction {
 }
 
 model Expense {
-  id          String    @id @default(cuid())
-  code        String    @unique
-  category    String    @default("GENERAL")
-  description String    @default("")
-  amountCents Int
-  expenseDate DateTime  @default(now())
-  supplierId  String?
-  supplier    Supplier? @relation(fields: [supplierId], references: [id], onDelete: SetNull)
-  status      String    @default("PENDING") // PENDING | APPROVED | PAID
+  id           String    @id @default(cuid())
+  code         String    @unique
+  category     String    @default("GENERAL")
+  description  String    @default("")
+  amountCents  Int
+  expenseDate  DateTime  @default(now())
+  supplierId   String?
+  supplier     Supplier? @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  status       String    @default("PENDING") // PENDING | APPROVED | PAID
   approvedById String?
-  receiptNo   String    @default("")
-  createdById String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  receiptNo    String    @default("")
+  createdById  String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 }
 
 // ─────────────────────────── VEHICLES ───────────────────────────
 
 model Vehicle {
-  id                 String    @id @default(cuid())
-  code               String    @unique
-  registrationNo     String    @unique
-  make               String    @default("")
-  model              String    @default("")
-  type               String    @default("VAN") // VAN | TRUCK | CAR | PICKUP | OTHER
-  assignedTechnicianId String? @unique
-  assignedTechnician TechnicianProfile? @relation("vehicleAssignee", fields: [assignedTechnicianId], references: [id], onDelete: SetNull)
-  status             String    @default("AVAILABLE") // AVAILABLE | IN_USE | MAINTENANCE | RETIRED
-  odometer           Int       @default(0)
-  lastServiceDate    DateTime?
-  nextServiceDue     DateTime?
-  notes              String    @default("")
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
+  id                   String             @id @default(cuid())
+  code                 String             @unique
+  registrationNo       String             @unique
+  make                 String             @default("")
+  model                String             @default("")
+  type                 String             @default("VAN") // VAN | TRUCK | CAR | PICKUP | OTHER
+  assignedTechnicianId String?            @unique
+  assignedTechnician   TechnicianProfile? @relation("vehicleAssignee", fields: [assignedTechnicianId], references: [id], onDelete: SetNull)
+  status               String             @default("AVAILABLE") // AVAILABLE | IN_USE | MAINTENANCE | RETIRED
+  odometer             Int                @default(0)
+  lastServiceDate      DateTime?
+  nextServiceDue       DateTime?
+  notes                String             @default("")
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
 }
 
 // ─────────────────────────── NOTIFICATIONS / DOCUMENTS / SETTINGS / AUDIT ───────────────────────────
@@ -892,23 +895,23 @@ model Notification {
 }
 
 model Document {
-  id          String   @id @default(cuid())
-  name        String
-  safeName    String
-  mimeType    String
-  sizeBytes   Int
-  storagePath String
-  category    String   @default("GENERAL") // COMPLAINT | WORK_ORDER | EQUIPMENT | INSPECTION | QUOTATION | INVOICE | EMPLOYEE | GENERAL
-  resourceType String  @default("")
-  resourceId  String   @default("")
+  id           String   @id @default(cuid())
+  name         String
+  safeName     String
+  mimeType     String
+  sizeBytes    Int
+  storagePath  String
+  category     String   @default("GENERAL") // COMPLAINT | WORK_ORDER | EQUIPMENT | INSPECTION | QUOTATION | INVOICE | EMPLOYEE | GENERAL
+  resourceType String   @default("")
+  resourceId   String   @default("")
   uploadedById String?
-  createdAt   DateTime @default(now())
+  createdAt    DateTime @default(now())
 }
 
 model Setting {
-  key        String   @id
-  value      String
-  updatedAt  DateTime @updatedAt
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
 }
 
 model AuditLog {
@@ -969,7 +972,7 @@ model LegalDocument {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
-  acceptances   LegalAcceptance[]
+  acceptances LegalAcceptance[]
 
   @@unique([kind, version])
   @@index([kind, status])
@@ -1008,39 +1011,39 @@ model LegalAcceptance {
 // with metadata in the database. Finalized letters are immutable: the rendered
 // document and its template snapshot never change after finalization.
 model LetterTemplate {
-  id          String @id @default(cuid())
+  id              String    @id @default(cuid())
   // Human template code, e.g. LOU-001 / LOA-001 / SUB-001 (unique).
-  code        String @unique
-  name        String
+  code            String    @unique
+  name            String
   // LOU | LOA | SUBMISSION | CLARIFICATION | APPOINTMENT | CONFIRMATION |
   // WARNING | EMPLOYMENT | VERIFICATION | TRAINING | REFERENCE | GENERAL | CUSTOM
-  letterType  String
-  description String  @default("")
-  department  String  @default("HR")
+  letterType      String
+  description     String    @default("")
+  department      String    @default("HR")
   // Current content version (incremented on every content edit; every bump
   // writes an immutable LetterTemplateVersion snapshot).
-  version     Int     @default(1)
+  version         Int       @default(1)
   // ACTIVE | INACTIVE | ARCHIVED
-  status      String  @default("ACTIVE")
-  language    String  @default("en")
-  pageSize    String  @default("A4")
-  defaultFont String  @default("Helvetica")
-  effectiveDate DateTime?
+  status          String    @default("ACTIVE")
+  language        String    @default("en")
+  pageSize        String    @default("A4")
+  defaultFont     String    @default("Helvetica")
+  effectiveDate   DateTime?
   // Default template for its letter type (one per type).
-  isDefault   Boolean @default(false)
+  isDefault       Boolean   @default(false)
   // Approved instruction set for the AI drafting assistant (§3/§9).
-  aiInstructions String @default("")
-  subjectHint    String @default("")
+  aiInstructions  String    @default("")
+  subjectHint     String    @default("")
   // Deterministic body skeleton with {{PLACEHOLDERS}}; the {{BODY}} slot is
   // where the AI-generated (or manually written) content is placed (§46).
-  bodyTemplate   String @default("")
-  closingTemplate String @default("Yours faithfully,")
+  bodyTemplate    String    @default("")
+  closingTemplate String    @default("Yours faithfully,")
   // JSON: TemplateField[] — { key, label, type, required, options?, hint?, ai? }
-  fieldsJson  String @default("[]")
-  createdById String?
-  updatedById String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  fieldsJson      String    @default("[]")
+  createdById     String?
+  updatedById     String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   versions LetterTemplateVersion[]
   letters  Letter[]
@@ -1067,65 +1070,65 @@ model LetterTemplateVersion {
 }
 
 model Letter {
-  id           String  @id @default(cuid())
+  id                   String          @id @default(cuid())
   // Configurable official reference, e.g. HMS/HR/LOU/2026/0001 (§17) —
   // generated server-side from a Counter (transactional, no duplicates).
-  letterNumber String  @unique
-  letterType   String
-  templateId   String?
-  template     LetterTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  letterNumber         String          @unique
+  letterType           String
+  templateId           String?
+  template             LetterTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
   // Exact template version used (§27).
-  templateVersion Int  @default(1)
+  templateVersion      Int             @default(1)
   // Immutable content snapshot of the template at creation time.
-  templateSnapshotJson String @default("{}")
+  templateSnapshotJson String          @default("{}")
   // DRAFT | AI_GENERATED | UNDER_REVIEW | APPROVED | REJECTED | FINALIZED | SENT | ARCHIVED
-  status       String  @default("DRAFT")
+  status               String          @default("DRAFT")
   // Official letter date (server clock / Asia/Brunei authoritative, §18).
-  letterDate   DateTime @default(now())
+  letterDate           DateTime        @default(now())
 
   // Structured field values keyed by template field key (JSON).
-  dataJson    String  @default("{}")
+  dataJson      String @default("{}")
   // AI/human-authored content that fills the template's {{BODY}} slot (§46).
-  bodySlot    String  @default("")
+  bodySlot      String @default("")
   // Fully rendered body = template wrapper with {{BODY}} ← bodySlot resolved.
   // `body` is what preview + PDF print; `bodySlot` is what the AI writes and
   // the human edits — the wrapper is always re-rendered from the template
   // snapshot so AI/human can never break the template structure (§11).
-  subject     String  @default("")
-  body        String  @default("")
-  salutation  String  @default("")
-  closing     String  @default("Yours faithfully,")
+  subject       String @default("")
+  body          String @default("")
+  salutation    String @default("")
+  closing       String @default("Yours faithfully,")
   // TEMPLATE | AI | HUMAN_EDITED — what last wrote the body (§45 content
   // protection: regeneration never silently overwrites human edits).
   contentSource String @default("TEMPLATE")
 
   // Denormalized for list/search/filter performance (§29/§30).
-  recipientName    String @default("")
-  recipientCompany String @default("")
+  recipientName    String    @default("")
+  recipientCompany String    @default("")
   // Optional employee/customer link for auto-population + scoping (§31/§32).
-  employeeId String?
-  employee   Employee? @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+  employeeId       String?
+  employee         Employee? @relation(fields: [employeeId], references: [id], onDelete: SetNull)
 
   // Signatory (§22) — signature image lives in object storage, never in the DB.
-  signatoryName     String @default("")
-  signatoryPosition String @default("")
+  signatoryName         String @default("")
+  signatoryPosition     String @default("")
   signatorySignatureKey String @default("")
 
   // Final document object keys (S3/MinIO, §23): letters/{year}/{type}/{id}/final.pdf
-  pdfObjectKey  String @default("")
-  pdfSizeBytes  Int    @default(0)
-  finalizedAt   DateTime?
+  pdfObjectKey String    @default("")
+  pdfSizeBytes Int       @default(0)
+  finalizedAt  DateTime?
 
   // Workflow (§16)
   createdById    String?
-  createdByName  String  @default("")
+  createdByName  String    @default("")
   updatedById    String?
   approvedById   String?
-  approvedByName String  @default("")
+  approvedByName String    @default("")
   approvedAt     DateTime?
   sentAt         DateTime?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   attachments LetterAttachment[]
   events      LetterEvent[]
@@ -1136,15 +1139,15 @@ model Letter {
 }
 
 model LetterAttachment {
-  id        String  @id @default(cuid())
-  letterId  String
-  letter    Letter  @relation(fields: [letterId], references: [id], onDelete: Cascade)
-  name      String
-  objectKey String
-  sizeBytes Int     @default(0)
-  mimeType  String  @default("")
+  id           String   @id @default(cuid())
+  letterId     String
+  letter       Letter   @relation(fields: [letterId], references: [id], onDelete: Cascade)
+  name         String
+  objectKey    String
+  sizeBytes    Int      @default(0)
+  mimeType     String   @default("")
   uploadedById String?
-  createdAt DateTime @default(now())
+  createdAt    DateTime @default(now())
 
   @@index([letterId])
 }
@@ -1152,13 +1155,13 @@ model LetterAttachment {
 // Append-only letter activity trail (§43) — complements the central AuditLog
 // with a letter-scoped timeline rendered in the UI.
 model LetterEvent {
-  id        String  @id @default(cuid())
+  id        String   @id @default(cuid())
   letterId  String
-  letter    Letter  @relation(fields: [letterId], references: [id], onDelete: Cascade)
+  letter    Letter   @relation(fields: [letterId], references: [id], onDelete: Cascade)
   action    String // CREATED | AI_GENERATED | AI_REGENERATED | AI_ACTION | EDITED | SUBMITTED | APPROVED | REJECTED | FINALIZED | SENT | SHARED | DOWNLOADED | ARCHIVED | SIGNATURE_SET | ATTACHMENT_ADDED | ATTACHMENT_REMOVED
-  detail    String  @default("")
+  detail    String   @default("")
   actorId   String?
-  actorName String  @default("")
+  actorName String   @default("")
   createdAt DateTime @default(now())
 
   @@index([letterId, createdAt])
@@ -1297,32 +1300,32 @@ model EmailTemplateVersion {
 }
 
 model EmailAutomation {
-  id         String   @id @default(cuid())
-  name       String
+  id            String   @id @default(cuid())
+  name          String
   // DomainEvent type that triggers this automation (COMPLAINT_ASSIGNED, INVOICE_SENT, …).
-  eventType  String
-  templateKey String
+  eventType     String
+  templateKey   String
   // JSON RecipientRule: { kind: CUSTOMER|RELATED_USER|ROLE|MODULE_MAILBOX|FIXED, value? }
-  recipientRule String @default("{}")
+  recipientRule String   @default("{}")
   // Optional per-automation sender identity override (must be admin-configured).
-  senderName String   @default("")
-  senderEmail String  @default("")
-  replyTo    String   @default("")
+  senderName    String   @default("")
+  senderEmail   String   @default("")
+  replyTo       String   @default("")
   // Optional delayed sending (minutes after the event commits).
-  delayMinutes Int    @default(0)
+  delayMinutes  Int      @default(0)
   // JSON [{field,op,value}] — evaluated server-side against resolved, authorized data.
-  conditions String   @default("[]")
+  conditions    String   @default("[]")
   // JSON AttachmentSpec[]: { kind: INVOICE_PDF|QUOTATION_PDF|WO_PDF|INSPECTION_PDF|LETTER_PDF }
   // resolved through authorized application entities — never raw object keys.
-  attachments String  @default("[]")
-  enabled    Boolean  @default(true)
+  attachments   String   @default("[]")
+  enabled       Boolean  @default(true)
   // Security-critical automations cannot be disabled without SUPER_ADMIN.
-  critical   Boolean  @default(false)
-  maxAttempts Int     @default(3)
+  critical      Boolean  @default(false)
+  maxAttempts   Int      @default(3)
   // Extra dedupe window (hours) for alert-style events (0 = idempotency key only).
-  dedupeHours Int     @default(0)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  dedupeHours   Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   logs EmailLog[]
 
@@ -1331,45 +1334,45 @@ model EmailAutomation {
 }
 
 model EmailLog {
-  id           String    @id @default(cuid())
+  id               String           @id @default(cuid())
   // QUEUED | PROCESSING | SMTP_ACCEPTED | SENT | FAILED | DEAD_LETTER | CANCELED
-  status       String    @default("QUEUED")
+  status           String           @default("QUEUED")
   // DomainEvent id that produced this email ("" for direct/admin sends).
-  eventId      String    @default("")
-  automationId String?
-  automation   EmailAutomation? @relation(fields: [automationId], references: [id], onDelete: SetNull)
-  templateKey  String    @default("")
-  templateVersion Int    @default(0)
-  category     String    @default("SYSTEM")
-  toEmail      String
-  toUserId     String    @default("")
-  cc           String    @default("")
-  bcc          String    @default("")
-  replyTo      String    @default("")
-  fromName     String    @default("")
-  fromEmail    String    @default("")
-  subject      String    @default("")
+  eventId          String           @default("")
+  automationId     String?
+  automation       EmailAutomation? @relation(fields: [automationId], references: [id], onDelete: SetNull)
+  templateKey      String           @default("")
+  templateVersion  Int              @default(0)
+  category         String           @default("SYSTEM")
+  toEmail          String
+  toUserId         String           @default("")
+  cc               String           @default("")
+  bcc              String           @default("")
+  replyTo          String           @default("")
+  fromName         String           @default("")
+  fromEmail        String           @default("")
+  subject          String           @default("")
   // Rendered body (retention-controlled: pruned by the worker after the window).
-  bodyHtml     String    @default("")
-  bodyPrunedAt DateTime?
-  relatedType  String    @default("")
-  relatedId    String    @default("")
-  attemptCount Int       @default(0)
-  maxAttempts  Int       @default(3)
-  scheduledAt  DateTime  @default(now())
-  sentAt       DateTime?
-  failedAt     DateTime?
-  lastError    String    @default("")
+  bodyHtml         String           @default("")
+  bodyPrunedAt     DateTime?
+  relatedType      String           @default("")
+  relatedId        String           @default("")
+  attemptCount     Int              @default(0)
+  maxAttempts      Int              @default(3)
+  scheduledAt      DateTime         @default(now())
+  sentAt           DateTime?
+  failedAt         DateTime?
+  lastError        String           @default("")
   // TEMPORARY | PERMANENT | AUTHENTICATION | RECIPIENT | RATE_LIMIT | NETWORK | PROVIDER | CONFIG
-  errorClass   String    @default("")
-  messageId    String    @default("")
-  providerResponse String @default("")
+  errorClass       String           @default("")
+  messageId        String           @default("")
+  providerResponse String           @default("")
   // JSON [{kind,label,filename,key}] — references ONLY (files live in MinIO).
-  attachmentRefs String  @default("[]")
+  attachmentRefs   String           @default("[]")
   // Admin test sends are always clearly marked.
-  isTest       Boolean   @default(false)
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  isTest           Boolean          @default(false)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
 
   @@unique([eventId, automationId])
   @@index([status, scheduledAt])
@@ -1377,4 +1380,229 @@ model EmailLog {
   @@index([toEmail, createdAt])
   @@index([relatedType, relatedId])
   @@index([automationId, createdAt])
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// WHATSAPP AUTOMATION (OpenWA gateway integration)
+// OpenWA = transport ONLY. MOHD.HMS remains the system of record:
+// business data lives in the existing models; media bytes live in MinIO;
+// this section stores config + message/conversation metadata + template
+// + automation rules + webhook idempotency only.
+// ═══════════════════════════════════════════════════════════════════
+
+model WhatsAppConfig {
+  id                String    @id @default("singleton")
+  // OpenWA gateway REST base URL (server-side only, never exposed to browser).
+  gatewayBaseUrl    String    @default("http://127.0.0.1:2785")
+  // AES-256-GCM encrypted OpenWA API key (X-API-Key) — never returned by any API.
+  apiKeyEnc         String    @default("")
+  // AES-256-GCM encrypted webhook signing secret handed to OpenWA; OpenWA signs
+  // deliveries with X-OpenWA-Signature: sha256=<hex> over the raw body.
+  webhookSecretEnc  String    @default("")
+  // Session identity in the gateway (configurable, not hardcoded).
+  sessionName       String    @default("mohd-hms-production")
+  // Toggle for the whole integration (kill switch).
+  enabled           Boolean   @default(false)
+  // Inbound automation gate (auto-replies + complaint creation from WhatsApp).
+  autoReplies       Boolean   @default(true)
+  // Mirror of the OpenWA session state (honest values from the gateway only).
+  // created | initializing | qr_ready | authenticating | ready | disconnected | action_required | failed | unknown
+  sessionStatus     String    @default("unknown")
+  sessionPhone      String    @default("")
+  sessionPushName   String    @default("")
+  sessionError      String    @default("")
+  lastConnectedAt   DateTime?
+  lastHeartbeatAt   DateTime?
+  lastInboundAt     DateTime?
+  lastOutboundAt    DateTime?
+  webhookRegistered Boolean   @default(false)
+  webhookId         String    @default("")
+  // Admin test message recipient (normalized E.164).
+  testRecipient     String    @default("")
+  configuredAt      DateTime?
+  updatedAt         DateTime  @updatedAt
+}
+
+model WhatsAppContact {
+  id                    String                 @id @default(cuid())
+  // Canonical WhatsApp chat id for individual chats: "<digits>@c.us".
+  chatId                String                 @unique
+  // Canonical E.164 phone (e.g. +6737123456) — the business identity key.
+  phone                 String                 @default("")
+  // "CUSTOMER" | "STAFF" — business role of this contact.
+  kind                  String                 @default("CUSTOMER")
+  customerId            String?
+  customer              Customer?              @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  userId                String?
+  user                  User?                  @relation("WhatsAppContactUser", fields: [userId], references: [id], onDelete: SetNull)
+  // WhatsApp display name (push name) — cosmetic only, never an identity.
+  waName                String                 @default("")
+  // Per-contact automation opt-out (business safety §41).
+  automationEnabled     Boolean                @default(true)
+  verified              Boolean                @default(false)
+  notes                 String                 @default("")
+  lastMessageAt         DateTime?
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  messages              WhatsAppMessage[]
+  whatsAppConversations WhatsAppConversation[]
+
+  @@index([customerId])
+  @@index([phone])
+}
+
+model WhatsAppConversation {
+  id                 String            @id @default(cuid())
+  chatId             String            @unique
+  contactId          String?
+  contact            WhatsAppContact?  @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  customerId         String?
+  customer           Customer?         @relation("WhatsAppConversationCustomer", fields: [customerId], references: [id], onDelete: SetNull)
+  // BOT = automated replies allowed; HUMAN = human handoff active (bot silent); CLOSED = archived.
+  state              String            @default("BOT")
+  assignedAgentId    String            @default("")
+  unreadCount        Int               @default(0)
+  lastMessageAt      DateTime?
+  lastMessagePreview String            @default("")
+  lastInboundAt      DateTime?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+  messages           WhatsAppMessage[]
+
+  @@index([state, lastMessageAt])
+  @@index([customerId])
+}
+
+model WhatsAppMessage {
+  id                String                @id @default(cuid())
+  conversationId    String?
+  conversation      WhatsAppConversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  chatId            String
+  contactId         String?
+  contact           WhatsAppContact?      @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  // INBOUND | OUTBOUND
+  direction         String
+  // fromMe guard (loop prevention §40): outbound/system messages are never re-processed.
+  fromMe            Boolean               @default(false)
+  // QUEUED | SENDING | SENT | DELIVERED | READ | RECEIVED | FAILED | CANCELED
+  status            String                @default("QUEUED")
+  // text | image | document | audio | video | location | unknown
+  type              String                @default("text")
+  body              String                @default("")
+  // Media reference — bytes live in MinIO (whatsapp/* prefix); never in PostgreSQL/SQLite.
+  mediaKey          String                @default("")
+  mediaMimetype     String                @default("")
+  mediaFilename     String                @default("")
+  mediaSize         Int                   @default(0)
+  // OpenWA provider message id (for ack correlation + inbound dedupe).
+  providerMessageId String                @default("")
+  // Template provenance (traceability §38).
+  templateKey       String                @default("")
+  templateVersion   Int                   @default(0)
+  // DomainEvent id ("" for direct/staff sends) + producing automation.
+  eventId           String                @default("")
+  automationId      String?
+  automation        WhatsAppAutomation?   @relation(fields: [automationId], references: [id], onDelete: SetNull)
+  // Business linkage (CUSTOMER | COMPLAINT | WORK_ORDER | QUOTATION | INVOICE | PAYMENT | ...).
+  relatedType       String                @default("")
+  relatedId         String                @default("")
+  // Delivery state machine.
+  attemptCount      Int                   @default(0)
+  maxAttempts       Int                   @default(3)
+  scheduledAt       DateTime              @default(now())
+  sentAt            DateTime?
+  failedAt          DateTime?
+  lastError         String                @default("")
+  // TEMPORARY | PERMANENT | AUTHENTICATION | NETWORK | PROVIDER | CONFIG | RATE_LIMIT
+  errorClass        String                @default("")
+  isTest            Boolean               @default(false)
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+
+  @@unique([chatId, providerMessageId, direction])
+  @@unique([eventId, automationId])
+  @@index([status, scheduledAt])
+  @@index([chatId, createdAt])
+  @@index([conversationId, createdAt])
+  @@index([relatedType, relatedId])
+  @@index([automationId, createdAt])
+}
+
+model WhatsAppTemplate {
+  id          String                    @id @default(cuid())
+  key         String                    @unique // canonical key e.g. COMPLAINT_CREATED
+  name        String
+  category    String                    @default("SYSTEM")
+  description String                    @default("")
+  // Plain-text WhatsApp body with {{VARIABLE}} placeholders.
+  body        String                    @default("")
+  // JSON array of variable names — allowlist, resolved server-side only.
+  variables   String                    @default("[]")
+  isActive    Boolean                   @default(true)
+  isSystem    Boolean                   @default(true)
+  critical    Boolean                   @default(false)
+  version     Int                       @default(1)
+  deletedAt   DateTime?
+  createdAt   DateTime                  @default(now())
+  updatedAt   DateTime                  @updatedAt
+  versions    WhatsAppTemplateVersion[]
+
+  @@index([category, isActive])
+}
+
+model WhatsAppTemplateVersion {
+  id         String           @id @default(cuid())
+  templateId String
+  template   WhatsAppTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  version    Int
+  body       String           @default("")
+  editedBy   String           @default("")
+  createdAt  DateTime         @default(now())
+
+  @@unique([templateId, version])
+}
+
+model WhatsAppAutomation {
+  id            String            @id @default(cuid())
+  name          String
+  // DomainEvent type trigger (real business events only).
+  eventType     String
+  templateKey   String
+  // JSON RecipientRule: {kind: CUSTOMER|RELATED_USER|ROLE|FIXED, value?}
+  recipientRule String            @default("{}")
+  // JSON [{field,op,value}] conditions evaluated against the event payload.
+  conditions    String            @default("[]")
+  // JSON AttachmentKind[] e.g. ["INVOICE_PDF"] — resolved via the central PDF engine/MinIO.
+  attachments   String            @default("[]")
+  delayMinutes  Int               @default(0)
+  dedupeHours   Int               @default(0)
+  enabled       Boolean           @default(true)
+  critical      Boolean           @default(false)
+  maxAttempts   Int               @default(3)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  messages      WhatsAppMessage[]
+
+  @@unique([eventType, name])
+  @@index([eventType, enabled])
+}
+
+model WhatsAppWebhookEvent {
+  id             String    @id @default(cuid())
+  // OpenWA delivery idempotency key (X-OpenWA-Idempotency-Key) — UNIQUE = the dedupe anchor.
+  idempotencyKey String    @unique
+  deliveryId     String    @default("")
+  sessionId      String    @default("")
+  // message.received | message.ack | message.failed | session.status | session.qr | ...
+  event          String
+  // JSON raw payload (bounded; media bytes never stored here).
+  payload        String    @default("{}")
+  // RECEIVED | PROCESSED | DUPLICATE | FAILED
+  status         String    @default("RECEIVED")
+  error          String    @default("")
+  receivedAt     DateTime  @default(now())
+  processedAt    DateTime?
+
+  @@index([event, receivedAt])
+  @@index([status])
 }
