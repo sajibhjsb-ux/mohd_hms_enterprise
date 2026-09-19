@@ -1,10 +1,12 @@
 "use client";
 
 // MOHD.HMS ENTERPRISE — premium top header (reference design).
-// Three logical zones. MOBILE (<lg): [ LOGO ]·spacer·[ Search 🔍 ][ Bell ][ Avatar ]
-// — search is a compact icon inside the RIGHT action group, never a standalone
-// centered element. DESKTOP (≥lg): logo · centered global-search pill (Ctrl/⌘K)
-// · QR scanner · Notifications · Theme · Language · User profile.
+// Three logical zones. MOBILE (<lg): [ LOGO + MOHD.HMS/ENTERPRISE lockup ]·spacer·
+// [ Search 🔍 ][ Bell ][ Avatar ] — the FULL brand lockup (official circular logo
+// + two-line company name) is visible on EVERY width; search is a compact icon
+// inside the RIGHT action group, never a standalone centered element.
+// DESKTOP (≥lg): logo · centered global-search pill (Ctrl/⌘K) · QR scanner ·
+// Notifications · Theme · Language · User profile.
 // On mobile the QR action lives in the floating bottom navigation's center slot
 // (shell/mobile-nav.tsx), so the header QR button is desktop-only.
 // Self-contained notification polling; reuses existing session + theme systems.
@@ -111,19 +113,17 @@ export function TopHeader({ onOpenSearch, onOpenQr, onSelectModule, onOpenChange
   return (
     <TooltipProvider delayDuration={250}>
       <header className="sticky top-0 z-40 border-b border-border/50 bg-background/85 backdrop-blur-xl no-print pt-[env(safe-area-inset-top)]">
-        <div className="mx-auto max-w-[1500px] px-4 sm:px-6 h-16 md:h-[72px] flex items-center gap-2 sm:gap-4">
-          {/* Branding — canonical logo + wordmark (same source as login/PWA).
-              Wordmark hides below sm so the search pill never overlaps it. */}
+        <div className="mx-auto max-w-[1500px] px-3 min-[360px]:px-4 sm:px-6 h-16 md:h-[72px] flex items-center gap-2 sm:gap-4">
+          {/* Branding — full official brand lockup on EVERY width (logo + two-line
+              wordmark, one indivisible brand group). Responsive tiers shrink the
+              logo/text/gaps on narrow screens; the name is never hidden, wrapped
+              or truncated. Desktop (md+) rendering is unchanged. */}
           <button
             onClick={() => onSelectModule("dashboard")}
-            className="flex items-center gap-2.5 mr-1 shrink-0 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="flex items-center gap-2 min-[360px]:gap-2.5 mr-1 shrink-0 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring"
             aria-label="MOHD HMS Enterprise — go to dashboard"
           >
-            <Image src="/brand/logo-128.png" alt="MOHD HMS Enterprise logo" width={40} height={40} priority className="h-9 w-9 md:h-10 md:w-10 rounded-full" />
-            <div className="leading-none text-left hidden sm:block">
-              <div className="font-semibold text-sm md:text-base tracking-tight">MOHD.HMS</div>
-              <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Enterprise</div>
-            </div>
+            <BrandLockup />
           </button>
 
           {/* Global search — centered pill on DESKTOP only. On mobile the flex-1
@@ -214,6 +214,40 @@ export function TopHeader({ onOpenSearch, onOpenQr, onSelectModule, onOpenChange
         </div>
       </header>
     </TooltipProvider>
+  );
+}
+
+/**
+ * Official brand lockup — [ circular logo | MOHD.HMS / ENTERPRISE ].
+ * One flex group vertically centered via the parent's align-items:center;
+ * no absolute positioning, margins hacks or transforms.
+ *
+ * Responsive tiers (mobile-first; desktop md+ unchanged):
+ *   <360px  → 32px logo · 14px MOHD.HMS · 9px ENTERPRISE · tighter tracking
+ *   ≥360px  → 36px logo · 17px MOHD.HMS · 10px ENTERPRISE · 0.18em tracking
+ *   ≥768px  → 40px logo · 16px MOHD.HMS (text-base, as before)
+ *
+ * The company name is always visible (never `hidden`, never truncated);
+ * whitespace-nowrap only prevents mid-name wrapping under squeeze.
+ * MOHD.HMS uses the brand green (text-primary) matching the login/welcome
+ * screens; ENTERPRISE stays neutral gray. The official logo is untouched.
+ */
+function BrandLockup() {
+  return (
+    <>
+      <Image
+        src="/brand/logo-128.png"
+        alt="MOHD HMS Enterprise logo"
+        width={40}
+        height={40}
+        priority
+        className="h-8 w-8 min-[360px]:h-9 min-[360px]:w-9 md:h-10 md:w-10 rounded-full"
+      />
+      <span className="block leading-none text-left whitespace-nowrap">
+        <span className="block font-semibold text-[14px] min-[360px]:text-[17px] md:text-base tracking-tight text-primary">MOHD.HMS</span>
+        <span className="block text-[9px] min-[360px]:text-[10px] uppercase tracking-[0.14em] min-[360px]:tracking-[0.18em] text-muted-foreground">Enterprise</span>
+      </span>
+    </>
   );
 }
 
