@@ -9,7 +9,7 @@ import {
   LayoutDashboard, Users, Building2, UserCog, HardHat, AlertTriangle, ClipboardList,
   Wrench, CalendarClock, Boxes, ShoppingCart, FileText, Receipt, Wallet, IdCard,
   SearchCheck, BarChart3, Settings, History, Truck, QrCode, CircleUserRound,
-  ScrollText, ShieldCheck, MessageCircle,
+  ScrollText, ShieldCheck, MessageCircle, ScanLine,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -49,6 +49,7 @@ import { SettingsModule } from "./modules/settings";
 import { AuditModule } from "./modules/audit";
 import { ProfileModule } from "./modules/profile";
 import { TermsModule, PrivacyModule } from "./legal/legal-module";
+import { ScanModule } from "./modules/scan";
 
 export const MODULES: ModuleDef[] = [
   // NOTE: the mobile bottom navigation layout (Dashboard · Complaints · QR
@@ -75,6 +76,12 @@ export const MODULES: ModuleDef[] = [
   { key: "reports", label: "Reports", icon: BarChart3, permissions: ["reports.read"], component: ReportsModule },
   { key: "audit", label: "Audit Logs", shortLabel: "Audit", icon: History, roles: ["SUPER_ADMIN", "ADMIN"], permissions: ["audit.read"], component: AuditModule },
   { key: "settings", label: "Settings", icon: Settings, roles: ["SUPER_ADMIN", "ADMIN"], permissions: ["settings.read"], component: SettingsModule },
+  // QR Scanner — the REAL camera scanner (route /scan), opened from the mobile
+  // bottom-nav center button. Hidden from module navigation lists (it has its
+  // own dedicated entry point); reachable by every signed-in user — scanning
+  // itself needs no permission because each destination enforces RBAC on
+  // arrival (resolve.ts refuses modules this user cannot reach).
+  { key: "scan", label: "Scan QR Code", shortLabel: "Scan", icon: ScanLine, navHidden: true, component: ScanModule },
   // Customer profile — entered from the header account menu (spec §34), not
   // from the module nav. Views: /profile (view), /profile/edit, /profile/complete.
   { key: "profile", label: "My Profile", shortLabel: "Profile", icon: CircleUserRound, roles: ["CUSTOMER"], navHidden: true, component: ProfileModule },

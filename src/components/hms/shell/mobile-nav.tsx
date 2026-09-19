@@ -8,7 +8,9 @@
 //   [ Dashboard ] [ Complaints ]  [ QR SCAN ]  [ Invoices ] [ More ]
 //
 // • The CENTER slot is always the QR Scanner — a large elevated circular green
-//   action that opens the EXISTING shell QR dialog (single scanner, no duplicate).
+//   action that opens the dedicated /scan camera scanner page (the app's single
+//   scanner: live camera + the existing QR routing; the header QR dialog stays
+//   as the manual-entry fallback).
 // • Slots 1/2/4 resolve from the RBAC-filtered module list with deterministic
 //   fallback chains, so unauthorized modules are never shown and every role
 //   keeps the same 5-slot geometry (backend authorization stays authoritative).
@@ -31,8 +33,8 @@ type Props = {
   modules: ModuleDef[];
   activeModule: string;
   onSelect: (key: string) => void;
-  /** Opens the existing shell QR scanner dialog. */
-  onOpenQr: () => void;
+  /** Opens the dedicated /scan camera scanner page. */
+  onOpenScanner: () => void;
 };
 
 /** Deterministic fallback chains for the two module slots (first match wins). */
@@ -64,7 +66,7 @@ function pickSlot(preferred: ReadonlyArray<string>, used: Set<string>, byKey: Ma
   return null;
 }
 
-export function MobileNav({ modules, activeModule, onSelect, onOpenQr }: Props) {
+export function MobileNav({ modules, activeModule, onSelect, onOpenScanner }: Props) {
   const [moreOpen, setMoreOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
 
@@ -122,7 +124,7 @@ export function MobileNav({ modules, activeModule, onSelect, onOpenQr }: Props) 
           <div className="relative flex flex-col items-center">
             <button
               type="button"
-              onClick={onOpenQr}
+              onClick={onOpenScanner}
               aria-label="Scan QR code"
               className="-mt-7 flex h-14 w-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-[0_10px_24px_-6px_oklch(0.53_0.14_154/0.55)] ring-4 ring-background outline-none transition-[background-color,box-shadow,transform] hover:bg-primary/90 focus-visible:ring-4 focus-visible:ring-ring active:scale-[0.97]"
               data-testid="mobile-qr-button"

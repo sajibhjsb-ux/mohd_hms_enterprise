@@ -296,7 +296,7 @@ export function AppShell() {
         modules={navVisible}
         activeModule={activeModule}
         onSelect={switchModule}
-        onOpenQr={() => setQrOpen(true)}
+        onOpenScanner={() => navigateTo("scan")}
       />
 
       {/* Overlays (utility dialogs only — business CRUD uses dedicated pages) */}
