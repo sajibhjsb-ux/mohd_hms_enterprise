@@ -337,18 +337,32 @@ function invalidateSessionIdCache(): void {
   gSid.at = 0;
 }
 
-/** Ensure the configured session exists in the gateway (create if missing) and start it. */
+/** Ensure the configured session exists in the gateway (create if missing) and start it.
+ *  Idempotent (§16): an already-active session is REUSED, not restarted — the gateway
+ *  refuses a duplicate start with 400 "Session is already started", and stamping
+ *  `initializing` over a live qr_ready/ready session would fake-flap the status. */
+const GATEWAY_ACTIVE_STATUSES = ["initializing", "qr_ready", "authenticating", "ready"];
+
 export async function connectSession(): Promise<{ ok: boolean; detail: string; qrRequired?: boolean }> {
   const gw = await getGatewayClientConfig();
   if (!gw) return { ok: false, detail: "OpenWA gateway URL or API key is not configured" };
-  await recordSessionStatus({ status: "initializing", error: "" });
   try {
     const sessions = await openwa.listSessions(gw);
     let session = sessions.find((s) => s.name === gw.sessionName);
     if (!session) session = await openwa.createSession(gw, gw.sessionName);
     const id = session.id ?? gw.sessionName;
     gSid.id = id; gSid.at = Date.now();
-    await openwa.startSession(gw, id);
+    if (!GATEWAY_ACTIVE_STATUSES.includes(session.status ?? "")) {
+      // Genuinely down (created/disconnected/failed) — bring the engine up.
+      await recordSessionStatus({ status: "initializing", error: "" });
+      try {
+        await openwa.startSession(gw, id);
+      } catch (e) {
+        // Race: another caller (or the gateway's own reconnect loop) started
+        // it between the list and the start — an active session is success.
+        if (!/already started/i.test(e instanceof Error ? e.message : String(e))) throw e;
+      }
+    }
     await syncSessionStatus(gw, id);
     return { ok: true, detail: `Session ${gw.sessionName} started`, qrRequired: true };
   } catch (e) {
@@ -386,19 +400,53 @@ export async function syncSessionStatus(gw?: { baseUrl: string; apiKey: string; 
   }
 }
 
-/** Current QR (PNG data URL) — only while the gateway reports qr_ready. */
-export async function getSessionQrDataUrl(): Promise<{ ok: boolean; qr?: string; detail: string }> {
+export type SessionQrState = "WAITING" | "UNAVAILABLE";
+export type SessionQrResult = { ok: boolean; qr?: string; detail: string; state?: SessionQrState };
+
+/**
+ * Current QR (PNG data URL) — ONLY while the engine is genuinely in qr_ready.
+ *
+ * WHY THE STATUS GUARD MATTERS ("No device found" root cause): the OpenWA
+ * engine caches the LAST rendered QR through transient socket drops — during
+ * the reconnect backoff (status `initializing`, up to 60s+ per attempt) the
+ * gateway keeps answering /qr with that stale PNG. A QR ref is bound to the
+ * live socket that registered the pairing intent; once that socket closes the
+ * ref is unpairable and WhatsApp mobile answers a scan with "No device
+ * found". Serving a QR whose engine status is anything other than qr_ready
+ * therefore hands the user a guaranteed-dead code. The guard turns that into
+ * an honest "re-establishing" state so the UI shows the real pairing state.
+ */
+export async function getSessionQrDataUrl(): Promise<SessionQrResult> {
   const gw = await getGatewayClientConfig();
-  if (!gw) return { ok: false, detail: "OpenWA gateway is not configured" };
+  if (!gw) return { ok: false, detail: "OpenWA gateway is not configured", state: "UNAVAILABLE" };
   try {
     const sessionId = await resolveSessionId(gw);
-    if (!sessionId) return { ok: false, detail: "Session has not been created in the gateway yet" };
-    await syncSessionStatus(gw, sessionId);
+    if (!sessionId) return { ok: false, detail: "Session has not been created in the gateway yet", state: "UNAVAILABLE" };
+    const live = await syncSessionStatus(gw, sessionId);
     const res = await openwa.getSessionQr(gw, sessionId);
-    if (!res.qrCode) return { ok: false, detail: res.status ? `No QR available (status: ${res.status})` : "No QR available" };
+    // Freshness gate: a pairable QR exists only while the engine sits in
+    // qr_ready on a live socket. Any other status (initializing during the
+    // reconnect backoff, authenticating after a scan, disconnected, …) means
+    // whatever QR the gateway still caches is dead. If the gateway omits the
+    // status field (older contract) fall back to the live status we just
+    // synced above.
+    const engineStatus = res.status ?? live.status;
+    if (engineStatus && engineStatus !== "qr_ready") {
+      return engineStatus === "initializing" || engineStatus === "created"
+        ? { ok: false, detail: "Pairing socket is re-establishing — a fresh QR appears automatically in a few seconds.", state: "WAITING" }
+        : { ok: false, detail: `No QR available right now (session is ${engineStatus})`, state: "UNAVAILABLE" };
+    }
+    if (!res.qrCode) return { ok: false, detail: "No QR available — the session may already be linked; reconnect to generate a fresh pairing.", state: "UNAVAILABLE" };
     return { ok: true, qr: res.qrCode, detail: "ok" };
   } catch (e) {
-    return { ok: false, detail: e instanceof Error ? e.message : String(e) };
+    const msg = e instanceof Error ? e.message : String(e);
+    // First-QR race: the engine flips qr_ready a beat before the first QR is
+    // rendered, so the gateway can answer 400 "QR code is not ready yet" —
+    // a waiting state, not a failure.
+    if (/not ready yet/i.test(msg)) {
+      return { ok: false, detail: "The first QR is being generated — a fresh QR appears in a few seconds.", state: "WAITING" };
+    }
+    return { ok: false, detail: msg, state: "UNAVAILABLE" };
   }
 }
 
@@ -410,11 +458,28 @@ export async function getSessionPairingCode(phone: string): Promise<{ ok: boolea
   try {
     const sessionId = await resolveSessionId(gw);
     if (!sessionId) return { ok: false, detail: "Session has not been created in the gateway yet" };
+    // Sync first: a pairing code is only deliverable while the engine socket
+    // is actually up (qr_ready / not-yet-authenticated). On a socket that has
+    // begun closing the gateway's own request fails late with an opaque
+    // engine error — asking on a known-dead state instead returns an honest,
+    // actionable message (and QR_REQUIRED tells the user to just scan).
+    const live = await syncSessionStatus(gw, sessionId);
+    if (live.status === "ready") return { ok: false, detail: "Session is already linked — no pairing needed." };
+    if (live.status && !["qr_ready", "initializing", "created"].includes(live.status)) {
+      return { ok: false, detail: `Pairing is not available while the session is ${live.status}. Reconnect first.` };
+    }
     const res = await openwa.requestPairingCode(gw, sessionId, n.e164.replace("+", ""));
     if (!res.pairingCode) return { ok: false, detail: "Gateway did not return a pairing code" };
     return { ok: true, code: res.pairingCode, detail: "ok" };
   } catch (e) {
-    return { ok: false, detail: e instanceof Error ? e.message : String(e) };
+    const raw = e instanceof Error ? e.message : String(e);
+    // Baileys refuses pairing codes on a socket that has begun closing ("qr_ready
+    // is necessary but not sufficient" — see the gateway's own API docs). Map the
+    // engine refusal to the recovery action instead of a dead-end error.
+    if (/closing|closed|restart|not connected|connection/i.test(raw)) {
+      return { ok: false, detail: "The pairing socket is re-establishing — press Refresh pairing (or wait a few seconds) and request the code again." };
+    }
+    return { ok: false, detail: raw };
   }
 }
 

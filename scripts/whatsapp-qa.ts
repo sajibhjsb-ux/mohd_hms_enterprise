@@ -211,9 +211,17 @@ section("9 RBAC — CUSTOMER/STAFF LOCKOUT + AUDIT");
   check("anonymous blocked (401)", anon.status === 401);
 
   const { PrismaClient } = await import("@prisma/client");
+  // Audits are written async (void audit()) — give the write a moment before
+  // asserting, otherwise this check flakes on a fast machine.
+  await new Promise((r) => setTimeout(r, 1500));
   const db = new PrismaClient();
-  const audits = await db.auditLog.findMany({ where: { action: { in: ["WHATSAPP_COMPLAINT_CREATED", "WHATSAPP_CONFIG_UPDATED"] } }, take: 5 });
-  check("audit rows written (no secrets in metadata)", audits.length >= 1 && !JSON.stringify(audits).toLowerCase().includes("apikey"));
+  const audits = await db.auditLog.findMany({ where: { action: { in: ["WHATSAPP_COMPLAINT_CREATED", "WHATSAPP_CONFIG_UPDATED"] } }, take: 20 });
+  // The real leak test: no raw secret VALUE may appear in the metadata.
+  // (Flag NAMES like apiKeyChanged:true are fine — they carry no secret.)
+  const serialized = JSON.stringify(audits);
+  const leakedSecret = [OPENWA_API_KEY, OPENWA_WEBHOOK_SECRET].filter((s) => s && serialized.includes(s));
+  check("audit rows written (no secret VALUES in metadata)", audits.length >= 1 && leakedSecret.length === 0,
+    leakedSecret.length ? `leaked: ${leakedSecret.map((s) => s.slice(0, 6) + "…").join(", ")}` : "");
   await db.$disconnect();
 }
 
