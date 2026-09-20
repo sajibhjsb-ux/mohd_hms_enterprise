@@ -77,6 +77,13 @@ export const PERMISSIONS = {
   pm_execute: "pm.execute",
   pm_approve: "pm.approve", // PM §25/§72 — review/approve/close completed PM occurrences
   pm_report: "pm.report", // PM §55–§57 — compliance/performance/cost reports + export
+  // centralized checklist engine (AI checklist spec §50) — uses the existing RBAC,
+  // no separate permission system. Execution itself stays behind work_orders perms.
+  checklist_view: "checklist.view", // view checklist instances / review page (customer: own, sanitized)
+  checklist_generate: "checklist.generate", // AI ASSIST / template generation of drafts
+  checklist_edit: "checklist.edit", // edit draft items (add/remove/reorder) before approval
+  checklist_approve: "checklist.approve", // approve / reject / activate / attach checklists
+  checklist_template_manage: "checklist.template_manage", // central template library CRUD + AI log
   // inventory
   inventory_read: "inventory.read",
   inventory_manage: "inventory.manage",
@@ -140,6 +147,9 @@ const SUPERVISOR_PERMS: Permission[] = [
   PERMISSIONS.complaints_read, PERMISSIONS.complaints_create, PERMISSIONS.complaints_assign, PERMISSIONS.complaints_update, PERMISSIONS.complaints_close,
   PERMISSIONS.work_orders_read, PERMISSIONS.work_orders_create, PERMISSIONS.work_orders_assign, PERMISSIONS.work_orders_update, PERMISSIONS.work_orders_complete,
   PERMISSIONS.pm_read, PERMISSIONS.pm_manage, PERMISSIONS.pm_approve, PERMISSIONS.pm_report,
+  // Checklist engine — supervisors generate/review/approve; templates are managed here too
+  PERMISSIONS.checklist_view, PERMISSIONS.checklist_generate, PERMISSIONS.checklist_edit,
+  PERMISSIONS.checklist_approve, PERMISSIONS.checklist_template_manage,
   PERMISSIONS.inventory_read,
   PERMISSIONS.purchases_read,
   PERMISSIONS.quotations_read, PERMISSIONS.quotations_manage,
@@ -154,6 +164,8 @@ const TECHNICIAN_PERMS: Permission[] = [
   PERMISSIONS.complaints_read, PERMISSIONS.complaints_update,
   PERMISSIONS.work_orders_read, PERMISSIONS.work_orders_update, PERMISSIONS.work_orders_complete,
   PERMISSIONS.pm_read, PERMISSIONS.pm_execute, PERMISSIONS.pm_report,
+  // Checklist engine — technicians see assigned checklists and execute them (spec §53)
+  PERMISSIONS.checklist_view,
   PERMISSIONS.inventory_read,
   PERMISSIONS.irms_read, PERMISSIONS.irms_create,
 ];
@@ -168,6 +180,9 @@ const CUSTOMER_PERMS: Permission[] = [
   // PM §44 — customers see the PM schedule/history of THEIR equipment only
   // (scoping enforced per-route; internal financials/notes stripped in APIs).
   PERMISSIONS.pm_read,
+  // Checklist engine §52 — customers see only their own checklists/results,
+  // sanitized (no technician notes / AI metadata / approval internals).
+  PERMISSIONS.checklist_view,
 ];
 
 const FINANCE_PERMS: Permission[] = [
@@ -263,6 +278,20 @@ export const PM_CHECKLIST_RESPONSE_TYPES = ["CHECKBOX", "PASSFAIL", "YESNO", "NU
 export const PM_FINDING_SEVERITIES = ["LOW", "MEDIUM", "HIGH", "CRITICAL"] as const;
 export const PM_PHOTO_PHASES = ["BEFORE", "DURING", "AFTER", "FINDING", "METER"] as const;
 export const PM_TASK_STATUSES = ["SCHEDULED", "OVERDUE", "IN_PROGRESS", "COMPLETED", "SKIPPED", "CANCELLED", "FAILED"] as const;
+
+// ── Centralized checklist engine (AI checklist spec) ──
+export const CHECKLIST_SOURCE_TYPES = ["COMPLAINT", "WORK_ORDER", "PM", "IRMS"] as const;
+export type ChecklistSourceType = (typeof CHECKLIST_SOURCE_TYPES)[number];
+export const CHECKLIST_ORIGINS = ["AI", "TEMPLATE", "MANUAL", "HYBRID"] as const;
+// Lifecycle §4 — AI GENERATED → DRAFT → APPROVED → ACTIVE → COMPLETED (→ ARCHIVED)
+export const CHECKLIST_STATUSES = ["DRAFT", "PENDING_APPROVAL", "APPROVED", "REJECTED", "ACTIVE", "COMPLETED", "ARCHIVED"] as const;
+export const CHECKLIST_TASK_PRIORITIES = ["ROUTINE", "IMPORTANT", "SAFETY", "CRITICAL"] as const;
+export const CHECKLIST_WORK_TYPES = [
+  "PREVENTIVE", "CORRECTIVE", "TROUBLESHOOTING", "INSPECTION", "COMMISSIONING", "INSTALLATION", "GENERAL",
+] as const;
+// The execution surface supports these five response types (shared with PM §17);
+// the AI's richer vocabulary is deterministically mapped onto them by the validator.
+export const CHECKLIST_RESPONSE_TYPES = PM_CHECKLIST_RESPONSE_TYPES;
 // PM §15/§54 — standard template-library categories (PmTemplate.category)
 export const PM_TEMPLATE_CATEGORIES = [
   "HVAC", "ELECTRICAL", "PLUMBING", "FIRE_PROTECTION", "GENERATOR", "LIFT", "BUILDING",
@@ -353,6 +382,10 @@ export const STATUS_TONE: Record<string, string> = {
   UNPAID: "bg-stone-200 text-stone-600",
   OTHER: "bg-stone-200 text-stone-600",
   AI_GENERATED: "bg-violet-100 text-violet-800",
+  // checklist engine lifecycle tones (spec §4/§64)
+  HYBRID: "bg-violet-100 text-violet-800",
+  TEMPLATE: "bg-teal-100 text-teal-800",
+  MANUAL: "bg-stone-200 text-stone-700",
   UNDER_REVIEW: "bg-amber-100 text-amber-800",
   FINALIZED: "bg-emerald-100 text-emerald-800",
   ARCHIVED: "bg-stone-200 text-stone-600",

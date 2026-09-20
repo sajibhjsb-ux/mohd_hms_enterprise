@@ -123,6 +123,25 @@ export const PATCH = withId(PERMISSIONS.users_update, async (id, { req, user }) 
     throw Errors.badRequest("You cannot disable your own account.");
   }
 
+  // ── Last active SUPER_ADMIN protection (role-change spec §6) ──
+  // The system must never end up with zero active SUPER_ADMIN accounts. A
+  // demotion of an ACTIVE SUPER_ADMIN is only allowed while another ACTIVE
+  // SUPER_ADMIN remains. (Self-demotion is already blocked above; this guard
+  // covers the demotion of OTHER super admins, including concurrent ones.)
+  const demotingSuperAdmin =
+    target.role === "SUPER_ADMIN" &&
+    target.status === "ACTIVE" &&
+    body.role !== undefined &&
+    body.role !== "SUPER_ADMIN";
+  if (demotingSuperAdmin) {
+    const otherActiveSuperAdmins = await db.user.count({
+      where: { role: "SUPER_ADMIN", status: "ACTIVE", id: { not: id } },
+    });
+    if (otherActiveSuperAdmins === 0) {
+      throw Errors.conflict("Cannot change the role of the last active SUPER_ADMIN account. Promote another SUPER_ADMIN first.");
+    }
+  }
+
   // Pre-allocate a technician number OUTSIDE the transaction — nextNumber()
   // writes via the global db client, which would deadlock on SQLite inside one.
   const tecEmployeeNo = body.role === "TECHNICIAN" && !target.technicianProfile ? await nextNumber("TEC") : null;
@@ -185,11 +204,27 @@ export const PATCH = withId(PERMISSIONS.users_update, async (id, { req, user }) 
       await tx.employee.updateMany({ where: { userId: id }, data: { email: body.email } });
     }
 
-    // Becoming a technician: provision a profile if missing. Leaving the
-    // technician role: profile is retained for history/reassignment.
-    if (u.role === "TECHNICIAN" && !u.technicianProfile && tecEmployeeNo) {
-      await tx.technicianProfile.create({
-        data: { userId: id, employeeNo: tecEmployeeNo, specialty: "GENERAL", status: "AVAILABLE" },
+    // Becoming a technician: provision a profile if missing (role-change spec
+    // §11/§12 — one canonical user↔technician identity, TEC number reused on
+    // re-promotion). A previously-retired profile is REACTIVATED, never
+    // duplicated. Leaving the technician role: the profile is RETIRED — hidden
+    // from the roster and all assignment dropdowns (spec §13) while every
+    // historical work order / complaint / PM task keeps its link intact.
+    if (u.role === "TECHNICIAN") {
+      if (!u.technicianProfile && tecEmployeeNo) {
+        await tx.technicianProfile.create({
+          data: { userId: id, employeeNo: tecEmployeeNo, specialty: "GENERAL", status: "AVAILABLE" },
+        });
+      } else if (u.technicianProfile && u.technicianProfile.status === "RETIRED") {
+        await tx.technicianProfile.update({
+          where: { id: u.technicianProfile.id },
+          data: { status: "AVAILABLE" },
+        });
+      }
+    } else if (body.role !== undefined && u.technicianProfile && u.technicianProfile.status !== "RETIRED") {
+      await tx.technicianProfile.update({
+        where: { id: u.technicianProfile.id },
+        data: { status: "RETIRED" },
       });
     }
     return u;
@@ -211,12 +246,40 @@ export const PATCH = withId(PERMISSIONS.users_update, async (id, { req, user }) 
     await db.session.deleteMany({ where: { userId: id } });
   }
 
+  // Did the role actually change? (used by both audit records below)
+  const roleChanged = body.role !== undefined && body.role !== target.role;
+
   await audit({
     actorId: user.id, actorEmail: user.email,
     action: "USER_UPDATED", resourceType: "USER", resourceId: id,
-    metadata: { email: body.email ?? target.email, fields: Object.keys(body).filter((k) => k !== "action"), roleFrom: target.role, roleTo: body.role ?? target.role },
+    // When the role changed, the dedicated USER_ROLE_CHANGED row (below) owns
+    // the from→to record — keeping it here too would double-list the change in
+    // the role history. Legacy rows (before the dedicated action) still carry
+    // roleFrom/roleTo and remain readable by the history view.
+    metadata: { email: body.email ?? target.email, fields: Object.keys(body).filter((k) => k !== "action"), ...(roleChanged ? {} : { roleFrom: target.role, roleTo: body.role ?? target.role }) },
     ip,
   });
+
+  // ── Dedicated role-change audit record (role-change spec §17/§18) ──
+  // A clear ROLE CHANGE row (previous → new, SUCCESS) that the user-detail
+  // role history reads; from→to keeps each change reviewable in the audit UI.
+  if (roleChanged) {
+    await audit({
+      actorId: user.id, actorEmail: user.email,
+      action: "USER_ROLE_CHANGED", resourceType: "USER", resourceId: id,
+      metadata: {
+        targetEmail: target.email, targetName: target.name,
+        previousRole: target.role, newRole: body.role, result: "SUCCESS",
+      },
+      ip,
+    });
+    await notify({
+      userId: id,
+      title: "Your account role was changed",
+      message: `Your role was changed from ${target.role} to ${body.role} by ${user.name}. You may need to refresh to see your new access.`,
+      type: "INFO", resourceType: "USER", resourceId: id,
+    });
+  }
 
   // Dedicated identity-change audit entries (spec §27) — values are contact
   // data, not secrets; from→to makes each change reviewable.
@@ -261,7 +324,13 @@ export const PATCH = withId(PERMISSIONS.users_update, async (id, { req, user }) 
   }
 
   // Realtime (STEP 11/18): role/status changes propagate (navigation/access hints).
-  await emit({ type: EVENT_TYPES.USER_UPDATED, resourceType: "USER", resourceId: id, payload: { fields: Object.keys(body).filter((k) => k !== "action") }, actorType: "USER", actorId: user.id });
+  // SESSION NOTE (role-change spec §8/§9): authorization is resolved LIVE from
+  // the User row on every request (getSessionUser → session.user.role) — there
+  // are no JWT role claims and no Redis permission cache, so the new role is
+  // authoritative on the user's very next API call. Sessions are intentionally
+  // KEPT (no forced re-login); the client refreshes its own session state when
+  // the USER_UPDATED event for its own id arrives (shell.tsx sync).
+  await emit({ type: EVENT_TYPES.USER_UPDATED, resourceType: "USER", resourceId: id, payload: { fields: Object.keys(body).filter((k) => k !== "action"), roleChanged }, actorType: "USER", actorId: user.id });
   return ok(fresh ?? updated);
 });
 

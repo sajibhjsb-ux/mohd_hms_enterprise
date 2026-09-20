@@ -25,7 +25,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { KeyRound, Lock, Save, TriangleAlert } from "lucide-react";
+import { History, KeyRound, Lock, Save, ShieldCheck, TriangleAlert, UserCog } from "lucide-react";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
@@ -40,7 +40,9 @@ type UserRow = {
 };
 
 const ROLES = ["SUPER_ADMIN", "ADMIN", "SUPERVISOR", "TECHNICIAN", "CUSTOMER", "FINANCE", "HR"] as const;
-const ASSIGNABLE_ROLES = ROLES.filter((r) => r !== "CUSTOMER");
+
+/** Role-change audit row (spec §18) — derived from the existing audit system. */
+type RoleHistoryRow = { id: string; createdAt: string; previousRole: string; newRole: string; changedBy: string };
 
 const ROLE_TONE: Record<string, string> = {
   SUPER_ADMIN: "bg-purple-100 text-purple-800 border-purple-200",
@@ -88,22 +90,32 @@ export function UserEditPage({ id }: { id: string }) {
   const [pwProblem, setPwProblem] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const roleOptions = ASSIGNABLE_ROLES.filter((r) => r !== "SUPER_ADMIN" || isSuperAdmin);
+  const roleOptions = ROLES.filter((r) => r !== "SUPER_ADMIN" || isSuperAdmin);
+  const canReadAudit = !!user?.permissions.includes("audit.read");
+
+  const [roleHistory, setRoleHistory] = useState<RoleHistoryRow[] | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
     try {
-      // List-based lookup (documented approach — no API change). The default
-      // list hides customer portal users; those ids resolve to not-found here.
-      const res = await api.get<UserRow[]>(`/api/v1/users${qs({ pageSize: 200 })}`);
-      const found = (Array.isArray(res.data) ? res.data : []).find((r) => r.id === id) ?? null;
+      // ROOT-CAUSE FIX: load the user through the DEDICATED detail endpoint.
+      // The previous list-based lookup hit GET /api/v1/users (which hides
+      // customer portal users by default), so every portal-registered user
+      // resolved to "not found" and the edit form never rendered — portal
+      // user roles could not be changed at all. GET /api/v1/users/{id}
+      // returns ANY user and is the authoritative record for this page.
+      const res = await api.get<{
+        id: string; email: string; name: string; phone: string | null; role: string; status: string;
+        lastLoginAt: string | null; createdAt: string; customerId: string | null;
+        customer: { id: string; companyName: string; code: string } | null;
+        technicianProfile: { id: string; employeeNo: string; specialty: string; skills?: string; status: string } | null;
+      }>(`/api/v1/users/${id}`);
+      const found = res.data;
       setTarget(found);
-      if (found) {
-        const f = { name: found.name, phone: found.phone ?? "", email: found.email, role: found.role };
-        setForm(f);
-        setInitial(f);
-      }
+      const f = { name: found.name, phone: found.phone ?? "", email: found.email, role: found.role };
+      setForm(f);
+      setInitial(f);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Could not load this user.");
     } finally {
@@ -111,7 +123,39 @@ export function UserEditPage({ id }: { id: string }) {
     }
   }, [id]);
 
+  // ── Role history (spec §18) — from the EXISTING audit system, no new tables.
+  // Covers the dedicated USER_ROLE_CHANGED rows and legacy USER_UPDATED rows
+  // that carried roleFrom/roleTo.
+  const loadRoleHistory = useCallback(async () => {
+    if (!canReadAudit) return;
+    try {
+      const [dedicated, legacy] = await Promise.all([
+        api.get<{ id: string; createdAt: string; actorEmail: string; actor?: { name?: string | null } | null; metadata?: unknown }[]>(
+          `/api/v1/audit-logs${qs({ resourceType: "USER", resourceId: id, action: "USER_ROLE_CHANGED", pageSize: 20 })}`
+        ),
+        api.get<{ id: string; createdAt: string; actorEmail: string; actor?: { name?: string | null } | null; metadata?: unknown }[]>(
+          `/api/v1/audit-logs${qs({ resourceType: "USER", resourceId: id, action: "USER_UPDATED", pageSize: 20 })}`
+        ),
+      ]);
+      const map = (rows: typeof dedicated.data): RoleHistoryRow[] =>
+        rows
+          .map((r) => {
+            const meta = (typeof r.metadata === "object" && r.metadata !== null ? r.metadata : {}) as Record<string, unknown>;
+            const previousRole = typeof meta.previousRole === "string" ? meta.previousRole : typeof meta.roleFrom === "string" ? meta.roleFrom : null;
+            const newRole = typeof meta.newRole === "string" ? meta.newRole : typeof meta.roleTo === "string" ? meta.roleTo : null;
+            if (!previousRole || !newRole || previousRole === newRole) return null;
+            return { id: r.id, createdAt: r.createdAt, previousRole, newRole, changedBy: r.actor?.name ?? r.actorEmail };
+          })
+          .filter((r): r is RoleHistoryRow => !!r);
+      const merged = [...map(dedicated.data), ...map(legacy.data)].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      setRoleHistory(merged);
+    } catch {
+      setRoleHistory(null); // history is best-effort — never blocks editing
+    }
+  }, [canReadAudit, id]);
+
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { void loadRoleHistory(); }, [loadRoleHistory, target?.role]);
 
   // ── Dirty-state wiring (central router guard protects typed edits) ──
   const profileDirty = !!initial && (form.name !== initial.name || form.phone !== initial.phone || form.email !== initial.email || form.role !== initial.role);
@@ -124,24 +168,40 @@ export function UserEditPage({ id }: { id: string }) {
 
   async function submitProfile() {
     if (!target || !initial) return;
+    // Minimal-diff payload (role-change spec §5/§15): ONLY send what actually
+    // changed AND what the actor is allowed to change. Name/phone/email are
+    // SUPER_ADMIN-managed identity fields — including them in an ADMIN's
+    // payload made the backend (correctly) reject the whole request with 403,
+    // which previously blocked role changes by ADMIN accounts.
+    const payload: Record<string, unknown> = {};
+    if (form.role !== initial.role) payload.role = form.role;
+    if (isSuperAdmin) {
+      if (form.name !== initial.name) payload.name = form.name;
+      if ((form.phone || null) !== (initial.phone || null)) payload.phone = form.phone || null;
+      if (emailChanged) payload.email = form.email.trim().toLowerCase();
+    }
+    if (Object.keys(payload).length === 0) return; // nothing to change
     setSaving(true);
     try {
-      const res = await api.patch<UserRow>(
-        `/api/v1/users/${target.id}`,
-        {
-          name: form.name,
-          phone: form.phone || null,
-          role: form.role,
-          // Email is a SUPER_ADMIN-only identity field — sent only when changed.
-          ...(isSuperAdmin && emailChanged ? { email: form.email.trim().toLowerCase() } : {}),
-        },
-      );
-      toast({ title: "User updated", description: `${res.data.name} saved.` });
+      const res = await api.patch<{
+        id: string; name: string; phone: string | null; role: string; email: string;
+        technicianProfile?: { id: string; employeeNo: string; specialty: string; status: string } | null;
+      }>(`/api/v1/users/${target.id}`, payload);
+      // Backend-confirmed data only (spec §15/§16) — never local-first updates.
       const f = { name: res.data.name, phone: res.data.phone ?? "", email: res.data.email, role: res.data.role };
       setForm(f);
       setInitial(f);
-      setTarget((t) => (t ? { ...t, ...f } : t));
+      setTarget((t) => (t ? { ...t, ...f, technicianProfile: res.data.technicianProfile ?? t.technicianProfile } : t));
+      const roleChangedHere = payload.role !== undefined;
+      toast({
+        title: roleChangedHere ? "Role updated" : "User updated",
+        description: roleChangedHere
+          ? `${res.data.name} is now ${humanize(res.data.role)}${res.data.technicianProfile ? ` · technician profile ${res.data.technicianProfile.employeeNo} ready` : ""}.`
+          : `${res.data.name} saved.`,
+      });
+      if (roleChangedHere) void loadRoleHistory();
     } catch (e) {
+      // Failure: keep the existing values displayed, show the real error (spec §15/§19).
       toast({ title: "Could not update user", description: e instanceof ClientApiError ? e.message : undefined, variant: "destructive" });
     } finally {
       setSaving(false);
@@ -307,6 +367,19 @@ export function UserEditPage({ id }: { id: string }) {
                 </SelectContent>
               </Select>
               {isSelf ? <p className="text-xs text-muted-foreground mt-1">You cannot change your own role.</p> : null}
+              {!isSelf && target.customer && form.role === "CUSTOMER" ? (
+                <p className="text-xs text-muted-foreground mt-1">Portal account — CUSTOMER access with their own linked customer record.</p>
+              ) : null}
+              {!isSelf && form.role !== initial?.role && form.role === "TECHNICIAN" && !target.technicianProfile ? (
+                <p className="text-xs rounded-md bg-emerald-50 px-3 py-2 text-emerald-800 mt-1 flex items-center gap-1.5">
+                  <UserCog className="h-3.5 w-3.5" aria-hidden /> Saving will provision a technician profile (TEC number) automatically — the user becomes assignable in Technician Management, complaints, work orders and PM.
+                </p>
+              ) : null}
+              {!isSelf && form.role !== initial?.role && initial?.role === "TECHNICIAN" ? (
+                <p className="text-xs rounded-md bg-amber-50 px-3 py-2 text-amber-800 mt-1">
+                  Downgrading away from TECHNICIAN removes technician access. Historical assignments, work orders and records stay intact.
+                </p>
+              ) : null}
             </div>
             <div className="flex items-center justify-between rounded-lg border px-3 py-2.5">
               <div>
@@ -361,6 +434,39 @@ export function UserEditPage({ id }: { id: string }) {
       <p className="mt-3 text-xs text-muted-foreground">
         Unsaved changes are protected — navigation asks for confirmation until you save or clear them.
       </p>
+
+      {/* ── Role history (spec §18) — data from the existing PostgreSQL audit log ── */}
+      {canReadAudit ? (
+        <Card className="shadow-sm mt-2">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <History className="h-4 w-4" aria-hidden /> Role history
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {roleHistory === null ? (
+              <p className="text-xs text-muted-foreground">History could not be loaded (audit access required).</p>
+            ) : roleHistory.length === 0 ? (
+              <p className="text-xs text-muted-foreground">No role changes recorded yet — the current role is the original assignment.</p>
+            ) : (
+              <ul className="divide-y">
+                {roleHistory.slice(0, 8).map((h) => (
+                  <li key={h.id} className="py-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+                    <span className="text-xs text-muted-foreground w-40 shrink-0">
+                      {new Date(h.createdAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}{" "}
+                      {new Date(h.createdAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+                    </span>
+                    <Badge variant="outline" className={`${ROLE_TONE[h.previousRole] ?? ""} font-medium`}>{humanize(h.previousRole)}</Badge>
+                    <span aria-hidden>→</span>
+                    <Badge variant="outline" className={`${ROLE_TONE[h.newRole] ?? ""} font-medium`}>{humanize(h.newRole)}</Badge>
+                    <span className="text-xs text-muted-foreground">Changed by {h.changedBy || "system"}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+      ) : null}
 
       {/* Email-change dependency confirmation (spec §29) */}
       <Dialog open={emailConfirmOpen} onOpenChange={setEmailConfirmOpen}>

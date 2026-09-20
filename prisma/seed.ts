@@ -42,6 +42,8 @@ async function main() {
     db.complaintStatusHistory.deleteMany(), db.complaint.deleteMany(),
     db.pmTaskChecklistItem.deleteMany(), db.pmTask.deleteMany(), db.pmPlan.deleteMany(),
     db.pmTemplate.deleteMany(), db.pmFinding.deleteMany(),
+    db.checklistInstanceVersion.deleteMany(), db.checklistAiGeneration.deleteMany(),
+    db.checklistInstance.deleteMany(), db.checklistTemplateVersion.deleteMany(), db.checklistTemplate.deleteMany(),
     db.equipmentMeterReading.deleteMany(), db.equipmentMeter.deleteMany(),
     db.inspectionFinding.deleteMany(), db.inspectionReport.deleteMany(), db.irmsProject.deleteMany(),
     db.equipment.deleteMany(), db.location.deleteMany(),
@@ -330,6 +332,96 @@ async function main() {
       ]),
     },
   });
+
+  // ── Meter-based PM demo (§9–§11): generator running hours ──
+
+  // ── Centralized checklist template library (AI checklist engine §8) ──
+  // Approved templates the engine prefers over AI invention (spec §15/§16).
+  const checklistTemplates: {
+    name: string; category: string; workType: string; equipmentCategory?: string; description: string; approvalRequired?: boolean;
+    items: Record<string, unknown>[];
+  }[] = [
+    {
+      name: "HVAC Troubleshooting & Service", category: "HVAC", workType: "TROUBLESHOOTING", equipmentCategory: "HVAC",
+      description: "Cooling-fault diagnostic and service flow (e.g. not cooling, water leakage).",
+      items: [
+        { label: "Verify equipment identification and asset tag", required: true, responseType: "CHECKBOX", priority: "ROUTINE" },
+        { label: "Confirm reported symptoms with the customer's description", required: true, responseType: "CHECKBOX", priority: "ROUTINE" },
+        { label: "Check power supply and isolator status", required: true, responseType: "PASSFAIL", priority: "SAFETY", safetyCritical: true, failRequiresFinding: true },
+        { label: "Inspect air filter condition", required: true, responseType: "PASSFAIL", priority: "ROUTINE", failRequiresFinding: true },
+        { label: "Inspect drain tray and condensate drain line", required: true, responseType: "PASSFAIL", priority: "IMPORTANT", failRequiresFinding: true },
+        { label: "Record supply air temperature", required: true, responseType: "NUMERIC", unit: "°C", priority: "ROUTINE" },
+        { label: "Record return air temperature", required: true, responseType: "NUMERIC", unit: "°C", priority: "ROUTINE" },
+        { label: "Record operating current", required: false, responseType: "NUMERIC", unit: "A", priority: "ROUTINE" },
+        { label: "Photograph the fault condition before any repair", required: true, responseType: "CHECKBOX", requiresPhoto: true, priority: "IMPORTANT" },
+        { label: "Record findings and recommended corrective action", required: true, responseType: "TEXT", priority: "IMPORTANT" },
+      ],
+    },
+    {
+      name: "Electrical Fault Rectification", category: "ELECTRICAL", workType: "CORRECTIVE", equipmentCategory: "ELECTRICAL",
+      description: "Safe isolation-first corrective flow for electrical faults.",
+      items: [
+        { label: "Isolate supply according to approved isolation procedure", required: true, responseType: "CHECKBOX", priority: "SAFETY", safetyCritical: true },
+        { label: "Confirm zero voltage at the point of work", required: true, responseType: "PASSFAIL", priority: "SAFETY", safetyCritical: true, failRequiresFinding: true },
+        { label: "Inspect faulty component and record its condition", required: true, responseType: "TEXT", priority: "IMPORTANT" },
+        { label: "Replace defective component", required: false, responseType: "CHECKBOX", priority: "ROUTINE" },
+        { label: "Check all connections are tight and correctly terminated", required: true, responseType: "CHECKBOX", priority: "IMPORTANT" },
+        { label: "Carry out functional test after restoration", required: true, responseType: "PASSFAIL", priority: "IMPORTANT", failRequiresFinding: true },
+        { label: "Record test readings", required: false, responseType: "NUMERIC", unit: "Ω", priority: "ROUTINE" },
+        { label: "Photograph completed work", required: true, responseType: "CHECKBOX", requiresPhoto: true, priority: "IMPORTANT" },
+      ],
+    },
+    {
+      name: "Plumbing Leakage Inspection", category: "PLUMBING", workType: "INSPECTION", equipmentCategory: "PLUMBING",
+      description: "Leak tracing and sanitary inspection for complaints and periodic checks.",
+      items: [
+        { label: "Locate and confirm the leak source", required: true, responseType: "CHECKBOX", priority: "IMPORTANT" },
+        { label: "Inspect visible pipework and joints", required: true, responseType: "PASSFAIL", priority: "ROUTINE", failRequiresFinding: true },
+        { label: "Test drainage flow rate", required: true, responseType: "PASSFAIL", priority: "ROUTINE", failRequiresFinding: true },
+        { label: "Check water pressure at the nearest outlet", required: true, responseType: "NUMERIC", unit: "psi", priority: "ROUTINE" },
+        { label: "Photograph the affected area", required: true, responseType: "CHECKBOX", requiresPhoto: true, priority: "IMPORTANT" },
+        { label: "Record findings and recommended repair", required: true, responseType: "TEXT", priority: "IMPORTANT" },
+      ],
+    },
+    {
+      name: "Generator Commissioning Checklist", category: "GENERATOR", workType: "COMMISSIONING", equipmentCategory: "GENERATOR",
+      description: "New or overhauled generator commissioning verification.",
+      approvalRequired: true,
+      items: [
+        { label: "Verify nameplate details against the commissioning record", required: true, responseType: "CHECKBOX", priority: "IMPORTANT" },
+        { label: "Verify installation per approved layout", required: true, responseType: "CHECKBOX", priority: "IMPORTANT" },
+        { label: "Verify earthing and bonding", required: true, responseType: "PASSFAIL", priority: "SAFETY", safetyCritical: true, failRequiresFinding: true },
+        { label: "Test control panel protections", required: true, responseType: "PASSFAIL", priority: "SAFETY", safetyCritical: true, failRequiresFinding: true },
+        { label: "Record insulation resistance", required: true, responseType: "NUMERIC", unit: "Ω", priority: "IMPORTANT" },
+        { label: "Run no-load test and record voltage", required: true, responseType: "NUMERIC", unit: "V", priority: "IMPORTANT" },
+        { label: "Run on-load test and record current", required: true, responseType: "NUMERIC", unit: "A", priority: "IMPORTANT" },
+        { label: "Confirm fuel and cooling systems leak-free", required: true, responseType: "PASSFAIL", priority: "ROUTINE", failRequiresFinding: true },
+        { label: "Photograph installed nameplate and completed panel", required: true, responseType: "CHECKBOX", requiresPhoto: true, priority: "ROUTINE" },
+        { label: "Record commissioning remarks", required: true, responseType: "TEXT", priority: "IMPORTANT" },
+      ],
+    },
+    {
+      name: "General Property Inspection", category: "GENERAL", workType: "INSPECTION",
+      description: "Generic building condition inspection — the engine's fallback template.",
+      items: [
+        { label: "Verify the area or asset under inspection", required: true, responseType: "CHECKBOX", priority: "ROUTINE" },
+        { label: "Assess general condition", required: true, responseType: "PASSFAIL", priority: "ROUTINE", failRequiresFinding: true },
+        { label: "Check housekeeping and access safety", required: true, responseType: "PASSFAIL", priority: "IMPORTANT", failRequiresFinding: true },
+        { label: "Record observations", required: true, responseType: "TEXT", priority: "IMPORTANT" },
+        { label: "Photograph notable conditions", required: false, responseType: "CHECKBOX", requiresPhoto: true, priority: "ROUTINE" },
+      ],
+    },
+  ];
+  for (const t of checklistTemplates) {
+    await db.checklistTemplate.create({
+      data: {
+        name: t.name, category: t.category, workType: t.workType,
+        equipmentCategory: t.equipmentCategory ?? "", description: t.description,
+        items: JSON.stringify(t.items), version: 1, status: "ACTIVE",
+        approvalRequired: t.approvalRequired ?? false,
+      },
+    });
+  }
 
   // ── Meter-based PM demo (§9–§11): generator running hours ──
   const genMeter = await db.equipmentMeter.create({

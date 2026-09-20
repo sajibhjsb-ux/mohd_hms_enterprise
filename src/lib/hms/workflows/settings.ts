@@ -40,6 +40,17 @@ export const AUTOMATION_SETTING_DEFAULTS = {
   wo_overdue_escalation_days: "2",
   /** §59: SLA response targets (hours) per priority, JSON object. */
   sla_targets_hours: '{"URGENT":2,"HIGH":8,"MEDIUM":24,"LOW":72}',
+  /** Checklist engine (§23/§58): the AI ASSIST "Generate Checklist" action calls the
+   *  real AI provider. Deterministic approved templates keep working when off. */
+  checklist_ai_enabled: "on",
+  /** §23: auto-generate a DRAFT checklist when a complaint is created (template-first). */
+  auto_checklist_for_complaints: "off",
+  /** §23: auto-attach/generate a checklist when a work order is created (template-first). */
+  auto_checklist_for_work_orders: "off",
+  /** §24: NEW AI-generated checklists require supervisor approval before activation. */
+  checklist_require_approval: "on",
+  /** §59: maximum number of tasks the AI may produce (configurable, not hardcoded). */
+  checklist_max_tasks: "50",
 } as const;
 
 export type AutomationSettingKey = keyof typeof AUTOMATION_SETTING_DEFAULTS;

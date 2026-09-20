@@ -421,6 +421,50 @@ registerWorkflow(EVENT_TYPES.EMAIL_SEND, "EMAIL_DELIVER", async (ctx) => {
   return { result: "SUCCESS", detail: "email queued via EmailService" };
 });
 
+// ─── Checklist engine (AI checklist spec §23/§36/§69): complaint created →
+//     optional AUTO draft checklist (template-first, AI only when enabled).
+//     Configuration-gated (auto_checklist_for_complaints, default OFF) so no AI
+//     content is generated for every record unless an administrator enables it.
+registerWorkflow(EVENT_TYPES.COMPLAINT_CREATED, "AUTO_CHECKLIST_COMPLAINT", async (ctx) => {
+  if (!(await isAutomationEnabled("auto_checklist_for_complaints"))) {
+    return { result: "SKIPPED", detail: "auto_checklist_for_complaints disabled" };
+  }
+  const complaint = await db.complaint.findUnique({ where: { id: ctx.resourceId }, select: { id: true, status: true, code: true } });
+  if (!complaint) return { result: "SKIPPED", detail: "complaint missing" };
+  if (["CANCELLED", "CLOSED"].includes(complaint.status)) return { result: "SKIPPED", detail: "complaint closed" };
+  const { autoGenerateForSource } = await import("@/lib/hms/checklist/engine");
+  const detail = await autoGenerateForSource("COMPLAINT", complaint.id);
+  if (detail.startsWith("generated")) {
+    await audit({
+      actorEmail: "SYSTEM", action: "CHECKLIST_GENERATED_AUTOMATICALLY",
+      resourceType: "COMPLAINT", resourceId: complaint.id, metadata: { complaintCode: complaint.code, detail },
+    });
+    return { result: "SUCCESS", detail };
+  }
+  return { result: "SKIPPED", detail };
+});
+
+// ─── Checklist engine: work order created → attach the complaint's APPROVED
+//     checklist snapshot (§28) and optionally template-generate for plain WOs.
+//     Fires for BOTH manual creation and the auto-created complaint WO, because
+//     both paths emit WORK_ORDER_CREATED. AI is never auto-run here — §23.
+registerWorkflow(EVENT_TYPES.WORK_ORDER_CREATED, "AUTO_CHECKLIST_WORK_ORDER", async (ctx) => {
+  const workOrderId = String(ctx.payload.workOrderId ?? ctx.resourceId);
+  const wo = await db.workOrder.findUnique({ where: { id: workOrderId }, select: { id: true, complaintId: true, code: true } });
+  if (!wo) return { result: "SKIPPED", detail: "work order missing" };
+  const { autoAttachForComplaint, autoGenerateForWorkOrder } = await import("@/lib/hms/checklist/engine");
+  if (wo.complaintId) {
+    const detail = await autoAttachForComplaint(wo.complaintId);
+    if (detail.startsWith("attached")) return { result: "SUCCESS", detail: `${detail} (${wo.code})` };
+  }
+  if (!(await isAutomationEnabled("auto_checklist_for_work_orders"))) {
+    return { result: "SKIPPED", detail: "auto_checklist_for_work_orders disabled" };
+  }
+  const detail = await autoGenerateForWorkOrder(wo.id);
+  if (detail.startsWith("generated")) return { result: "SUCCESS", detail: `${detail} (${wo.code})` };
+  return { result: "SKIPPED", detail };
+});
+
 /** Event types that have at least one registered workflow (observability). */
 export function registeredEventTypes(): EventType[] {
   return Object.keys(EVENT_TYPES) as EventType[];

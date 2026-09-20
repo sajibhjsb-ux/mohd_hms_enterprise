@@ -66,6 +66,11 @@ const patchSchema = z.object({
   notes: z.string().max(2000).optional(),
 });
 
+// Checklist engine — deterministic answer validation:
+//  - NUMERIC items must carry a numeric response (a reading is a number, §13)
+//  - failRequiresFinding items must carry a technician note when answered FAIL/NO (§12)
+const FAIL_RESPONSES = new Set(["FAIL", "NO"]);
+
 export const PATCH = withId(
   async (id, { req, user }) => {
     const body = await parseBody(req, patchSchema);
@@ -75,9 +80,19 @@ export const PATCH = withId(
     }
     const item = await db.workOrderChecklistItem.findUnique({ where: { id: body.itemId } });
     if (!item || item.workOrderId !== id) throw Errors.notFound("Checklist item not found.");
+
+    const response = body.response ?? item.response;
+    if (item.responseType === "NUMERIC" && response.trim() !== "" && Number.isNaN(Number(response.trim()))) {
+      throw Errors.invalidTransition(`"${item.label}" expects a numeric reading${item.unit ? ` in ${item.unit}` : ""}.`);
+    }
+    const failing = FAIL_RESPONSES.has(response.trim().toUpperCase());
+    const notes = body.notes ?? item.notes;
+    if (item.failRequiresFinding && failing && notes.trim() === "") {
+      throw Errors.invalidTransition(`"${item.label}" was marked ${response.trim().toUpperCase()} — record a note describing the problem before it can be saved.`);
+    }
+
     const done = body.done ?? item.done;
     // A non-checkbox item with a recorded response is automatically complete.
-    const response = body.response ?? item.response;
     const effectiveDone = item.responseType === "CHECKBOX" ? done : response.trim() !== "" ? true : done;
     const updated = await db.workOrderChecklistItem.update({
       where: { id: item.id },
@@ -85,10 +100,10 @@ export const PATCH = withId(
         done: effectiveDone,
         doneAt: effectiveDone ? (item.doneAt ?? new Date()) : null,
         ...(body.response !== undefined ? { response } : {}),
-        ...(body.notes !== undefined ? { notes: body.notes } : {}),
+        ...(body.notes !== undefined ? { notes } : {}),
       },
     });
-    await audit({ actorId: user.id, actorEmail: user.email, action: "WO_CHECKLIST_TOGGLED", resourceType: "WORK_ORDER", resourceId: id, metadata: { code: wo.code, itemId: item.id, done: effectiveDone } });
+    await audit({ actorId: user.id, actorEmail: user.email, action: "WO_CHECKLIST_TOGGLED", resourceType: "WORK_ORDER", resourceId: id, metadata: { code: wo.code, itemId: item.id, done: effectiveDone, response: response.slice(0, 100) || undefined } });
     return ok(updated);
   },
   { permission: PERMISSIONS.work_orders_read }

@@ -115,18 +115,35 @@ const workOrder: DocumentDef = {
         d.para(wo.description || wo.title || "—", { size: 9 });
         if (wo.checklist.length > 0) {
           d.heading("Checklist");
+          // Checklist engine §34/§65 — results, response types and technician
+          // notes are rendered (the engine's structured fields feed the report).
           d.table(
             [
-              { header: "#", width: 0.4, align: "center" },
-              { header: "Task", width: 4.4 },
-              { header: "Status", width: 1.2, align: "center" },
+              { header: "#", width: 0.35, align: "center" },
+              { header: "Task", width: 2.75 },
+              { header: "Type", width: 0.75, align: "center" },
+              { header: "Result", width: 1.35 },
+              { header: "Notes", width: 1.45 },
             ],
             wo.checklist.map((c, i) => [
               { text: String(i + 1) },
-              c.label,
-              { text: c.done ? `Done${c.doneAt ? ` · ${fmtDate(c.doneAt)}` : ""}` : "Pending" },
+              `${c.required ? "* " : ""}${c.label}${c.unit && c.responseType === "NUMERIC" ? ` (${c.unit})` : ""}`,
+              { text: humanize(c.responseType), align: "center" },
+              (() => {
+                const result = c.done
+                  ? c.responseType === "CHECKBOX"
+                    ? "Done"
+                    : c.response || "Recorded"
+                  : "Pending";
+                return { text: result };
+              })(),
+              c.notes ? c.notes : "",
             ])
           );
+          const originLine = wo.checklist.find((c) => c.origin && c.origin !== "MANUAL")?.origin;
+          if (originLine) {
+            d.banner(`Checklist origin: ${humanize(originLine)} (structured checklist engine)`, "muted");
+          }
         }
         d.heading("Labour & Materials");
         d.table(

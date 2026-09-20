@@ -35,7 +35,13 @@ export const GET = handler(
     const specialty = (sp.get("specialty") ?? "").trim();
     const where: Prisma.TechnicianProfileWhereInput = {};
 
+    // Role-change spec §13 — a user downgraded TECHNICIAN → CUSTOMER keeps their
+    // profile for HISTORY (old work orders stay linked) but must disappear from
+    // the active roster and every assignment dropdown. RETIRED profiles are only
+    // listed when explicitly requested; re-promoting the user reactivates the
+    // SAME profile (same TEC number — one canonical user↔technician identity).
     if (q.status) where.status = q.status.toUpperCase();
+    else where.status = { not: "RETIRED" };
     if (specialty) where.specialty = specialty.toUpperCase();
     if (q.search) {
       where.OR = [

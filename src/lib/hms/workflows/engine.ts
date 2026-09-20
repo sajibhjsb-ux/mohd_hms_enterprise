@@ -17,7 +17,7 @@ const BACKOFF_BASE_MS = 30_000;
 const BACKOFF_CAP_MS = 15 * 60_000;
 const BATCH = 25;
 
-export type WorkflowResult = { result: "SUCCESS" | "SKIPPED"; detail?: string };
+export type WorkflowResult = { result: "SUCCESS" | "SKIPPED" | "FAILED"; detail?: string };
 
 export type WorkflowHandlerCtx = {
   eventId: string;
