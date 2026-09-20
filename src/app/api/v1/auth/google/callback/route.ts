@@ -199,5 +199,17 @@ export async function GET(req: NextRequest) {
     expires: expiresAt,
     path: "/",
   });
+  // Post-login welcome popup bridge (spec §6): a Google sign-in lands the
+  // browser on a full-page redirect the SPA cannot observe in-memory, so the
+  // success response carries a short-lived, NON-sensitive UI flag cookie. The
+  // welcome system captures + clears it once on the landing page load — it
+  // never replays on refresh and never reaches any auth logic.
+  res.cookies.set("hms_welcome", "1", {
+    httpOnly: false,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    maxAge: 120,
+    path: "/",
+  });
   return clearOAuth(res);
 }
