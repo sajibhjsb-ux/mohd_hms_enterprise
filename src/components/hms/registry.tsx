@@ -88,9 +88,11 @@ export const MODULES: ModuleDef[] = [
   // itself needs no permission because each destination enforces RBAC on
   // arrival (resolve.ts refuses modules this user cannot reach).
   { key: "scan", label: "Scan QR Code", shortLabel: "Scan", icon: ScanLine, navHidden: true, component: ScanModule },
-  // Customer profile — entered from the header account menu (spec §34), not
-  // from the module nav. Views: /profile (view), /profile/edit, /profile/complete.
-  { key: "profile", label: "My Profile", shortLabel: "Profile", icon: CircleUserRound, roles: ["CUSTOMER"], navHidden: true, component: ProfileModule },
+  // My Profile — EVERY authenticated user (view + edit + customer onboarding).
+  // Entered from the header account menu (spec §31), not from the module nav.
+  // Views: /profile (view), /profile/edit, /profile/complete. Identity fields
+  // (name/email/phone) are managed by SUPER_ADMIN — enforced by the backend.
+  { key: "profile", label: "My Profile", shortLabel: "Profile", icon: CircleUserRound, navHidden: true, component: ProfileModule },
   // Legal pages — the CANONICAL Terms & Conditions / Privacy Policy (spec §2/§3).
   // Entered from the footer, the auth screens, the profile page and document
   // references; hidden from the module nav on purpose (spec §27). Logged-out

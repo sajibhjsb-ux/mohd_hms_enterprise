@@ -18,6 +18,8 @@ export type SessionUser = {
   /** Backend-authoritative derived profile state (customers). */
   profileComplete?: boolean;
   missingFields?: string[];
+  /** Object-storage key of the profile photo (served via authenticated API). */
+  avatarUrl?: string | null;
   /** Backend-authoritative Terms & Conditions acceptance state (see
    *  lib/hms/legal/legal.ts). Present on session/login/verify payloads. */
   terms?: {

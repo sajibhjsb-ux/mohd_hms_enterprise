@@ -35,6 +35,7 @@ import { MODULE_EVENTS } from "@/lib/hms/realtime/matrix";
 import { EyeOff, Eye, KeyRound, Pencil, Plus, ShieldCheck, UserX } from "lucide-react";
 import { UserNewPage } from "./new-page";
 import { UserEditPage } from "./edit-page";
+import { PhoneRequestsCard } from "./phone-requests";
 
 // ── Types & constants ──
 
@@ -227,6 +228,11 @@ function UsersList() {
           </div>
         }
       />
+
+      {/* Phone number update requests — SUPER_ADMIN review queue (spec §15/§16).
+          Renders nothing when the queue is empty or the viewer is not a
+          SUPER_ADMIN. */}
+      {isSuperAdmin ? <PhoneRequestsCard onChanged={load} /> : null}
 
       {error ? (
         <ErrorState message={error} onRetry={load} />

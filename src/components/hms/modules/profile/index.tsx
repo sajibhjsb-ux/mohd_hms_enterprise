@@ -1,17 +1,28 @@
 "use client";
 
-// MOHD.HMS ENTERPRISE — Customer Profile module (dedicated full pages).
-// /profile           → view profile (read-only summary)
-// /profile/edit      → edit profile (mobile, address, optional company…)
-// /profile/complete  → first-login onboarding (mandatory before any service
-//                      request; backend independently enforces the same rule)
+// MOHD.HMS ENTERPRISE — My Profile module (dedicated full pages, EVERY role).
+// /profile           → view profile (account + role-specific details)
+// /profile/edit      → edit permitted details
+// /profile/complete  → first-login onboarding (customers; backend enforces the
+//                      same completeness rule on every service request)
 //
-// The Customer record (Customers module) is the canonical source for the
-// business identity — this page edits exactly that record through
-// PATCH /api/v1/profile. Email is the authentication identity and stays
-// read-only. Role / customer id / status / ownership are never editable.
+// ONE canonical profile foundation for every authenticated user with
+// role-specific sections — never separate per-role profile systems:
+//   • Account identity (name / email / phone) is MANAGED BY SUPER ADMIN for
+//     everyone — read-only here, backend-enforced (PATCH /api/v1/profile
+//     rejects identity fields; only PATCH /api/v1/users/{id} by a
+//     SUPER_ADMIN can change them).
+//   • Customers edit their canonical Customer record: address (multi-line,
+//     verbatim), optional company name, city. Their mobile number follows
+//     the secure REQUEST workflow (submit → SUPER_ADMIN approves) so the
+//     "no verified phone + no address = no service requests" rule stays
+//     intact without a user-side bypass.
+//   • Staff see their employee/technician context; their contact details are
+//     managed by administrators.
+//   • Profile photo uploads go through the existing MinIO storage service
+//     (POST /api/v1/profile/avatar) — object reference in PostgreSQL only.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import { api, ClientApiError } from "@/lib/hms/api-client";
 import { useSession } from "@/components/hms/session";
@@ -30,8 +41,12 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import {
-  AlertTriangle, ArrowLeft, BadgeCheck, Building2, CheckCircle2, ChevronRight, KeyRound, Loader2,
-  Mail, MapPin, Pencil, Phone, Save, ScrollText, ShieldCheck, User,
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  AlertTriangle, ArrowLeft, BadgeCheck, Building2, CheckCircle2, ChevronRight, Clock,
+  IdCard, ImagePlus, KeyRound, Loader2, Lock, Mail, MapPin, Pencil, Phone, Save,
+  ScrollText, ShieldCheck, Smartphone, Trash2, User, Wrench,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -48,6 +63,24 @@ type ProfilePayload = {
     lastLoginAt: string | null;
     createdAt: string;
   };
+  technicianProfile: {
+    id: string;
+    employeeNo: string;
+    skills: string | null;
+    specialty: string;
+    status: string;
+  } | null;
+  employee: {
+    id: string;
+    employeeNo: string;
+    name: string;
+    position: string | null;
+    department: string | null;
+    email: string | null;
+    phone: string | null;
+    joinDate: string | null;
+    status: string;
+  } | null;
   customer: {
     id: string;
     code: string;
@@ -63,29 +96,48 @@ type ProfilePayload = {
   profileComplete: boolean;
   missingFields: string[];
   onboardingRequired: boolean;
+  pendingPhoneRequest: {
+    id: string;
+    proposedValue: string;
+    currentValue: string;
+    createdAt: string;
+  } | null;
 };
 
 type ProfileForm = {
-  name: string;
-  mobile: string;
   address: string;
   companyName: string;
+  city: string;
 };
 
-const EMPTY_FORM: ProfileForm = { name: "", mobile: "", address: "", companyName: "" };
-const MOBILE_MAX_DIGITS = 15;
-const MOBILE_MIN_DIGITS = 7;
+const EMPTY_FORM: ProfileForm = { address: "", companyName: "", city: "" };
 
 /** Permissive Brunei-friendly mobile check mirroring the backend (§16). */
 function mobileError(v: string): string | null {
   const trimmed = v.trim();
   if (!trimmed) return "Mobile number is required.";
   const digits = trimmed.replace(/[^\d]/g, "");
-  if (digits.length < MOBILE_MIN_DIGITS || digits.length > MOBILE_MAX_DIGITS) {
+  if (digits.length < 7 || digits.length > 15) {
     return "Enter a valid mobile number (7–15 digits, e.g. +673 1234567).";
   }
   if (!/^\+?[\d\s().-]+$/.test(trimmed)) return "Enter a valid mobile number (digits with optional +, spaces, dashes).";
   return null;
+}
+
+/** Authenticated avatar URL (cache-busting on the key, bucket stays private). */
+function avatarSrc(key: string | null | undefined): string | null {
+  return key ? `/api/v1/profile/avatar?v=${encodeURIComponent(key)}` : null;
+}
+
+function Avatar({ url, name, className }: { url: string | null | undefined; name: string; className?: string }) {
+  const src = avatarSrc(url);
+  return src ? (
+    <img src={src} alt="" className={cn("rounded-full object-cover", className)} />
+  ) : (
+    <span className={cn("rounded-full bg-primary/10 text-primary font-semibold flex items-center justify-center", className)}>
+      {initials(name)}
+    </span>
+  );
 }
 
 export function ProfileModule() {
@@ -120,11 +172,148 @@ function useProfile(loadKey: string) {
   return { data, loading, error, load };
 }
 
+// ─────────────────────── Shared: phone change request ───────────────────────
+
+function ManagedFieldHint({ children }: { children?: React.ReactNode }) {
+  return (
+    <p className="text-[11px] text-muted-foreground flex items-center gap-1">
+      <Lock className="h-3 w-3 shrink-0" aria-hidden />
+      {children ?? "Managed by Super Admin — contact your administrator to change this."}
+    </p>
+  );
+}
+
+function PhoneRequestDialog({ open, onOpenChange, currentPhone, onSubmitted }: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  currentPhone: string;
+  onSubmitted: () => void;
+}) {
+  const { toast } = useToast();
+  const [phone, setPhone] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (open) { setPhone(""); setError(null); }
+  }, [open]);
+
+  async function submit() {
+    const err = mobileError(phone);
+    if (err) { setError(err); return; }
+    setBusy(true);
+    setError(null);
+    try {
+      await api.post("/api/v1/profile/phone-requests", { phone: phone.trim() });
+      toast({
+        title: "Request submitted",
+        description: "Your mobile number update request was sent to a SUPER_ADMIN for review.",
+      });
+      onOpenChange(false);
+      onSubmitted();
+    } catch (e) {
+      setError(e instanceof ClientApiError ? e.message : "Unable to submit the request. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Request phone number update</DialogTitle>
+          <DialogDescription>
+            Your mobile number is a verified, administrator-managed field. Submit the proposed number and a SUPER_ADMIN will review and apply it.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="pr-current">Current number</Label>
+            <Input id="pr-current" value={currentPhone || "Not yet registered"} disabled readOnly />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="pr-proposed">
+              Proposed mobile number <span className="text-destructive" aria-hidden>*</span>
+              <span className="sr-only">(required)</span>
+            </Label>
+            <Input
+              id="pr-proposed"
+              type="tel"
+              inputMode="tel"
+              placeholder="+673 1234567"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              autoComplete="tel"
+              maxLength={40}
+              aria-invalid={!!error}
+            />
+            {error ? <FieldError msg={error} /> : null}
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>Cancel</Button>
+          <Button onClick={submit} disabled={busy}>
+            {busy ? <Loader2 className="h-4 w-4 mr-2 animate-spin" aria-hidden /> : <Smartphone className="h-4 w-4 mr-2" aria-hidden />}
+            Submit request
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function PhoneRequestStatus({ data, onChanged }: { data: ProfilePayload; onChanged: () => void }) {
+  const { toast } = useToast();
+  const [busy, setBusy] = useState(false);
+  const pending = data.pendingPhoneRequest;
+  const isCustomer = data.user.role === "CUSTOMER";
+  const canonicalPhone = isCustomer ? data.customer?.phone ?? "" : data.user.phone ?? "";
+
+  if (!isCustomer || !pending) return null;
+
+  async function cancel() {
+    setBusy(true);
+    try {
+      await api.del("/api/v1/profile/phone-requests");
+      toast({ title: "Request canceled", description: "Your phone number update request was canceled." });
+      onChanged();
+    } catch (e) {
+      toast({
+        title: "Unable to cancel the request",
+        description: e instanceof ClientApiError ? e.message : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card className="border-amber-200 bg-amber-50/60">
+      <CardContent className="p-4 flex flex-col sm:flex-row sm:items-center gap-3 text-sm">
+        <Clock className="h-5 w-5 text-amber-600 shrink-0" aria-hidden />
+        <div className="min-w-0 text-amber-900">
+          <span className="font-medium">Phone number update pending review.</span>{" "}
+          <span className="text-amber-800">
+            Proposed <strong>{pending.proposedValue}</strong> (current: {pending.currentValue.trim() || "not yet registered"}) — a SUPER_ADMIN will review it.
+          </span>
+        </div>
+        <Button size="sm" variant="outline" className="sm:ml-auto shrink-0 border-amber-300 text-amber-900 hover:bg-amber-100" onClick={cancel} disabled={busy}>
+          {busy ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" aria-hidden /> : <Trash2 className="h-4 w-4 mr-1.5" aria-hidden />}
+          Cancel request
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
 // ─────────────────────── VIEW ───────────────────────
 
 function ProfileViewPage() {
   const { user } = useSession();
   const setChangePwOpen = useUi((s) => s.setChangePwOpen);
+  const [phoneDialogOpen, setPhoneDialogOpen] = useState(false);
   const { data, loading, error, load } = useProfile("view");
 
   if (error && !data) return <ErrorState message={error} onRetry={load} />;
@@ -132,19 +321,20 @@ function ProfileViewPage() {
   if (!data) return null;
 
   const c = data.customer;
+  const isCustomer = data.user.role === "CUSTOMER";
+  const canonicalPhone = isCustomer ? c?.phone ?? "" : data.user.phone ?? "";
+  const missingPhone = !canonicalPhone.trim();
 
   return (
     <div className="space-y-6 max-w-3xl">
       <PageHeader
-        title="Profile"
-        subtitle="Your MOHD.HMS account and customer details"
+        title="My Profile"
+        subtitle="Your MOHD.HMS account and details"
         actions={
           <>
-            {c ? (
-              <Button size="sm" onClick={() => navigateTo("profile", ["edit"])}>
-                <Pencil className="h-4 w-4 mr-1.5" aria-hidden /> Edit Profile
-              </Button>
-            ) : null}
+            <Button size="sm" onClick={() => navigateTo("profile", ["edit"])}>
+              <Pencil className="h-4 w-4 mr-1.5" aria-hidden /> Edit Profile
+            </Button>
             <Button size="sm" variant="outline" onClick={() => setChangePwOpen(true)}>
               <KeyRound className="h-4 w-4 mr-1.5" aria-hidden /> Change Password
             </Button>
@@ -157,7 +347,7 @@ function ProfileViewPage() {
           <CardContent className="p-4 flex flex-col sm:flex-row sm:items-center gap-3 text-sm">
             <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0" aria-hidden />
             <span className="text-amber-900">
-              Your profile is incomplete. Please add your <strong>mobile number</strong> and <strong>address</strong> before requesting a service.
+              Your profile is incomplete. Please add your <strong>address</strong> and have a <strong>mobile number</strong> registered before requesting a service.
             </span>
             <Button size="sm" className="sm:ml-auto shrink-0" onClick={() => navigateTo("profile", ["complete"])}>
               Complete Profile
@@ -165,6 +355,8 @@ function ProfileViewPage() {
           </CardContent>
         </Card>
       ) : null}
+
+      <PhoneRequestStatus data={data} onChanged={load} />
 
       {/* Account card */}
       <Card>
@@ -174,9 +366,7 @@ function ProfileViewPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center gap-3">
-            <span className="h-12 w-12 rounded-full bg-primary/10 text-primary text-sm font-semibold flex items-center justify-center shrink-0">
-              {initials(data.user.name)}
-            </span>
+            <Avatar url={data.user.avatarUrl} name={data.user.name} className="h-12 w-12 text-sm shrink-0" />
             <div className="min-w-0">
               <div className="font-medium truncate">{data.user.name}</div>
               <div className="text-xs text-muted-foreground flex items-center gap-1.5 truncate">
@@ -190,6 +380,13 @@ function ProfileViewPage() {
           <Separator />
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
             <div className="flex items-center gap-2">
+              <Phone className="h-4 w-4 text-muted-foreground shrink-0" aria-hidden />
+              <span className="text-muted-foreground">Mobile:</span>
+              <span className={cn("truncate", (!data.user.phone || !data.user.phone.trim()) && "text-muted-foreground")}>
+                {(isCustomer ? canonicalPhone : data.user.phone)?.trim() || "Not yet registered"}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
               <User className="h-4 w-4 text-muted-foreground shrink-0" aria-hidden />
               <span className="text-muted-foreground">Sign-in:</span>
               <span>{data.user.googleLinked ? "Google + password" : "Email & password"}</span>
@@ -199,11 +396,16 @@ function ProfileViewPage() {
               <span className="text-muted-foreground">Member since:</span>
               <span>{fmtDate(data.user.createdAt)}</span>
             </div>
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="h-4 w-4 text-muted-foreground shrink-0" aria-hidden />
+              <span className="text-muted-foreground">Status:</span>
+              <StatusBadge status={data.user.status} />
+            </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* Customer identity card */}
+      {/* Customer identity card (canonical record) */}
       {c ? (
         <Card>
           <CardHeader className="pb-3">
@@ -222,11 +424,18 @@ function ProfileViewPage() {
               <div>
                 <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1 flex items-center gap-1.5">
                   <Phone className="h-3 w-3" aria-hidden /> Mobile number
-                  {!c.phone.trim() ? <Badge variant="outline" className="text-[10px] border-amber-300 text-amber-700 bg-amber-50">Required</Badge> : null}
+                  {!c.phone.trim() ? (
+                    <Badge variant="outline" className="text-[10px] border-amber-300 text-amber-700 bg-amber-50">Not yet registered</Badge>
+                  ) : null}
                 </div>
                 <div className={cn("font-medium", !c.phone.trim() && "text-muted-foreground")}>
                   {c.phone.trim() || "Not provided"}
                 </div>
+                {missingPhone ? (
+                  <Button size="sm" variant="outline" className="mt-2 h-8 text-xs" onClick={() => setPhoneDialogOpen(true)}>
+                    <Smartphone className="h-3.5 w-3.5 mr-1.5" aria-hidden /> Request Phone Number Update
+                  </Button>
+                ) : null}
               </div>
               <div className="sm:col-span-2">
                 <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1 flex items-center gap-1.5">
@@ -262,19 +471,80 @@ function ProfileViewPage() {
             </div>
           </CardContent>
         </Card>
-      ) : (
+      ) : null}
+
+      {/* Employee context (staff) */}
+      {data.employee ? (
         <Card>
-          <CardContent className="p-6 text-sm text-muted-foreground">
-            No customer record is linked to this account yet. Contact support if you believe this is a mistake.
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Employment</CardTitle>
+            <CardDescription>HR record linked to this account — managed by HR and administrators.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4 text-sm">
+              <div>
+                <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Employee No.</div>
+                <div className="font-medium">{data.employee.employeeNo || "—"}</div>
+              </div>
+              <div>
+                <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Position</div>
+                <div className="font-medium">{data.employee.position || "—"}</div>
+              </div>
+              <div>
+                <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Department</div>
+                <div className="font-medium">{data.employee.department || "—"}</div>
+              </div>
+              <div>
+                <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Joined</div>
+                <div className="font-medium">{data.employee.joinDate ? fmtDate(data.employee.joinDate) : "—"}</div>
+              </div>
+            </div>
           </CardContent>
         </Card>
-      )}
+      ) : null}
 
-      {user?.role !== "CUSTOMER" ? (
-        <p className="text-xs text-muted-foreground">
-          This profile page is tailored for customer accounts. Staff profile fields can be managed by administrators.
-        </p>
-      ) : (
+      {/* Technician profile (technicians) */}
+      {data.technicianProfile ? (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Wrench className="h-4 w-4 text-primary" aria-hidden /> Technician profile
+            </CardTitle>
+            <CardDescription>Operational record used for work order assignment.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4 text-sm">
+              <div>
+                <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Employee No.</div>
+                <div className="font-medium">{data.technicianProfile.employeeNo || "—"}</div>
+              </div>
+              <div>
+                <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Specialty</div>
+                <div className="font-medium">{humanize(data.technicianProfile.specialty)}</div>
+              </div>
+              <div>
+                <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Skills</div>
+                <div className="font-medium">{data.technicianProfile.skills?.trim() || "—"}</div>
+              </div>
+              <div>
+                <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Availability</div>
+                <StatusBadge status={data.technicianProfile.status} />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {!c && !isCustomer ? (
+        <Card>
+          <CardContent className="p-4 text-sm text-muted-foreground">
+            Your name, email and phone number are managed by MOHD.HMS administrators.
+            Use <strong>Edit Profile</strong> to change your profile photo, or contact your administrator for identity changes.
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {isCustomer ? (
         // Legal (spec §27) — Terms & Conditions / Privacy Policy reachable from
         // the customer portal profile without adding top-level navigation.
         <Card>
@@ -303,7 +573,14 @@ function ProfileViewPage() {
             </button>
           </CardContent>
         </Card>
-      )}
+      ) : null}
+
+      <PhoneRequestDialog
+        open={phoneDialogOpen}
+        onOpenChange={setPhoneDialogOpen}
+        currentPhone={canonicalPhone}
+        onSubmitted={load}
+      />
     </div>
   );
 }
@@ -314,7 +591,10 @@ function ProfileEditPage({ onboarding }: { onboarding: boolean }) {
   const { user, refresh } = useSession();
   const { toast } = useToast();
   const setPageDirty = useUi((s) => s.setPageDirty);
+  const [phoneDialogOpen, setPhoneDialogOpen] = useState(false);
+  const [cancelPending, setCancelPending] = useState(false);
   const { data, loading, error, load } = useProfile(onboarding ? "complete" : "edit");
+  const isCustomer = data?.user.role === "CUSTOMER";
   const draft = useDraft<ProfileForm>({
     formKey: onboarding ? "profile.complete" : "profile.edit",
     initial: EMPTY_FORM,
@@ -324,16 +604,17 @@ function ProfileEditPage({ onboarding }: { onboarding: boolean }) {
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
 
   // Hydrate the form from the authoritative profile exactly once per load
   // (never clobber what the user is typing on refetch).
   useEffect(() => {
     if (!data || hydrated) return;
     draft.setValue({
-      name: data.customer?.contactPerson || data.user.name || "",
-      mobile: data.customer?.phone ?? "",
       address: data.customer?.address ?? "",
       companyName: data.customer?.companyName ?? "",
+      city: data.customer?.city ?? "",
     });
     setHydrated(true);
   }, [data, hydrated, draft]);
@@ -343,11 +624,6 @@ function ProfileEditPage({ onboarding }: { onboarding: boolean }) {
     if (onboarding && data && !data.onboardingRequired) navigateTo("dashboard");
   }, [onboarding, data]);
 
-  // Staff / accounts without a customer record have nothing to edit here.
-  useEffect(() => {
-    if (!onboarding && data && !data.customer && user?.role === "CUSTOMER") navigateTo("dashboard");
-  }, [onboarding, data, user?.role]);
-
   useEffect(() => {
     setPageDirty(draft.dirty);
     return () => { setPageDirty(false); };
@@ -355,13 +631,10 @@ function ProfileEditPage({ onboarding }: { onboarding: boolean }) {
 
   function validate(): Record<string, string> {
     const errs: Record<string, string> = {};
-    const name = draft.value.name.trim();
-    if (!name) errs.name = "Full name is required.";
-    else if (name.length < 2) errs.name = "Name must be at least 2 characters.";
-    const mErr = mobileError(draft.value.mobile);
-    if (mErr) errs.mobile = mErr;
-    const address = draft.value.address.trim();
-    if (!address) errs.address = "Address is required.";
+    if (isCustomer) {
+      const address = draft.value.address.trim();
+      if (!address) errs.address = "Address is required.";
+    }
     return errs;
   }
 
@@ -376,17 +649,15 @@ function ProfileEditPage({ onboarding }: { onboarding: boolean }) {
     setFormError(null);
     try {
       const res = await api.patch<{ profileComplete: boolean }>("/api/v1/profile", {
-        name: draft.value.name.trim(),
-        mobile: draft.value.mobile.trim(),
         // Multi-line address preserved verbatim — backend stores it as typed.
         address: draft.value.address,
         companyName: draft.value.companyName.trim(),
+        city: draft.value.city.trim(),
       });
       draft.reset({
-        name: draft.value.name.trim(),
-        mobile: draft.value.mobile.trim(),
         address: draft.value.address,
         companyName: draft.value.companyName.trim(),
+        city: draft.value.city.trim(),
       });
       await refresh(); // authoritative profile state (gates, banners) updates live
       toast({
@@ -405,11 +676,80 @@ function ProfileEditPage({ onboarding }: { onboarding: boolean }) {
         for (const d of details) if (d.path && d.message) fe[d.path] = d.message;
         if (Object.keys(fe).length) setFieldErrors(fe);
       } else {
-        setFormError("Something went wrong. Please try again.");
+        setFormError("Unable to update your profile. Please try again.");
       }
-      // Failure keeps the entered data (spec §36) — draft state is untouched.
+      // Failure keeps the entered data (spec §37) — draft state is untouched.
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function uploadPhoto(file: File) {
+    setUploading(true);
+    try {
+      // Multipart upload — raw fetch (the IRMS photo manager pattern); the
+      // api-client wrapper is JSON-only and must not stringify FormData.
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch("/api/v1/profile/avatar", {
+        method: "POST",
+        credentials: "same-origin",
+        body: form,
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok || !body?.ok) {
+        throw new ClientApiError(
+          body?.error?.message ?? "Unable to upload profile photo.",
+          body?.error?.code ?? "UNKNOWN",
+          res.status,
+          body?.error?.details,
+        );
+      }
+      await Promise.all([refresh(), load()]);
+      toast({ title: "Profile photo updated.", description: "Your new photo is now visible on your account." });
+    } catch (e) {
+      toast({
+        title: "Unable to upload profile photo.",
+        description: e instanceof ClientApiError ? e.message : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
+  async function removePhoto() {
+    setUploading(true);
+    try {
+      await api.del("/api/v1/profile/avatar");
+      await Promise.all([refresh(), load()]);
+      toast({ title: "Profile photo removed." });
+    } catch (e) {
+      toast({
+        title: "Unable to remove the photo.",
+        description: e instanceof ClientApiError ? e.message : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function cancelPendingRequest() {
+    setCancelPending(true);
+    try {
+      await api.del("/api/v1/profile/phone-requests");
+      toast({ title: "Request canceled", description: "Your phone number update request was canceled." });
+      await load();
+    } catch (e) {
+      toast({
+        title: "Unable to cancel the request",
+        description: e instanceof ClientApiError ? e.message : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setCancelPending(false);
     }
   }
 
@@ -417,7 +757,8 @@ function ProfileEditPage({ onboarding }: { onboarding: boolean }) {
   if (error && !data) return <ErrorState message={error} onRetry={load} />;
   if (!data) return null;
 
-  const email = data.user.email;
+  const canonicalPhone = isCustomer ? data.customer?.phone ?? "" : data.user.phone ?? "";
+  const phoneMissing = !canonicalPhone.trim();
 
   return (
     <div className="space-y-6 max-w-2xl">
@@ -440,7 +781,7 @@ function ProfileEditPage({ onboarding }: { onboarding: boolean }) {
       ) : (
         <PageHeader
           title="Edit Profile"
-          subtitle="Update your customer details"
+          subtitle="Update your permitted profile details"
           actions={
             <Button size="sm" variant="outline" onClick={() => navigateTo("profile")}>
               <ArrowLeft className="h-4 w-4 mr-1.5" aria-hidden /> Back to profile
@@ -449,111 +790,245 @@ function ProfileEditPage({ onboarding }: { onboarding: boolean }) {
         />
       )}
 
+      {/* Profile photo — existing MinIO storage via the authenticated API */}
       <Card>
-        <CardContent className="p-4 sm:p-6 space-y-5">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="pf-name">Full Name</Label>
-              <Input
-                id="pf-name"
-                value={draft.value.name}
-                onChange={(e) => draft.setValue({ name: e.target.value })}
-                autoComplete="name"
-                maxLength={80}
-                aria-invalid={!!fieldErrors.name}
-              />
-              <FieldError msg={fieldErrors.name} />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="pf-email">Email</Label>
-              <Input id="pf-email" value={email} disabled readOnly aria-describedby="pf-email-hint" />
-              <p id="pf-email-hint" className="text-[11px] text-muted-foreground">
-                Your email is your sign-in identity and cannot be changed here.
-              </p>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="pf-mobile">
-                Mobile Number <span className="text-destructive" aria-hidden>*</span>
-                <span className="sr-only">(required)</span>
-              </Label>
-              <Input
-                id="pf-mobile"
-                type="tel"
-                inputMode="tel"
-                placeholder="+673 1234567"
-                value={draft.value.mobile}
-                onChange={(e) => draft.setValue({ mobile: e.target.value })}
-                autoComplete="tel"
-                maxLength={40}
-                aria-invalid={!!fieldErrors.mobile}
-                required
-              />
-              <FieldError msg={fieldErrors.mobile} />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="pf-company">
-                Company Name <span className="text-[11px] font-normal text-muted-foreground">(Optional)</span>
-              </Label>
-              <Input
-                id="pf-company"
-                placeholder="Leave blank for individual / home customers"
-                value={draft.value.companyName}
-                onChange={(e) => draft.setValue({ companyName: e.target.value })}
-                maxLength={200}
-                aria-invalid={!!fieldErrors.companyName}
-              />
-              <FieldError msg={fieldErrors.companyName} />
-            </div>
-            <div className="space-y-1.5 sm:col-span-2">
-              <Label htmlFor="pf-address">
-                Address <span className="text-destructive" aria-hidden>*</span>
-                <span className="sr-only">(required)</span>
-              </Label>
-              <Textarea
-                id="pf-address"
-                rows={4}
-                placeholder={"Unit / house number, street\nKampong / mukim, district"}
-                value={draft.value.address}
-                onChange={(e) => draft.setValue({ address: e.target.value })}
-                className="min-h-24"
-                aria-invalid={!!fieldErrors.address}
-                required
-              />
-              <p className="text-[11px] text-muted-foreground">You can use multiple lines — they are kept exactly as typed.</p>
-              <FieldError msg={fieldErrors.address} />
-            </div>
+        <CardContent className="p-4 sm:p-6 flex flex-col sm:flex-row items-center gap-4">
+          <div className="relative">
+            <Avatar url={data.user.avatarUrl} name={data.user.name} className="h-20 w-20 text-lg" />
+            {uploading ? (
+              <span className="absolute inset-0 rounded-full bg-background/70 flex items-center justify-center">
+                <Loader2 className="h-5 w-5 animate-spin text-primary" aria-hidden />
+              </span>
+            ) : null}
           </div>
-
-          {formError ? (
-            <p role="alert" className="text-sm text-destructive bg-destructive/10 rounded-md px-3 py-2">
-              {formError}
+          <div className="flex-1 text-center sm:text-left">
+            <div className="text-sm font-medium">Profile photo</div>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              JPEG, PNG or WebP · up to 5 MB. Stored privately — only you (and administrators) can view it.
             </p>
-          ) : null}
-
-          <div className="flex flex-col-reverse sm:flex-row gap-2 sm:justify-end">
-            <Button
-              variant="outline"
-              onClick={() => {
-                if (onboarding) navigateTo("dashboard");
-                else navigateTo("profile");
-              }}
-              disabled={saving}
-            >
-              Cancel
-            </Button>
-            <Button onClick={save} disabled={saving}>
-              {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" aria-hidden /> : <Save className="h-4 w-4 mr-2" aria-hidden />}
-              {onboarding ? "Save & Continue" : "Save Changes"}
-            </Button>
+            <div className="flex flex-wrap justify-center sm:justify-start gap-2 mt-2.5">
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/*"
+                className="sr-only"
+                id="pf-photo-input"
+                aria-label="Choose a profile photo"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) void uploadPhoto(f);
+                }}
+              />
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={uploading}
+                onClick={() => fileRef.current?.click()}
+              >
+                <ImagePlus className="h-4 w-4 mr-1.5" aria-hidden /> Change Photo
+              </Button>
+              {data.user.avatarUrl ? (
+                <Button type="button" size="sm" variant="ghost" disabled={uploading} onClick={() => void removePhoto()}>
+                  <Trash2 className="h-4 w-4 mr-1.5" aria-hidden /> Remove
+                </Button>
+              ) : null}
+            </div>
           </div>
         </CardContent>
       </Card>
+
+      {/* Account information — managed fields, read-only for every normal user */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Account information</CardTitle>
+          <CardDescription>These details are verified and controlled — only a SUPER ADMIN can change them.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="pf-name">Full Name</Label>
+            <Input id="pf-name" value={data.user.name} disabled readOnly aria-describedby="pf-name-hint" className="bg-muted/40" />
+            <div id="pf-name-hint"><ManagedFieldHint /></div>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="pf-email">Email Address</Label>
+            <Input id="pf-email" type="email" value={data.user.email} disabled readOnly aria-describedby="pf-email-hint" className="bg-muted/40" />
+            <div id="pf-email-hint">
+              <ManagedFieldHint>
+                {data.user.googleLinked
+                  ? "Managed by Super Admin — your Google sign-in stays linked."
+                  : "Managed by Super Admin — your email is your sign-in identity."}
+              </ManagedFieldHint>
+            </div>
+          </div>
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label htmlFor="pf-phone">Mobile Number</Label>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <Input
+                id="pf-phone"
+                type="tel"
+                value={canonicalPhone.trim() || ""}
+                disabled
+                readOnly
+                placeholder={phoneMissing ? "Not yet registered" : undefined}
+                aria-describedby="pf-phone-hint"
+                className="bg-muted/40 flex-1"
+              />
+              {isCustomer ? (
+                phoneMissing ? (
+                  <Button type="button" variant="outline" onClick={() => setPhoneDialogOpen(true)} className="shrink-0">
+                    <Smartphone className="h-4 w-4 mr-1.5" aria-hidden /> Request Phone Number Update
+                  </Button>
+                ) : (
+                  <Button type="button" variant="outline" onClick={() => setPhoneDialogOpen(true)} className="shrink-0">
+                    <Smartphone className="h-4 w-4 mr-1.5" aria-hidden /> Request Update
+                  </Button>
+                )
+              ) : null}
+            </div>
+            <div id="pf-phone-hint">
+              <ManagedFieldHint>
+                {isCustomer
+                  ? "Managed by Super Admin — submit a request and a SUPER_ADMIN will review it."
+                  : "Managed by Super Admin — contact your administrator to change it."}
+              </ManagedFieldHint>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {data.pendingPhoneRequest ? (
+        <Card className="border-amber-200 bg-amber-50/60">
+          <CardContent className="p-4 flex flex-col sm:flex-row sm:items-center gap-3 text-sm">
+            <Clock className="h-5 w-5 text-amber-600 shrink-0" aria-hidden />
+            <div className="min-w-0 text-amber-900">
+              <span className="font-medium">Phone number update pending review.</span>{" "}
+              <span className="text-amber-800">
+                Proposed <strong>{data.pendingPhoneRequest.proposedValue}</strong>.
+              </span>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              className="sm:ml-auto shrink-0 border-amber-300 text-amber-900 hover:bg-amber-100"
+              onClick={() => void cancelPendingRequest()}
+              disabled={cancelPending}
+            >
+              {cancelPending ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" aria-hidden /> : <Trash2 className="h-4 w-4 mr-1.5" aria-hidden />}
+              Cancel request
+            </Button>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {/* Customer details — the editable section for customers */}
+      {isCustomer && data.customer ? (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Personal / business information</CardTitle>
+            <CardDescription>
+              Stored on your canonical customer record {data.customer.code ? `(${data.customer.code})` : ""} — used by every complaint, quotation and invoice.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label htmlFor="pf-address">
+                  Address <span className="text-destructive" aria-hidden>*</span>
+                  <span className="sr-only">(required)</span>
+                </Label>
+                <Textarea
+                  id="pf-address"
+                  rows={4}
+                  placeholder={"Unit / house number, street\nKampong / mukim, district"}
+                  value={draft.value.address}
+                  onChange={(e) => draft.setValue({ address: e.target.value })}
+                  className="min-h-24"
+                  aria-invalid={!!fieldErrors.address}
+                  required
+                />
+                <p className="text-[11px] text-muted-foreground">You can use multiple lines — they are kept exactly as typed.</p>
+                <FieldError msg={fieldErrors.address} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="pf-company">
+                  Company Name <span className="text-[11px] font-normal text-muted-foreground">(Optional)</span>
+                </Label>
+                <Input
+                  id="pf-company"
+                  placeholder="Leave blank for individual / home customers"
+                  value={draft.value.companyName}
+                  onChange={(e) => draft.setValue({ companyName: e.target.value })}
+                  maxLength={200}
+                  aria-invalid={!!fieldErrors.companyName}
+                />
+                <FieldError msg={fieldErrors.companyName} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="pf-city">City <span className="text-[11px] font-normal text-muted-foreground">(Optional)</span></Label>
+                <Input
+                  id="pf-city"
+                  placeholder="e.g. Bandar Seri Begawan"
+                  value={draft.value.city}
+                  onChange={(e) => draft.setValue({ city: e.target.value })}
+                  maxLength={120}
+                  aria-invalid={!!fieldErrors.city}
+                />
+                <FieldError msg={fieldErrors.city} />
+              </div>
+            </div>
+
+            {formError ? (
+              <p role="alert" className="text-sm text-destructive bg-destructive/10 rounded-md px-3 py-2">
+                {formError}
+              </p>
+            ) : null}
+
+            <div className="flex flex-col-reverse sm:flex-row gap-2 sm:justify-end">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  if (onboarding) navigateTo("dashboard");
+                  else navigateTo("profile");
+                }}
+                disabled={saving}
+              >
+                Cancel
+              </Button>
+              <Button onClick={save} disabled={saving}>
+                {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" aria-hidden /> : <Save className="h-4 w-4 mr-2" aria-hidden />}
+                {onboarding ? "Save & Continue" : "Save Changes"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {/* Staff — nothing else is self-serviceable; be honest about it */}
+      {!isCustomer && !onboarding ? (
+        <Card>
+          <CardContent className="p-4 flex items-start gap-3 text-sm text-muted-foreground">
+            <IdCard className="h-4 w-4 mt-0.5 shrink-0" aria-hidden />
+            <span>
+              All other account details (name, email, phone, role and employment record) are managed by MOHD.HMS administrators.
+              Contact your administrator — or, for phone numbers, ask a SUPER_ADMIN to update them through User Management.
+            </span>
+          </CardContent>
+        </Card>
+      ) : null}
 
       {onboarding ? (
         <p className="text-xs text-muted-foreground text-center -mt-2">
           Company name is optional — individuals and homeowners can leave it blank.
         </p>
       ) : null}
+
+      <PhoneRequestDialog
+        open={phoneDialogOpen}
+        onOpenChange={setPhoneDialogOpen}
+        currentPhone={canonicalPhone}
+        onSubmitted={load}
+      />
     </div>
   );
 }

@@ -3,14 +3,13 @@
 // MOHD.HMS ENTERPRISE — dedicated Edit User page (users/{id} and
 // users/{id}/edit views). Merges the former EDIT and RESET PASSWORD dialogs
 // into one page with TWO cards:
-//   • Profile        — name / phone / role + Save        (PATCH /api/v1/users/{id})
+//   • Profile        — name / email / phone / role + Save   (PATCH /api/v1/users/{id})
 //   • Reset password — new password + Update password    (PATCH … {action:"reset_password"})
-// Users have no detail page — the list routes row clicks and [id] URLs here.
-//
-// Record lookup (documented approach, keeps the API unchanged): the users API
-// is list-based, so the page loads GET /api/v1/users and finds the row by id.
-// If the id is not part of the visible list (e.g. a customer portal user,
-// hidden behind the "Portal users" toggle), a not-found state is shown.
+// IDENTITY FIELDS (spec §5): name / email / phone are editable ONLY by a
+// SUPER_ADMIN (inputs disabled for ADMIN + the backend rejects them with 403).
+// Email changes open a dependency confirmation dialog (sign-in identity,
+// Google linkage, verification state — spec §29). Users have no detail page —
+// the list routes row clicks and [id] URLs here.
 
 import { useCallback, useEffect, useState } from "react";
 import { api, ClientApiError, qs } from "@/lib/hms/api-client";
@@ -26,7 +25,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { KeyRound, Save } from "lucide-react";
+import { KeyRound, Lock, Save, TriangleAlert } from "lucide-react";
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
 
 // ── Types & constants ──
 
@@ -79,8 +81,9 @@ export function UserEditPage({ id }: { id: string }) {
   const [loading, setLoading] = useState(true);
 
   // Profile form + baseline (for the dirty guard and "no changes" state)
-  const [form, setForm] = useState<{ name: string; phone: string; role: string }>({ name: "", phone: "", role: "SUPERVISOR" });
-  const [initial, setInitial] = useState<{ name: string; phone: string; role: string } | null>(null);
+  const [form, setForm] = useState<{ name: string; phone: string; email: string; role: string }>({ name: "", phone: "", email: "", role: "SUPERVISOR" });
+  const [initial, setInitial] = useState<{ name: string; phone: string; email: string; role: string } | null>(null);
+  const [emailConfirmOpen, setEmailConfirmOpen] = useState(false);
   const [newPassword, setNewPassword] = useState("");
   const [pwProblem, setPwProblem] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -97,7 +100,7 @@ export function UserEditPage({ id }: { id: string }) {
       const found = (Array.isArray(res.data) ? res.data : []).find((r) => r.id === id) ?? null;
       setTarget(found);
       if (found) {
-        const f = { name: found.name, phone: found.phone ?? "", role: found.role };
+        const f = { name: found.name, phone: found.phone ?? "", email: found.email, role: found.role };
         setForm(f);
         setInitial(f);
       }
@@ -111,7 +114,8 @@ export function UserEditPage({ id }: { id: string }) {
   useEffect(() => { load(); }, [load]);
 
   // ── Dirty-state wiring (central router guard protects typed edits) ──
-  const profileDirty = !!initial && (form.name !== initial.name || form.phone !== initial.phone || form.role !== initial.role);
+  const profileDirty = !!initial && (form.name !== initial.name || form.phone !== initial.phone || form.email !== initial.email || form.role !== initial.role);
+  const emailChanged = !!initial && form.email.trim().toLowerCase() !== initial.email.trim().toLowerCase();
   const dirty = profileDirty || newPassword.length > 0;
   useEffect(() => {
     setPageDirty(dirty);
@@ -119,12 +123,21 @@ export function UserEditPage({ id }: { id: string }) {
   }, [dirty, setPageDirty]);
 
   async function submitProfile() {
-    if (!target) return;
+    if (!target || !initial) return;
     setSaving(true);
     try {
-      const res = await api.patch<UserRow>(`/api/v1/users/${target.id}`, { name: form.name, phone: form.phone || null, role: form.role });
+      const res = await api.patch<UserRow>(
+        `/api/v1/users/${target.id}`,
+        {
+          name: form.name,
+          phone: form.phone || null,
+          role: form.role,
+          // Email is a SUPER_ADMIN-only identity field — sent only when changed.
+          ...(isSuperAdmin && emailChanged ? { email: form.email.trim().toLowerCase() } : {}),
+        },
+      );
       toast({ title: "User updated", description: `${res.data.name} saved.` });
-      const f = { name: res.data.name, phone: res.data.phone ?? "", role: res.data.role };
+      const f = { name: res.data.name, phone: res.data.phone ?? "", email: res.data.email, role: res.data.role };
       setForm(f);
       setInitial(f);
       setTarget((t) => (t ? { ...t, ...f } : t));
@@ -133,6 +146,11 @@ export function UserEditPage({ id }: { id: string }) {
     } finally {
       setSaving(false);
     }
+  }
+
+  function requestSaveProfile() {
+    if (emailChanged) setEmailConfirmOpen(true);
+    else void submitProfile();
   }
 
   async function submitResetPassword() {
@@ -230,7 +248,7 @@ export function UserEditPage({ id }: { id: string }) {
     );
   }
 
-  const set = (patch: Partial<{ name: string; phone: string; role: string }>) => setForm((f) => ({ ...f, ...patch }));
+  const set = (patch: Partial<{ name: string; phone: string; email: string; role: string }>) => setForm((f) => ({ ...f, ...patch }));
 
   return (
     <PageShell
@@ -251,16 +269,35 @@ export function UserEditPage({ id }: { id: string }) {
         <Card className="shadow-sm">
           <CardHeader className="pb-3">
             <CardTitle className="text-base">Profile</CardTitle>
+            {!isSuperAdmin ? (
+              <p className="text-xs text-muted-foreground">Name, email and phone are managed fields — only a SUPER ADMIN can change them.</p>
+            ) : null}
           </CardHeader>
           <CardContent className="space-y-4">
             <div>
               <Label htmlFor="ue-name">Full name</Label>
-              <Input id="ue-name" value={form.name} onChange={(e) => set({ name: e.target.value })} />
+              <Input id="ue-name" value={form.name} onChange={(e) => set({ name: e.target.value })} disabled={!isSuperAdmin} className={!isSuperAdmin ? "bg-muted/40" : undefined} />
+              {!isSuperAdmin ? <p className="text-[11px] text-muted-foreground mt-1 flex items-center gap-1"><Lock className="h-3 w-3" aria-hidden /> Managed by Super Admin</p> : null}
+            </div>
+            <div>
+              <Label htmlFor="ue-email">Email (sign-in identity)</Label>
+              <Input id="ue-email" type="email" value={form.email} onChange={(e) => set({ email: e.target.value })} disabled={!isSuperAdmin} className={!isSuperAdmin ? "bg-muted/40" : undefined} />
+              {!isSuperAdmin ? (
+                <p className="text-[11px] text-muted-foreground mt-1 flex items-center gap-1"><Lock className="h-3 w-3" aria-hidden /> Managed by Super Admin</p>
+              ) : (
+                <p className="text-[11px] text-muted-foreground mt-1">Changing the email affects sign-in, verification and mirrored records — a confirmation explains the impact.</p>
+              )}
             </div>
             <div>
               <Label htmlFor="ue-phone">Phone</Label>
-              <Input id="ue-phone" value={form.phone} onChange={(e) => set({ phone: e.target.value })} />
+              <Input id="ue-phone" type="tel" value={form.phone} onChange={(e) => set({ phone: e.target.value })} disabled={!isSuperAdmin} className={!isSuperAdmin ? "bg-muted/40" : undefined} />
+              {!isSuperAdmin ? <p className="text-[11px] text-muted-foreground mt-1 flex items-center gap-1"><Lock className="h-3 w-3" aria-hidden /> Managed by Super Admin</p> : null}
             </div>
+            {target.customer && isSuperAdmin ? (
+              <p className="text-[11px] rounded-md bg-muted px-3 py-2 text-muted-foreground">
+                Customer account ({target.customer.code}) — name / phone / email changes also update the canonical customer record.
+              </p>
+            ) : null}
             <div>
               <Label htmlFor="ue-role">Role</Label>
               <Select value={form.role} onValueChange={(v) => set({ role: v })} disabled={isSelf}>
@@ -279,7 +316,7 @@ export function UserEditPage({ id }: { id: string }) {
               <StatusBadge status={target.status} />
             </div>
             <div>
-              <Button onClick={submitProfile} disabled={saving || !profileDirty}>
+              <Button onClick={requestSaveProfile} disabled={saving || !profileDirty}>
                 {saving ? <Save className="h-4 w-4 mr-1.5 animate-pulse" /> : <Save className="h-4 w-4 mr-1.5" />}
                 {saving ? "Saving…" : "Save changes"}
               </Button>
@@ -324,6 +361,32 @@ export function UserEditPage({ id }: { id: string }) {
       <p className="mt-3 text-xs text-muted-foreground">
         Unsaved changes are protected — navigation asks for confirmation until you save or clear them.
       </p>
+
+      {/* Email-change dependency confirmation (spec §29) */}
+      <Dialog open={emailConfirmOpen} onOpenChange={setEmailConfirmOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <TriangleAlert className="h-4 w-4 text-amber-600" aria-hidden /> Change sign-in email?
+            </DialogTitle>
+            <DialogDescription>
+              This address is the user's sign-in identity. The change will:
+            </DialogDescription>
+          </DialogHeader>
+          <ul className="text-sm text-muted-foreground space-y-1.5 list-disc pl-5">
+            <li>Become the address used to sign in ({initial?.email} → {form.email.trim().toLowerCase()})</li>
+            <li>Reset email verification (the new address starts unverified)</li>
+            <li>Keep Google sign-in working if this account is Google-linked</li>
+            <li>Update mirrored records (customer / employee) automatically</li>
+          </ul>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEmailConfirmOpen(false)}>Cancel</Button>
+            <Button onClick={() => { setEmailConfirmOpen(false); void submitProfile(); }} disabled={saving}>
+              {saving ? "Saving…" : "Change email"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </PageShell>
   );
 }

@@ -385,7 +385,15 @@ function ProfileMenu({ onToggleTheme, themeMounted, themeDark, onSignOut, onOpen
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" aria-label="Profile" className="rounded-full pl-1 pr-1.5 sm:pr-2.5 gap-2 h-10 sm:h-9">
-          <span className="h-9 w-9 rounded-full bg-primary/10 text-primary text-xs font-semibold flex items-center justify-center">{initials(user.name)}</span>
+          {user.avatarUrl ? (
+            <img
+              src={`/api/v1/profile/avatar?v=${encodeURIComponent(user.avatarUrl)}`}
+              alt=""
+              className="h-9 w-9 rounded-full object-cover"
+            />
+          ) : (
+            <span className="h-9 w-9 rounded-full bg-primary/10 text-primary text-xs font-semibold flex items-center justify-center">{initials(user.name)}</span>
+          )}
           <span className="hidden md:block text-left leading-tight">
             <span className="block text-sm font-medium max-w-[10rem] truncate">{user.name}</span>
             <span className="block text-[10px] uppercase tracking-wide text-muted-foreground">{humanize(user.role)}</span>
@@ -400,13 +408,11 @@ function ProfileMenu({ onToggleTheme, themeMounted, themeDark, onSignOut, onOpen
           <Badge variant="outline" className="mt-1.5 bg-primary/5 text-primary border-primary/20">{humanize(user.role)}</Badge>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
-        {/* Customer profile entry lives in the existing account menu (spec §34) —
-            no duplicate top-level nav module. */}
-        {user.role === "CUSTOMER" ? (
-          <DropdownMenuItem onClick={() => navigateTo("profile")}>
-            <CircleUserRound className="h-4 w-4 mr-2" aria-hidden /> My Profile
-          </DropdownMenuItem>
-        ) : null}
+        {/* My Profile — EVERY authenticated user (spec §31): view + edit own
+            details; identity fields are managed by SUPER_ADMIN (backend). */}
+        <DropdownMenuItem onClick={() => navigateTo("profile")}>
+          <CircleUserRound className="h-4 w-4 mr-2" aria-hidden /> My Profile
+        </DropdownMenuItem>
         {installable ? (
           <DropdownMenuItem onClick={() => { void startInstall(); }}>
             <Download className="h-4 w-4 mr-2" aria-hidden /> Install app

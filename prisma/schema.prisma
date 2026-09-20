@@ -49,6 +49,7 @@ model User {
   attendance        Attendance[]
   legalAcceptances  LegalAcceptance[]
   whatsappContacts  WhatsAppContact[]    @relation("WhatsAppContactUser")
+  profileChangeRequests ProfileChangeRequest[]
 
   @@index([role])
   @@index([status])
@@ -933,6 +934,33 @@ model AuditLog {
 model Counter {
   key   String @id
   value Int    @default(0)
+}
+
+// ─────────────────────────── PROFILE CHANGE REQUESTS ───────────────────────────
+// Secure workflow for changing a user's own immutable identity fields (spec §15/§16):
+// a normal user cannot change their phone number directly — they submit a request
+// that a SUPER_ADMIN reviews and applies. This is a workflow queue, NOT a second
+// profile table: the canonical User/Customer rows remain the only profile storage.
+model ProfileChangeRequest {
+  id            String    @id @default(cuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Extensible field discriminator — only "PHONE" is used today.
+  field         String    @default("PHONE")
+  // Snapshot of the value at request time ("" = not yet registered).
+  currentValue  String    @default("")
+  proposedValue String
+  // PENDING | APPROVED | REJECTED | CANCELED
+  status        String    @default("PENDING")
+  decidedById   String?
+  decidedByName String?
+  decidedAt     DateTime?
+  decisionNote  String    @default("")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([status, createdAt])
+  @@index([userId, status])
 }
 
 model Draft {

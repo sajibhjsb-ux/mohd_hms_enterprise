@@ -1,5 +1,6 @@
 import { handler, ok } from "@/lib/hms/api";
 import { getSessionUser } from "@/lib/hms/auth";
+import { db } from "@/lib/db";
 import { customerProfileState } from "@/lib/hms/customer-profile";
 import { termsStatusFor } from "@/lib/hms/legal/legal";
 
@@ -11,10 +12,12 @@ import { termsStatusFor } from "@/lib/hms/legal/legal";
 export const GET = handler(
   async ({ user }) => {
     if (!user) return ok({ authenticated: false });
-    const [profileState, terms] = await Promise.all([
+    const [profileState, terms, avatar] = await Promise.all([
       customerProfileState(user),
       termsStatusFor(user),
+      db.user.findUnique({ where: { id: user.id }, select: { avatarUrl: true } }),
     ]);
+    const avatarUrl = avatar?.avatarUrl ?? null;
     return ok({
       authenticated: true,
       user: {
@@ -27,6 +30,7 @@ export const GET = handler(
         profileComplete: profileState.profileComplete,
         missingFields: profileState.missingFields,
         terms,
+        avatarUrl: avatarUrl,
       },
       sessionExpiresAt: user.sessionExpiresAt,
     });

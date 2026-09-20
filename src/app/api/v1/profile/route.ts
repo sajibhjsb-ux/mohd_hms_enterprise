@@ -1,13 +1,23 @@
 // MOHD.HMS ENTERPRISE — Profile API (own profile only, IDOR-safe).
 // GET   /api/v1/profile  (auth)  — user + technicianProfile / employee / customer
-//                                  context + derived profile completion state.
-// PATCH /api/v1/profile  (auth)  — self-service profile update.
-//   • Staff: name / phone on the User record (existing behaviour, unchanged).
-//   • CUSTOMER: mobile number, address (multi-line), optional company name and
-//     full name on the CANONICAL Customer record (what staff and documents
-//     use), mirrored name on the login account. Email is the authentication
-//     identity and is therefore read-only. Role, permissions, customer id,
-//     status and ownership are never editable (schema picks allowed fields).
+//                                  context + derived profile completion state +
+//                                  pending phone-change request (if any).
+// PATCH /api/v1/profile  (auth)  — self-service profile update with BACKEND
+//                                  field-level authorization (spec §6/§7):
+//   • IDENTITY FIELDS (name, email, phone/mobile, role, status, ids) are
+//     immutable for EVERY caller on this endpoint. A normal user submitting
+//     them receives an explicit 403 — never a silent strip. Only a
+//     SUPER_ADMIN can change name/email/phone, exclusively through the
+//     User Management API (PATCH /api/v1/users/{id}) where dependency
+//     handling (Google linkage, canonical mirrors, audit) lives.
+//   • CUSTOMER: address (multi-line, verbatim), optional company name and
+//     city on the CANONICAL Customer record (what staff and documents use).
+//     Mobile number is NOT directly editable — customers submit a phone
+//     change request (see /api/v1/profile/phone-requests) for SUPER_ADMIN
+//     approval. Email is the authentication identity and stays read-only.
+//   • STAFF: no self-service body fields on the User record — identity and
+//     contact fields are managed by administrators; the profile photo is a
+//     separate upload endpoint (POST /api/v1/profile/avatar).
 //
 // The backend independently verifies profile completeness on every restricted
 // job/service request (see assertCustomerProfileComplete) — frontend state is
@@ -16,7 +26,7 @@
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { handler, ok, parseBody, Errors } from "@/lib/hms/api";
+import { handler, ok, Errors } from "@/lib/hms/api";
 import { audit } from "@/lib/hms/services";
 import { customerProfileState, missingCustomerFields } from "@/lib/hms/customer-profile";
 
@@ -28,21 +38,20 @@ function clientIp(req: NextRequest): string {
   );
 }
 
-/** Canonical mobile validation: Brunei-friendly, permissive on separators.
- *  Accepts +673 XXXXXXX / 7–15 digits with spaces, dashes, dots, parentheses.
- *  Never hardcodes an invalid fixed pattern beyond digit-count sanity (§16). */
-function validateMobile(raw: string): string | null {
-  const v = raw.trim();
-  if (!v) return "Mobile number is required.";
-  const digits = v.replace(/[^\d]/g, "");
-  if (digits.length < 7 || digits.length > 15) {
-    return "Enter a valid mobile number (7–15 digits, e.g. +673 1234567).";
-  }
-  if (!/^\+?[\d\s().-]+$/.test(v)) {
-    return "Enter a valid mobile number (digits with optional +, spaces, dashes).";
-  }
-  return null;
-}
+const IDENTITY_FIELD_LABELS: Record<string, string> = {
+  name: "full name",
+  email: "email address",
+  phone: "phone number",
+  mobile: "mobile number",
+  role: "role",
+  status: "account status",
+  userId: "user id",
+  customerId: "customer id",
+  employeeId: "employee id",
+};
+
+/** Identity/managed fields a normal user may never submit (spec §4/§6/§7/§19). */
+const FORBIDDEN_PROFILE_FIELDS = Object.keys(IDENTITY_FIELD_LABELS);
 
 export const GET = handler(async ({ user }) => {
   const me = await db.user.findUnique({
@@ -55,7 +64,16 @@ export const GET = handler(async ({ user }) => {
   });
   if (!me) throw Errors.notFound("User not found.");
 
-  const profileState = await customerProfileState(user);
+  const [profileState, pendingPhoneRequest] = await Promise.all([
+    customerProfileState(user),
+    db.profileChangeRequest.findFirst({
+      where: { userId: user.id, field: "PHONE", status: "PENDING" },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true, proposedValue: true, currentValue: true, createdAt: true,
+      },
+    }),
+  ]);
 
   return ok({
     user: {
@@ -111,17 +129,23 @@ export const GET = handler(async ({ user }) => {
     profileComplete: profileState.profileComplete,
     missingFields: profileState.missingFields,
     onboardingRequired: user.role === "CUSTOMER" && !profileState.profileComplete,
+    // Secure phone-change workflow state (spec §15/§16) — surfaced so the UI can
+    // show "Request pending" instead of pretending the field is editable.
+    pendingPhoneRequest: pendingPhoneRequest
+      ? {
+          id: pendingPhoneRequest.id,
+          proposedValue: pendingPhoneRequest.proposedValue,
+          currentValue: pendingPhoneRequest.currentValue,
+          createdAt: pendingPhoneRequest.createdAt.toISOString(),
+        }
+      : null,
   });
 });
 
 const patchSchema = z
   .object({
-    // Staff (and the shared display name for customers):
-    name: z.string().trim().min(2, "Name must be at least 2 characters.").max(80).optional(),
-    // Staff path (User.phone):
-    phone: z.string().trim().max(30).optional(),
-    // Customer self-service path (canonical Customer record):
-    mobile: z.string().max(40).optional(),
+    // Customer self-service path (canonical Customer record). Mobile is
+    // deliberately ABSENT — it is a managed field (see header comment).
     address: z.string().max(500, "Address must be 500 characters or fewer.").optional(),
     companyName: z.string().max(200, "Company name must be 200 characters or fewer.").optional(),
     city: z.string().max(120).optional(),
@@ -132,10 +156,28 @@ const patchSchema = z
   );
 
 export const PATCH = handler(async ({ req, user }) => {
-  const body = await parseBody(req, patchSchema);
-  const isCustomer = user.role === "CUSTOMER";
+  // ── Field-level authorization BEFORE schema parsing (spec §6 — reject, never
+  // silently strip). The body is read ONCE and inspected for managed/identity
+  // fields; any occurrence from any caller is rejected on this endpoint:
+  // identity changes go through User Management (SUPER_ADMIN only), which
+  // applies the canonical mirrors, Google-linkage handling and audit entries.
+  let raw: Record<string, unknown> = {};
+  try {
+    raw = (await req.json()) as Record<string, unknown>;
+  } catch {
+    throw Errors.badRequest("Request body must be valid JSON.");
+  }
+  const attempted = Object.keys(raw).filter((k) => FORBIDDEN_PROFILE_FIELDS.includes(k));
+  if (attempted.length > 0) {
+    const fields = attempted.map((k) => IDENTITY_FIELD_LABELS[k] ?? k).join(", ");
+    throw Errors.forbidden(
+      `Your ${fields} can only be changed by a SUPER_ADMIN. Please contact your administrator or submit a phone number update request.`,
+    );
+  }
 
-  if (isCustomer) {
+  const body = patchSchema.parse(raw);
+
+  if (user.role === "CUSTOMER") {
     // ── Customer self-service ──
     // The record written is ALWAYS the one linked to the session user —
     // never an id from the browser (IDOR-safe, spec §28).
@@ -146,40 +188,20 @@ export const PATCH = handler(async ({ req, user }) => {
     if (!me) throw Errors.notFound("User not found.");
     if (!me.customer) throw Errors.conflict("Your account is not linked to a customer record. Contact support.");
 
-    // Mobile: required to be present-but-valid when provided; blank is
-    // rejected (mobile + address are the required fields).
-    let mobile: string | undefined;
-    if (body.mobile !== undefined) {
-      const mobileError = validateMobile(body.mobile);
-      if (mobileError) throw Errors.badRequest(mobileError, [{ path: "mobile", message: mobileError }]);
-      mobile = body.mobile.trim();
-    }
-
     // Address: multi-line preserved verbatim (only the ends are trimmed) —
-    // never collapsed, never truncated (spec §17).
+    // never collapsed, never truncated (spec §13).
     const address = body.address !== undefined ? body.address.replace(/^\s+|\s+$/g, "") : undefined;
-    // Company name: optional; empty string explicitly clears it (spec §5/§27).
+    // Company name: optional; empty string explicitly clears it (spec §14).
     const companyName = body.companyName !== undefined ? body.companyName.trim() : undefined;
     const city = body.city !== undefined ? body.city.trim() : undefined;
 
-    const name = body.name !== undefined ? body.name : undefined;
-
-    const updated = await db.$transaction(async (tx) => {
-      const customer = await tx.customer.update({
-        where: { id: me.customer!.id },
-        data: {
-          ...(mobile !== undefined ? { phone: mobile } : {}),
-          ...(address !== undefined ? { address } : {}),
-          ...(companyName !== undefined ? { companyName } : {}),
-          ...(city !== undefined ? { city } : {}),
-          ...(name !== undefined ? { contactPerson: name } : {}),
-        },
-      });
-      // Keep the login display name in sync when explicitly provided.
-      if (name !== undefined) {
-        await tx.user.update({ where: { id: user.id }, data: { name } });
-      }
-      return customer;
+    const updated = await db.customer.update({
+      where: { id: me.customer.id },
+      data: {
+        ...(address !== undefined ? { address } : {}),
+        ...(companyName !== undefined ? { companyName } : {}),
+        ...(city !== undefined ? { city } : {}),
+      },
     });
 
     await audit({
@@ -206,40 +228,14 @@ export const PATCH = handler(async ({ req, user }) => {
       phone: updated.phone,
       address: updated.address,
       city: updated.city,
-      name: name ?? me.name,
       profileComplete: state.length === 0,
       missingFields: state,
     });
   }
 
-  // ── Staff self-service (unchanged existing behaviour) ──
-  if (body.mobile !== undefined || body.address !== undefined || body.companyName !== undefined || body.city !== undefined) {
-    throw Errors.badRequest("Only name and phone can be updated on this account.");
-  }
-
-  const updated = await db.user.update({
-    where: { id: user.id },
-    data: {
-      ...(body.name !== undefined ? { name: body.name } : {}),
-      ...(body.phone !== undefined ? { phone: body.phone === "" ? null : body.phone } : {}),
-    },
-  });
-
-  await audit({
-    actorId: user.id,
-    actorEmail: user.email,
-    action: "PROFILE_UPDATED",
-    resourceType: "User",
-    resourceId: user.id,
-    metadata: { scope: "user", fields: Object.keys(body) },
-    ip: clientIp(req),
-  });
-
-  return ok({
-    id: updated.id,
-    email: updated.email,
-    name: updated.name,
-    phone: updated.phone,
-    role: updated.role,
-  });
+  // ── Staff accounts ──
+  // Every remaining body field is customer-scoped; staff have no self-service
+  // body fields (identity/contact fields are managed; the photo has its own
+  // endpoint). Respond honestly instead of pretending something was saved.
+  throw Errors.badRequest("There are no self-service profile fields for your account type. Contact your administrator to update your details.");
 });
