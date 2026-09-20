@@ -39,7 +39,7 @@ const TOGGLES: { key: string; label: string; hint: string }[] = [
   { key: "escalation_engine", label: "Escalation engine", hint: "Unaccepted complaints and long-running work orders escalate to supervisors." },
   { key: "sla_engine", label: "SLA engine", hint: "Track response targets per priority and report breaches." },
   { key: "invoice_overdue_automation", label: "Invoice overdue automation", hint: "Past-due invoices are marked OVERDUE and Finance is notified." },
-  { key: "email_notifications", label: "Email notification queue", hint: "Queued emails are delivered by the centralized EmailService through the configured SMTP provider (Settings → Email)." },
+  { key: "email_notifications", label: "Email notification queue", hint: "Queued emails are delivered by the centralized EmailService through the configured SMTP provider (Email Configuration module)." },
   { key: "whatsapp_notifications", label: "WhatsApp notifications", hint: "Requires a configured provider — events are recorded when disabled." },
   { key: "push_notifications", label: "Push notifications", hint: "Requires Firebase configuration." },
 ];

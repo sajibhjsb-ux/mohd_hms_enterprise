@@ -1,6 +1,6 @@
 "use client";
 
-// MOHD.HMS ENTERPRISE — Email automation administration (Settings → Email → Automations).
+// MOHD.HMS ENTERPRISE — Email automation administration (Email Configuration → Automations).
 // Rule-based email automations wired to template keys: enable/disable, full
 // editor (recipient rules, conditions, attachments, retry policy), duplicate
 // and per-automation delivery history. Critical rules are Super Admin only.

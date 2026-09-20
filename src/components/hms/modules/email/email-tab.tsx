@@ -1,9 +1,10 @@
 "use client";
 
-// MOHD.HMS ENTERPRISE — Email administration (Settings → Email).
-// Container tab: Overview (health, SMTP status, test tools, configuration),
-// plus Templates / Automations / Logs panels gated by their own permissions.
-// Lives inside the existing Settings module — no separate application.
+// MOHD.HMS ENTERPRISE — Email administration (Email Configuration module).
+// Canonical location for ALL email configuration: Overview (health, SMTP
+// status, test tools, configuration), plus Templates / Automations / Logs
+// panels gated by their own permissions. Owned by the dedicated Email
+// Configuration module — the general Settings page has no email controls.
 
 import { useCallback, useEffect, useState } from "react";
 import { Activity, Building2, KeyRound, Mail, Plug, RefreshCw, Save, Send } from "lucide-react";

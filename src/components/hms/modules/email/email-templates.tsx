@@ -1,6 +1,6 @@
 "use client";
 
-// MOHD.HMS ENTERPRISE — Email template administration (Settings → Email → Templates).
+// MOHD.HMS ENTERPRISE — Email template administration (Email Configuration → Templates).
 // Catalog with search/category filter, full editor (variable chips with cursor
 // insertion, tag helpers, sandboxed HTML preview), test send, duplicate and
 // version history. All data comes from the real email API — nothing simulated.

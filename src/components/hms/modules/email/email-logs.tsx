@@ -1,6 +1,6 @@
 "use client";
 
-// MOHD.HMS ENTERPRISE — Email delivery logs (Settings → Email → Logs).
+// MOHD.HMS ENTERPRISE — Email delivery logs (Email Configuration → Logs).
 // Filterable, paginated log list with a full detail view (never a popup):
 // metadata, rendered body in a sandboxed iframe, retry/cancel actions.
 
