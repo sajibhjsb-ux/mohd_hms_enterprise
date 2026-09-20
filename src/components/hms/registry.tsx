@@ -9,7 +9,7 @@ import {
   LayoutDashboard, Users, Building2, UserCog, HardHat, AlertTriangle, ClipboardList,
   Wrench, CalendarClock, Boxes, ShoppingCart, FileText, Receipt, Wallet, IdCard,
   SearchCheck, BarChart3, Settings, History, Truck, QrCode, CircleUserRound,
-  ScrollText, ShieldCheck, MessageCircle, ScanLine,
+  ScrollText, ShieldCheck, MessageCircle, ScanLine, Mail,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -41,6 +41,7 @@ import { QuotationsModule } from "./modules/quotations";
 import { InvoicesModule } from "./modules/invoices";
 import { FinanceModule } from "./modules/finance";
 import { HrModule } from "./modules/hr";
+import { EmailModule } from "./modules/email";
 import { WhatsAppModule } from "./modules/whatsapp";
 import { IrmsModule } from "./modules/irms";
 import { ReportsModule } from "./modules/reports";
@@ -70,6 +71,11 @@ export const MODULES: ModuleDef[] = [
   { key: "invoices", label: "Invoices", icon: Receipt, permissions: ["invoices.read"], component: InvoicesModule },
   { key: "finance", label: "Finance", icon: Wallet, permissions: ["finance.read", "invoices.read"], component: FinanceModule },
   { key: "hr", label: "HR", icon: UserCog, permissions: ["hr.read", "employees.read"], component: HrModule },
+  // Communication pair — Email + WhatsApp sit adjacent in the desktop floating
+  // navigation and under the "Communication" group of the mobile More menu.
+  // /email renders the SAME EmailTab as Settings → Email (one EmailService,
+  // one admin UI); /whatsapp is the existing OpenWA-backed Inbox module.
+  { key: "email", label: "Email", icon: Mail, permissions: ["email.view"], component: EmailModule },
   { key: "whatsapp", label: "WhatsApp", shortLabel: "Chat", icon: MessageCircle, permissions: ["whatsapp.view"], component: WhatsAppModule },
   { key: "irms", label: "IRMS Inspections", shortLabel: "IRMS", icon: SearchCheck, permissions: ["irms.read", "irms.portal"], component: IrmsModule },
   { key: "vehicles", label: "Vehicles", icon: Truck, permissions: ["vehicles.read"], component: VehiclesModule },

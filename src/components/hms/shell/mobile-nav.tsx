@@ -22,7 +22,7 @@
 //   gap) as the --hms-mobile-nav-h CSS variable so the shell reserves exact
 //   content space — nothing hides behind the navigation.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MoreHorizontal, QrCode } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { type ModuleDef } from "@/components/hms/registry";
@@ -81,6 +81,11 @@ export function MobileNav({ modules, activeModule, onSelect, onOpenScanner }: Pr
     return { slot1: first, slot2: second, slot4: fourth };
   }, [modules]);
 
+  // More-menu grouping — the communication pair (Email / WhatsApp, RBAC-filtered
+  // upstream) gets its own section at the top; every other module keeps the
+  // existing grid below. Roles without communication permissions see the sheet
+  // exactly as before (no empty group, no layout change).
+
   // Publish the exact occupied height (bar + safe-area + QR rise + gap) so the
   // shell can reserve matching content space. Measured — never hardcoded.
   useEffect(() => {
@@ -104,6 +109,20 @@ export function MobileNav({ modules, activeModule, onSelect, onOpenScanner }: Pr
       root.style.removeProperty("--hms-mobile-nav-h");
     };
   }, []);
+
+  const { communication, others } = useMemo(() => {
+    const comm = modules.filter((m) => m.key === "email" || m.key === "whatsapp");
+    const commKeys = new Set(comm.map((m) => m.key));
+    return { communication: comm, others: modules.filter((m) => !commKeys.has(m.key)) };
+  }, [modules]);
+
+  const selectAndClose = useCallback(
+    (key: string) => {
+      onSelect(key);
+      setMoreOpen(false);
+    },
+    [onSelect]
+  );
 
   return (
     <nav
@@ -155,29 +174,62 @@ export function MobileNav({ modules, activeModule, onSelect, onOpenScanner }: Pr
               <SheetHeader>
                 <SheetTitle>All modules</SheetTitle>
               </SheetHeader>
-              <div className="grid max-h-[56vh] grid-cols-3 gap-2 overflow-y-auto hms-scroll pb-[calc(env(safe-area-inset-bottom)+1.5rem)]">
-                {modules.map((m) => (
-                  <button
-                    key={m.key}
-                    onClick={() => { onSelect(m.key); setMoreOpen(false); }}
-                    aria-current={activeModule === m.key ? "page" : undefined}
-                    className={cn(
-                      "flex flex-col items-center gap-1.5 rounded-xl border p-3 text-xs font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                      activeModule === m.key
-                        ? "border-primary bg-primary/5 text-primary"
-                        : "text-muted-foreground hover:bg-accent/60"
-                    )}
-                  >
-                    <m.icon className="h-5 w-5" aria-hidden />
-                    {m.shortLabel ?? m.label}
-                  </button>
-                ))}
+              <div className="max-h-[56vh] space-y-4 overflow-y-auto hms-scroll pb-[calc(env(safe-area-inset-bottom)+1.5rem)]">
+                {/* Communication group — Email + WhatsApp (only for roles the
+                    RBAC filter grants them; hidden entirely otherwise) */}
+                {communication.length > 0 ? (
+                  <section aria-label="Communication">
+                    <h3 className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                      Communication
+                    </h3>
+                    <div className="grid grid-cols-3 gap-2">
+                      {communication.map((m) => (
+                        <MoreItem key={m.key} module={m} active={activeModule === m.key} onSelect={selectAndClose} />
+                      ))}
+                    </div>
+                  </section>
+                ) : null}
+                <section aria-label="All modules">
+                  {communication.length > 0 ? (
+                    <h3 className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                      Modules
+                    </h3>
+                  ) : null}
+                  <div className="grid grid-cols-3 gap-2">
+                    {others.map((m) => (
+                      <MoreItem key={m.key} module={m} active={activeModule === m.key} onSelect={selectAndClose} />
+                    ))}
+                  </div>
+                </section>
               </div>
             </SheetContent>
           </Sheet>
         </div>
       </div>
     </nav>
+  );
+}
+
+/**
+ * One module tile inside the More bottom sheet (identical styling for the
+ * Communication group and the general module grid).
+ */
+function MoreItem({ module, active, onSelect }: { module: ModuleDef; active: boolean; onSelect: (key: string) => void }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(module.key)}
+      aria-current={active ? "page" : undefined}
+      className={cn(
+        "flex flex-col items-center gap-1.5 rounded-xl border p-3 text-xs font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        active
+          ? "border-primary bg-primary/5 text-primary"
+          : "text-muted-foreground hover:bg-accent/60"
+      )}
+    >
+      <module.icon className="h-5 w-5" aria-hidden />
+      {module.shortLabel ?? module.label}
+    </button>
   );
 }
 
