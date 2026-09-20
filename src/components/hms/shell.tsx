@@ -39,6 +39,24 @@ import { QrScanDialog } from "./shell/qr-dialog";
 import { RealtimeProvider } from "./realtime/realtime-provider";
 import { TermsConsentGate } from "./legal/terms-consent-gate";
 import { IdleSessionGuard } from "./idle-session-guard";
+import { useRealtimeEvent } from "@/lib/hms/realtime/hooks";
+import { RT } from "@/lib/hms/realtime/matrix";
+
+/**
+ * Self-session sync (role-change spec §8/§16): when an administrator changes
+ * THIS user's role/status, the USER_UPDATED realtime event carries the target
+ * id as aggregate — refresh the session so the new role + permissions apply
+ * immediately without a manual reload. The server already resolves the role
+ * live from the User row; this only aligns the SPA's cached session state.
+ */
+function SelfSessionSync() {
+  const { user, refresh } = useSession();
+  const userId = user?.id ?? null;
+  useRealtimeEvent([RT.USER_UPDATED], (ev: { aggregate_id?: string }) => {
+    if (userId && ev.aggregate_id === userId) void refresh();
+  });
+  return null;
+}
 
 export function AppShell() {
   const { user } = useSession();
@@ -237,6 +255,7 @@ export function AppShell() {
 
   return (
     <RealtimeProvider>
+    <SelfSessionSync />
     {/* --hms-mobile-nav-h is measured by MobileNav (bar + safe-area + QR rise +
         gap) so the footer and every page element clear the floating bottom nav */}
     <div className="min-h-screen flex flex-col bg-[radial-gradient(60rem_30rem_at_50%_-10%,oklch(0.95_0.05_152/0.6),transparent)] dark:bg-none pb-[var(--hms-mobile-nav-h,102px)] lg:pb-0">

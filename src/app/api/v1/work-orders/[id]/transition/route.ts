@@ -12,6 +12,7 @@ import { WO_TRANSITIONS, PERMISSIONS } from "@/lib/hms/constants";
 import type { SessionUser } from "@/lib/hms/auth";
 import { WO_DETAIL_INCLUDE, assertViewWorkOrder, isAssignedTechnician, assertWoTransition } from "../../_lib";
 import { EVENT_TYPES } from "@/lib/hms/workflows/types";
+import { emit } from "@/lib/hms/workflows/bus";
 import { dedupeSubmission } from "@/lib/hms/workflows/idempotency";
 import { computeNextDue } from "@/lib/hms/pm/schedule";
 
@@ -119,6 +120,9 @@ export const POST = withId(
 
       case "complete": {
         assertWoTransition("COMPLETED", from, WO_TRANSITIONS);
+        // Holder object — TS control-flow can't track assignments made inside the
+        // transaction callback, so the completed instance rides out in a ref.
+        const ref: { completedInstance: { id: string; code: string } | null } = { completedInstance: null };
         const { updated, lowStockItems } = await db.$transaction(async (tx) => {
           // Re-read inside the transaction — guards idempotency (a concurrent
           // completion flips the status and this update throws via the guard below).
@@ -140,14 +144,29 @@ export const POST = withId(
           // with unfinished checklist items cannot be completed, regardless of UI.
           // For required rich items (PASSFAIL/YESNO/NUMERIC/TEXT) a recorded
           // response is also mandatory — an unticked required item blocks completion.
+          // Checklist engine §32 — required photos + failed-task notes also block.
           const checklist = await tx.workOrderChecklistItem.findMany({
             where: { workOrderId: id },
-            select: { label: true, done: true, required: true, responseType: true, response: true },
+            select: { label: true, done: true, required: true, responseType: true, response: true, notes: true, requiresPhoto: true, failRequiresFinding: true },
           });
           const pending = checklist.filter((c) => !c.done || (c.required && c.responseType !== "CHECKBOX" && c.response.trim() === ""));
-          if (pending.length > 0) {
+          const failedNoNote = checklist.filter((c) => c.failRequiresFinding && ["FAIL", "NO"].includes(c.response.trim().toUpperCase()) && c.notes.trim() === "");
+          const photoRequiredItems = checklist.filter((c) => c.requiresPhoto);
+          let checklistPhotos = 0;
+          if (photoRequiredItems.length > 0) {
+            checklistPhotos = await tx.document.count({
+              where: { resourceType: "WORK_ORDER", resourceId: id, category: "WORK_ORDER" },
+            });
+          }
+          const missing: string[] = [];
+          if (pending.length > 0) missing.push(...pending.slice(0, 3).map((c) => `Task result: ${c.label}`));
+          if (failedNoNote.length > 0) missing.push(...failedNoNote.slice(0, 3).map((c) => `Note for failed task: ${c.label}`));
+          if (photoRequiredItems.length > checklistPhotos) {
+            missing.push(`Checklist photo evidence (${checklistPhotos}/${photoRequiredItems.length} uploaded)`);
+          }
+          if (missing.length > 0) {
             throw Errors.invalidTransition(
-              `Cannot complete: ${pending.length} checklist item(s) still open (${pending.slice(0, 3).map((c) => c.label).join(", ")}${pending.length > 3 ? "…" : ""}).`
+              `Cannot complete work order. Missing: ${missing.slice(0, 5).join("; ")}${missing.length > 5 ? "…" : ""}.`
             );
           }
 
@@ -220,10 +239,21 @@ export const POST = withId(
               }
             }
           }
+          // Checklist engine — the work order's checklist instance completes WITH
+          // the work order (one lifecycle, same transaction — §36/§51).
+          const inst = await tx.checklistInstance.findUnique({ where: { workOrderId: id }, select: { id: true, code: true, status: true } });
+          if (inst && inst.status === "ACTIVE") {
+            await tx.checklistInstance.update({ where: { id: inst.id }, data: { status: "COMPLETED", completedAt: now } });
+            ref.completedInstance = { id: inst.id, code: inst.code };
+          }
           return { updated: row, lowStockItems: lowStock };
         });
 
         await audit({ actorId: user.id, actorEmail: user.email, action: "WORK_ORDER_COMPLETED", resourceType: "WORK_ORDER", resourceId: id, metadata: { code, totalCents: updated.totalCents } });
+        if (ref.completedInstance) {
+          await audit({ actorId: user.id, actorEmail: user.email, action: "CHECKLIST_COMPLETED", resourceType: "CHECKLIST_INSTANCE", resourceId: ref.completedInstance.id, metadata: { code: ref.completedInstance.code, workOrderCode: code } });
+          await emit({ type: EVENT_TYPES.CHECKLIST_COMPLETED, resourceType: "CHECKLIST_INSTANCE", resourceId: ref.completedInstance.id, payload: { code: ref.completedInstance.code, workOrderCode: code }, actorType: "USER", actorId: user.id });
+        }
         await notifyRole("SUPERVISOR", { title: "Work order completed", message: `${code} completed by ${user.name}.`, type: "SUCCESS", resourceType: "WORK_ORDER", resourceId: id });
         if (portalUserId) {
           await notify({ userId: portalUserId, title: "Work order completed", message: `Work order ${code} for your site has been completed.`, type: "SUCCESS", resourceType: "WORK_ORDER", resourceId: id });

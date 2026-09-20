@@ -137,7 +137,7 @@ model TechnicianProfile {
   skills          String  @default("") // comma separated
   specialty       String  @default("GENERAL")
   hourlyRateCents Int     @default(0)
-  status          String  @default("AVAILABLE") // AVAILABLE | ON_JOB | OFF_DUTY
+  status          String  @default("AVAILABLE") // AVAILABLE | ON_JOB | OFF_DUTY | RETIRED (RETIRED = user no longer holds the TECHNICIAN role — profile kept for history; hidden from roster/assignment dropdowns)
   vehicleId       String? @unique
 
   complaints  Complaint[]        @relation("assignedComplaints")
@@ -378,10 +378,11 @@ model WorkOrder {
   createdAt           DateTime           @default(now())
   updatedAt           DateTime           @updatedAt
 
-  checklist       WorkOrderChecklistItem[]
-  materials       WorkOrderMaterial[]
-  irmsReports     InspectionReport[]       @relation("irmsWorkOrders")
-  pmFindingSource PmFinding?               @relation("pmCorrectiveWorkOrders")
+  checklist         WorkOrderChecklistItem[]
+  materials         WorkOrderMaterial[]
+  irmsReports       InspectionReport[]       @relation("irmsWorkOrders")
+  pmFindingSource   PmFinding?               @relation("pmCorrectiveWorkOrders")
+  checklistInstance ChecklistInstance?
 
   @@index([status])
   @@index([customerId])
@@ -402,6 +403,16 @@ model WorkOrderChecklistItem {
   response     String    @default("")
   notes        String    @default("")
   sortOrder    Int       @default(0)
+  // ── Checklist engine (AI checklist spec §9/§61/§64) — item provenance + structure.
+  // These rows are the ONLY execution surface: once materialized from a checklist
+  // version they are a frozen snapshot — later template/AI changes never alter them.
+  origin              String  @default("MANUAL") // TEMPLATE | AI | MANUAL
+  priority            String  @default("ROUTINE") // ROUTINE | IMPORTANT | SAFETY | CRITICAL
+  safetyCritical      Boolean @default(false)
+  expectedResult      String  @default("") // observation guidance only — never an AI-invented threshold
+  unit                String  @default("") // observation unit for NUMERIC (V, A, °C, bar…)
+  requiresPhoto       Boolean @default(false) // completion validation demands a checklist photo
+  failRequiresFinding Boolean @default(false) // a FAIL/NO answer must carry a technician note
 }
 
 model WorkOrderMaterial {
@@ -528,6 +539,136 @@ model PmTemplate {
   updatedAt   DateTime @updatedAt
 
   plans PmPlan[]
+}
+
+// ─────────────────────────── CENTRALIZED CHECKLIST ENGINE ───────────────────────────
+// One engine for Complaints / Work Orders / PM / IRMS (AI checklist spec §1/§82).
+// ChecklistTemplate + versions = approved template library; ChecklistInstance =
+// the versioned draft/snapshot attached to one source; execution ALWAYS happens
+// through WorkOrderChecklistItem (materialized snapshot — spec §28).
+
+model ChecklistTemplate {
+  id                String   @id @default(cuid())
+  name              String
+  // Same category vocabulary as PmTemplate (HVAC | ELECTRICAL | PLUMBING | …)
+  category          String   @default("GENERAL")
+  // PREVENTIVE | CORRECTIVE | TROUBLESHOOTING | INSPECTION | COMMISSIONING | INSTALLATION | GENERAL
+  workType          String   @default("GENERAL")
+  equipmentCategory String   @default("") // optional narrower match against Equipment.category
+  description       String   @default("")
+  // JSON: [{label, description, required, responseType, priority, safetyCritical, expectedResult, unit, requiresPhoto, failRequiresFinding}]
+  items             String   @default("[]")
+  version           Int      @default(1) // current version; history in ChecklistTemplateVersion
+  status            String   @default("ACTIVE") // ACTIVE | INACTIVE
+  // LOW-RISK templates may activate automatically; safety-critical ones force review (spec §24)
+  approvalRequired  Boolean  @default(false)
+  requiredPhotos    Int      @default(0)
+  requiredFindings  Int      @default(0)
+  createdById       String?
+  approvedById      String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  versions  ChecklistTemplateVersion[]
+  instances ChecklistInstance[]
+
+  @@index([category, workType])
+}
+
+model ChecklistTemplateVersion {
+  id          String            @id @default(cuid())
+  templateId  String
+  template    ChecklistTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  version     Int
+  items       String            @default("[]")
+  changelog   String            @default("")
+  createdById String?
+  createdAt   DateTime          @default(now())
+
+  @@unique([templateId, version])
+}
+
+model ChecklistInstance {
+  id               String             @id @default(cuid())
+  code             String             @unique
+  title            String
+  // COMPLAINT | WORK_ORDER | PM | IRMS — where this checklist came from
+  sourceType       String
+  sourceId         String
+  // Attached work order (the execution container). Complaint/IRMS drafts attach
+  // later when their work order is created (auto or manual).
+  workOrderId      String?            @unique
+  workOrder        WorkOrder?         @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  customerId       String?
+  equipmentId      String?
+  // AI | TEMPLATE | MANUAL | HYBRID (spec §64 labelling)
+  origin           String             @default("MANUAL")
+  // DRAFT | PENDING_APPROVAL | APPROVED | REJECTED | ACTIVE | COMPLETED | ARCHIVED (spec §4)
+  status           String             @default("DRAFT")
+  version          Int                @default(1) // current version; history in ChecklistInstanceVersion
+  // Draft items (same shape as template items + per-item origin). Once approved
+  // and attached they are materialized into WorkOrderChecklistItem and frozen.
+  itemsJson        String             @default("[]")
+  templateId       String?
+  template         ChecklistTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  templateVersion  Int?
+  aiGenerationId   String?
+  approvalRequired Boolean            @default(true)
+  approvedById     String?
+  approvedAt       DateTime?
+  rejectedReason   String             @default("")
+  // §30/§63 — AI summary derived ONLY from recorded results (never invented).
+  aiSummary        String             @default("")
+  aiSummaryAt      DateTime?
+  createdById      String?
+  completedAt      DateTime?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  versions ChecklistInstanceVersion[]
+
+  @@index([sourceType, sourceId])
+  @@index([status])
+  @@index([customerId])
+}
+
+model ChecklistInstanceVersion {
+  id          String            @id @default(cuid())
+  instanceId  String
+  instance    ChecklistInstance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+  version     Int
+  origin      String            @default("MANUAL")
+  itemsJson   String            @default("[]")
+  note        String            @default("")
+  createdById String?
+  createdAt   DateTime          @default(now())
+
+  @@unique([instanceId, version])
+}
+
+// §38/§80 — safe AI generation metadata. NEVER stores prompt bodies, secrets,
+// credentials or unrelated customer data — only reproducibility metadata.
+model ChecklistAiGeneration {
+  id              String   @id @default(cuid())
+  sourceType      String // COMPLAINT | WORK_ORDER | PM | IRMS
+  sourceId        String
+  workOrderId     String?
+  templateId      String?
+  templateVersion Int?
+  promptVersion   String // e.g. checklist-generator-v1 (§40)
+  provider        String   @default("z-ai")
+  model           String   @default("")
+  // COMPLETED | VALIDATION_FAILED | FAILED | FALLBACK_TEMPLATE
+  status          String
+  itemCount       Int      @default(0)
+  error           String   @default("") // friendly reason only — no stack traces/raw AI output
+  // Minimal non-sensitive context fingerprint (category/workType/equipment tag)
+  contextSummary  String   @default("")
+  instanceId      String?
+  createdById     String?
+  createdAt       DateTime @default(now())
+
+  @@index([sourceType, sourceId])
 }
 
 // ─── PM §19 — findings / observations with corrective-work bridge ───

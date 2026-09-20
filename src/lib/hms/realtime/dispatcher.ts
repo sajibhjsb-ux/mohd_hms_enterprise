@@ -246,6 +246,29 @@ export async function resolveRooms(event: RealtimeEventRow): Promise<Room[]> {
     case EVENT_TYPES.USER_UPDATED:
       return [...staffAll(), ...user(event.resourceId)];
 
+    // ── Checklist engine (AI checklist spec): instance events follow their
+    //    work order (customer + assigned technician); complaint-draft events
+    //    reach the owning customer's rooms. Fail-closed otherwise.
+    case EVENT_TYPES.CHECKLIST_GENERATED:
+    case EVENT_TYPES.CHECKLIST_UPDATED:
+    case EVENT_TYPES.CHECKLIST_COMPLETED: {
+      if (event.resourceType !== "CHECKLIST_INSTANCE" || !event.resourceId) return mgmt();
+      const inst = await db.checklistInstance.findUnique({
+        where: { id: event.resourceId },
+        select: { workOrderId: true, sourceType: true, sourceId: true, customerId: true },
+      });
+      if (!inst) return mgmt();
+      if (inst.workOrderId) {
+        const ctx = await workOrderCtx(inst.workOrderId);
+        return [...mgmt(), ...customer(ctx?.customerId), ...user(ctx?.technicianUserId)];
+      }
+      if (inst.sourceType === "COMPLAINT") {
+        const ctx = await complaintCtx(inst.sourceId);
+        return [...mgmt(), ...customer(ctx?.customerId)];
+      }
+      return mgmt();
+    }
+
     // ── Equipment (STEP 10: customer's equipment service updates).
     case EVENT_TYPES.EQUIPMENT_UPDATED: {
       if (event.resourceId) {

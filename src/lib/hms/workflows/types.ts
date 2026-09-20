@@ -51,6 +51,13 @@ export const EVENT_TYPES = {
   EMAIL_SEND: "EMAIL_SEND",
   // HR letters (email automations on the letter workflow)
   LETTER_APPROVED: "LETTER_APPROVED",
+  // ── Centralized checklist engine (AI checklist spec §36/§69) ──
+  // Business events raised by the checklist engine's API routes; the auto
+  // generation handlers live in handlers.ts and react to COMPLAINT_CREATED /
+  // WORK_ORDER_CREATED (both setting-gated — §23 no uncontrolled AI content).
+  CHECKLIST_GENERATED: "CHECKLIST_GENERATED",
+  CHECKLIST_UPDATED: "CHECKLIST_UPDATED",
+  CHECKLIST_COMPLETED: "CHECKLIST_COMPLETED",
   // ─── Realtime broadcast events (FULL REALTIME UPDATE SYSTEM) ───
   // These extend the same outbox vocabulary so every business mutation that
   // should reach connected portals is persisted in the ONE authoritative
