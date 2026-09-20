@@ -7,7 +7,6 @@
 import "server-only";
 import { db } from "@/lib/db";
 import { audit, nextNumber, notify, notifyRole } from "@/lib/hms/services";
-import { FREQUENCY_DAYS } from "@/lib/hms/constants";
 import { formatCurrency } from "@/lib/hms/format";
 import { isAutomationEnabled, automationNumber } from "./settings";
 import { emit } from "./bus";
@@ -242,50 +241,21 @@ registerWorkflow(EVENT_TYPES.PURCHASE_RECEIVED, "PURCHASE_RECEIPT_NOTIFY", async
   return { result: "SUCCESS", detail: `notified admin for ${po.code}` };
 });
 
-// ─── §20: PM due → automatic task generation + technician notification ───
+// ─── §20: PM due → automatic occurrence generation (PmTask + PM work order) ───
 registerWorkflow(EVENT_TYPES.PM_DUE, "PM_AUTO_GENERATE_TASK", async (ctx) => {
   if (!(await isAutomationEnabled("auto_pm_task_generation"))) {
     return { result: "SKIPPED", detail: "auto_pm_task_generation disabled" };
   }
   const planId = String(ctx.payload.planId ?? ctx.resourceId);
-  const plan = await db.pmPlan.findUnique({ where: { id: planId }, include: { assignedTechnician: { select: { id: true, userId: true } } } });
-  if (!plan || !plan.active) return { result: "SKIPPED", detail: "plan missing or inactive" };
-  // Idempotency: an open task for this cycle means the scheduler must not create another.
-  const openTask = await db.pmTask.findFirst({
-    where: { planId: plan.id, status: { in: ["SCHEDULED", "OVERDUE", "IN_PROGRESS"] } },
-    select: { id: true, code: true },
-  });
-  if (openTask) return { result: "SKIPPED", detail: `open task ${openTask.code} already exists` };
-
-  let labels: string[] = [];
+  const { generatePmOccurrence, PmGenerateError } = await import("@/lib/hms/pm/generate");
   try {
-    const parsed: unknown = JSON.parse(plan.checklistTemplate || "[]");
-    if (Array.isArray(parsed)) labels = parsed.filter((l): l is string => typeof l === "string" && l.trim().length > 0);
-  } catch { labels = []; }
-
-  const code = await nextNumber("PMT");
-  const dueDate = plan.nextDueDate ?? new Date();
-  const nextDue = new Date(dueDate.getTime() + (FREQUENCY_DAYS[plan.frequency] ?? 30) * 86400000);
-  const task = await db.$transaction(async (tx) => {
-    const created = await tx.pmTask.create({
-      data: { code, planId: plan.id, equipmentId: plan.equipmentId, technicianId: plan.assignedTechnicianId, dueDate, status: "SCHEDULED" },
-    });
-    if (labels.length > 0) {
-      await tx.pmTaskChecklistItem.createMany({ data: labels.map((label, i) => ({ taskId: created.id, label, done: false, sortOrder: i })) });
-    }
-    await tx.pmPlan.update({ where: { id: plan.id }, data: { nextDueDate: nextDue } });
-    return created;
-  });
-  await audit({
-    actorEmail: "SYSTEM", action: "PM_TASK_GENERATED",
-    resourceType: "PM_TASK", resourceId: task.id,
-    metadata: { taskCode: code, planCode: plan.code, dueDate: dueDate.toISOString(), nextDueDate: nextDue.toISOString() },
-  });
-  if (plan.assignedTechnician?.userId) {
-    await notify({ userId: plan.assignedTechnician.userId, title: "PM task scheduled", message: `Preventive maintenance ${code} for ${plan.name} is due ${dueDate.toISOString().slice(0, 10)}.`, type: "INFO", resourceType: "PM_TASK", resourceId: task.id });
+    const result = await generatePmOccurrence({ planId, source: "AUTO" });
+    if (!result.created) return { result: "SKIPPED", detail: result.reason };
+    return { result: "SUCCESS", detail: `generated task ${result.taskCode} + work order ${result.workOrderCode}` };
+  } catch (err) {
+    if (err instanceof PmGenerateError) return { result: "FAILED", detail: `${err.code}: ${err.message}` };
+    throw err;
   }
-  await notifyRole("SUPERVISOR", { title: "PM task auto-generated", message: `Task ${code} generated from plan ${plan.code} (due ${dueDate.toISOString().slice(0, 10)}).`, type: "INFO", resourceType: "PM_TASK", resourceId: task.id });
-  return { result: "SUCCESS", detail: `generated task ${code}, next due ${nextDue.toISOString().slice(0, 10)}` };
 });
 
 // ─── §21: configurable PM reminders (N days before due, per settings) ───

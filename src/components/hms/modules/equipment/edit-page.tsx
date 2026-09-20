@@ -35,7 +35,7 @@ function formFromRow(row: EquipmentDetail): FormState {
     locationId: row.location?.id ?? "",
     installationDate: row.installationDate ? row.installationDate.slice(0, 10) : "",
     warrantyExpiry: row.warrantyExpiry ? row.warrantyExpiry.slice(0, 10) : "",
-    pmFrequencyDays: String(row.pmFrequencyDays), notes: row.notes,
+    pmFrequencyDays: String(row.pmFrequencyDays), criticality: row.criticality ?? "MEDIUM", notes: row.notes,
   };
 }
 

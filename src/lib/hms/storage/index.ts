@@ -74,12 +74,17 @@ const client = new Client({
 
 let bucketReady: Promise<void> | null = null;
 
-/** Idempotently make sure the bucket exists (once per process). */
+/** Idempotently make sure the bucket exists (cached per process). A failed
+ * probe does NOT stay cached: a transient storage outage must not poison the
+ * process — the next call retries instead of re-throwing the stale error. */
 function ensureBucket(): Promise<void> {
   bucketReady ??= (async () => {
     const exists = await client.bucketExists(S3_BUCKET).catch(() => false);
     if (!exists) await client.makeBucket(S3_BUCKET, "us-east-1");
-  })();
+  })().catch((err) => {
+    bucketReady = null;
+    throw err;
+  });
   return bucketReady;
 }
 

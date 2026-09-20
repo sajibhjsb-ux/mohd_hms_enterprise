@@ -54,9 +54,27 @@ async function scanPm(): Promise<void> {
     if (await recentEvent(EVENT_TYPES.PM_DUE, plan.id, 12)) continue;
     await emit({ type: EVENT_TYPES.PM_DUE, resourceType: "PM_PLAN", resourceId: plan.id, payload: { planId: plan.id }, actorType: "SYSTEM" });
   }
-  // b) SCHEDULED tasks whose due date passed → PM_OVERDUE (handler flips status once).
+  // a2) §9/§10 — meter-based plans: the meter crossed its service threshold
+  // without an open task → PM_DUE (same occurrence generator, meter occurrence key).
+  const meterPlans = await db.pmPlan.findMany({
+    where: { active: true, planType: { in: ["METER", "USAGE", "RUNTIME"] }, meterId: { not: null }, meterInterval: { gt: 0 } },
+    select: { id: true, code: true, nextDueMeter: true, meter: { select: { currentReading: true } } },
+    take: 100,
+  });
+  for (const plan of meterPlans) {
+    const threshold = plan.nextDueMeter ?? plan.meterInterval;
+    if (!threshold || !plan.meter || plan.meter.currentReading < threshold) continue;
+    const open = await db.pmTask.findFirst({
+      where: { planId: plan.id, status: { in: ["SCHEDULED", "OVERDUE", "IN_PROGRESS"] } },
+      select: { id: true },
+    });
+    if (open) continue;
+    if (await recentEvent(EVENT_TYPES.PM_DUE, plan.id, 12)) continue;
+    await emit({ type: EVENT_TYPES.PM_DUE, resourceType: "PM_PLAN", resourceId: plan.id, payload: { planId: plan.id }, actorType: "SYSTEM" });
+  }
+  // b) SCHEDULED tasks due before today → PM_OVERDUE (handler flips status once).
   const overdueTasks = await db.pmTask.findMany({
-    where: { status: "SCHEDULED", dueDate: { lt: now } },
+    where: { status: "SCHEDULED", dueDate: { lt: new Date(new Date(now).setHours(0, 0, 0, 0)) } },
     select: { id: true, code: true },
     take: 100,
   });
@@ -79,6 +97,17 @@ async function scanPm(): Promise<void> {
       await emit({ type: EVENT_TYPES.PM_REMINDER, resourceType: "PM_TASK", resourceId: task.id, payload: { taskId: task.id, days }, actorType: "SYSTEM" });
     }
   }
+}
+
+/**
+ * Manual / on-demand scheduler pass (PM §86 — manual safe run): one synchronous
+ * scanPm() followed by a realtime dispatch pass so any raised PM events reach
+ * connected clients immediately. Fully idempotent — running it twice in a row
+ * never creates duplicate work (occurrence keys + dedupe guards apply).
+ */
+export async function runPmSchedulerOnce(opts?: { kickRealtime?: boolean }): Promise<void> {
+  await scanPm();
+  if (opts?.kickRealtime !== false) await dispatchPendingEvents();
 }
 
 async function scanEscalations(): Promise<void> {

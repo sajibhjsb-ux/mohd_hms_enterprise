@@ -75,6 +75,8 @@ export const PERMISSIONS = {
   pm_read: "pm.read",
   pm_manage: "pm.manage",
   pm_execute: "pm.execute",
+  pm_approve: "pm.approve", // PM §25/§72 — review/approve/close completed PM occurrences
+  pm_report: "pm.report", // PM §55–§57 — compliance/performance/cost reports + export
   // inventory
   inventory_read: "inventory.read",
   inventory_manage: "inventory.manage",
@@ -137,7 +139,7 @@ const SUPERVISOR_PERMS: Permission[] = [
   PERMISSIONS.whatsapp_view, PERMISSIONS.whatsapp_send,
   PERMISSIONS.complaints_read, PERMISSIONS.complaints_create, PERMISSIONS.complaints_assign, PERMISSIONS.complaints_update, PERMISSIONS.complaints_close,
   PERMISSIONS.work_orders_read, PERMISSIONS.work_orders_create, PERMISSIONS.work_orders_assign, PERMISSIONS.work_orders_update, PERMISSIONS.work_orders_complete,
-  PERMISSIONS.pm_read, PERMISSIONS.pm_manage,
+  PERMISSIONS.pm_read, PERMISSIONS.pm_manage, PERMISSIONS.pm_approve, PERMISSIONS.pm_report,
   PERMISSIONS.inventory_read,
   PERMISSIONS.purchases_read,
   PERMISSIONS.quotations_read, PERMISSIONS.quotations_manage,
@@ -151,7 +153,7 @@ const TECHNICIAN_PERMS: Permission[] = [
   PERMISSIONS.equipment_read,
   PERMISSIONS.complaints_read, PERMISSIONS.complaints_update,
   PERMISSIONS.work_orders_read, PERMISSIONS.work_orders_update, PERMISSIONS.work_orders_complete,
-  PERMISSIONS.pm_read, PERMISSIONS.pm_execute,
+  PERMISSIONS.pm_read, PERMISSIONS.pm_execute, PERMISSIONS.pm_report,
   PERMISSIONS.inventory_read,
   PERMISSIONS.irms_read, PERMISSIONS.irms_create,
 ];
@@ -163,6 +165,9 @@ const CUSTOMER_PERMS: Permission[] = [
   PERMISSIONS.invoices_read,
   PERMISSIONS.quotations_read,
   PERMISSIONS.irms_portal,
+  // PM §44 — customers see the PM schedule/history of THEIR equipment only
+  // (scoping enforced per-route; internal financials/notes stripped in APIs).
+  PERMISSIONS.pm_read,
 ];
 
 const FINANCE_PERMS: Permission[] = [
@@ -244,7 +249,25 @@ export const WO_TRANSITIONS: Record<string, string[]> = {
 export const INVOICE_STATUSES = ["DRAFT", "SENT", "PARTIALLY_PAID", "PAID", "OVERDUE", "CANCELLED"] as const;
 export const QUOTATION_STATUSES = ["DRAFT", "SENT", "APPROVED", "REJECTED", "EXPIRED", "CONVERTED"] as const;
 export const PO_STATUSES = ["DRAFT", "PENDING_APPROVAL", "APPROVED", "REJECTED", "PARTIALLY_RECEIVED", "RECEIVED", "CANCELLED"] as const;
-export const PM_FREQUENCIES = ["WEEKLY", "MONTHLY", "QUARTERLY", "SEMI_ANNUAL", "ANNUAL"] as const;
+export const PM_FREQUENCIES = [
+  "DAILY", "WEEKLY", "BIWEEKLY", "MONTHLY", "EVERY_2_MONTHS", "QUARTERLY", "SEMI_ANNUAL", "ANNUAL", "CUSTOM",
+] as const;
+
+// PM §6 — plan types. METER/USAGE/RUNTIME run on the meter engine, the rest on
+// the calendar engine (CONDITION/SEASONAL/INSPECTION are calendar cadences with
+// condition-oriented checklists).
+export const PM_PLAN_TYPES = ["CALENDAR", "METER", "USAGE", "RUNTIME", "CONDITION", "SEASONAL", "INSPECTION"] as const;
+export const PM_METER_PLAN_TYPES = ["METER", "USAGE", "RUNTIME"] as const;
+export const PM_PRIORITIES = ["LOW", "MEDIUM", "HIGH", "CRITICAL"] as const;
+export const PM_CHECKLIST_RESPONSE_TYPES = ["CHECKBOX", "PASSFAIL", "YESNO", "NUMERIC", "TEXT"] as const;
+export const PM_FINDING_SEVERITIES = ["LOW", "MEDIUM", "HIGH", "CRITICAL"] as const;
+export const PM_PHOTO_PHASES = ["BEFORE", "DURING", "AFTER", "FINDING", "METER"] as const;
+export const PM_TASK_STATUSES = ["SCHEDULED", "OVERDUE", "IN_PROGRESS", "COMPLETED", "SKIPPED", "CANCELLED", "FAILED"] as const;
+// PM §15/§54 — standard template-library categories (PmTemplate.category)
+export const PM_TEMPLATE_CATEGORIES = [
+  "HVAC", "ELECTRICAL", "PLUMBING", "FIRE_PROTECTION", "GENERATOR", "LIFT", "BUILDING",
+  "CIVIL", "MECHANICAL", "PEST_CONTROL", "CLEANING", "LANDSCAPE", "GENERAL",
+] as const;
 
 // ── HR letter workflow (spec §16) ──
 // DRAFT — being prepared · AI_GENERATED — AI draft awaiting human review ·

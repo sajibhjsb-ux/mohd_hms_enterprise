@@ -23,7 +23,7 @@ export type EquipmentCore = {
   id: string; assetTag: string; name: string; serialNumber: string;
   manufacturer: string; model: string; category: string; status: string;
   installationDate: string | null; warrantyExpiry: string | null;
-  pmFrequencyDays: number; qrToken: string; notes: string; createdAt: string;
+  pmFrequencyDays: number; criticality: string; qrToken: string; notes: string; createdAt: string;
   customerId: string | null;
   location: { id: string; name: string; code: string } | null;
   customer: { id: string; companyName: string; code: string; contactPerson?: string } | null;
@@ -52,14 +52,16 @@ export type LocationOption = { id: string; name: string; code: string };
 export type FormState = {
   name: string; serialNumber: string; manufacturer: string; model: string; category: string;
   customerId: string; locationId: string; installationDate: string; warrantyExpiry: string;
-  pmFrequencyDays: string; notes: string;
+  pmFrequencyDays: string; criticality: string; notes: string;
 };
 
 export const EMPTY_FORM: FormState = {
   name: "", serialNumber: "", manufacturer: "", model: "", category: "",
   customerId: "", locationId: "", installationDate: "", warrantyExpiry: "",
-  pmFrequencyDays: "90", notes: "",
+  pmFrequencyDays: "90", criticality: "MEDIUM", notes: "",
 };
+
+export const CRITICALITY_OPTIONS = ["LOW", "MEDIUM", "HIGH", "CRITICAL"] as const;
 
 export const CATEGORIES = ["HVAC", "ELECTRICAL", "PLUMBING", "LIFT", "FIRE_SAFETY", "SECURITY", "GENERAL"];
 
@@ -76,6 +78,7 @@ export function payloadFor(f: FormState) {
     installationDate: f.installationDate || undefined,
     warrantyExpiry: f.warrantyExpiry || undefined,
     pmFrequencyDays: f.pmFrequencyDays === "" ? undefined : Number(f.pmFrequencyDays),
+    criticality: f.criticality || undefined,
     notes: f.notes || undefined,
   };
 }
@@ -181,6 +184,16 @@ export function EquipmentFormFields({ f, set, errs, idp, customers, locations, l
         <Label htmlFor={`${idp}-pm`}>PM cycle (days)</Label>
         <Input id={`${idp}-pm`} inputMode="numeric" value={f.pmFrequencyDays} onChange={(e) => set({ pmFrequencyDays: e.target.value.replace(/\D/g, "") })} />
         <FieldError msg={errs.pmFrequencyDays} />
+      </div>
+      <div>
+        <Label htmlFor={`${idp}-crit`}>Criticality</Label>
+        <Select value={f.criticality || "MEDIUM"} onValueChange={(v) => set({ criticality: v })}>
+          <SelectTrigger id={`${idp}-crit`}><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {CRITICALITY_OPTIONS.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <p className="text-xs text-muted-foreground mt-1">Drives default PM plan priority (PM §34).</p>
       </div>
       <div className="sm:col-span-2">
         <Label htmlFor={`${idp}-notes`}>Notes</Label>

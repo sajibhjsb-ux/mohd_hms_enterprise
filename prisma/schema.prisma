@@ -275,6 +275,8 @@ model Equipment {
   installationDate DateTime?
   warrantyExpiry   DateTime?
   pmFrequencyDays  Int       @default(90)
+  // LOW | MEDIUM | HIGH | CRITICAL (PM §34/§35 — drives default PM priority)
+  criticality      String    @default("MEDIUM")
   status           String    @default("ACTIVE") // ACTIVE | UNDER_MAINTENANCE | RETIRED
   qrToken          String    @unique @default(cuid())
   notes            String    @default("")
@@ -286,6 +288,8 @@ model Equipment {
   pmPlans     PmPlan[]
   pmTasks     PmTask[]
   inspections InspectionReport[]
+  meters      EquipmentMeter[]
+  pmFindings  PmFinding[]
 }
 
 // ─────────────────────────── COMPLAINTS ───────────────────────────
@@ -352,6 +356,8 @@ model WorkOrder {
   title               String
   description         String             @default("")
   priority            String             @default("MEDIUM")
+  // GENERAL | COMPLAINT | PM | CORRECTIVE (PM §22 — PM jobs reuse the canonical work-order system)
+  sourceType          String             @default("GENERAL")
   status              String             @default("PENDING") // PENDING | ACCEPTED | IN_PROGRESS | ON_HOLD | COMPLETED | CANCELLED
   scheduledDate       DateTime?
   startedAt           DateTime?
@@ -366,25 +372,36 @@ model WorkOrder {
   confirmedAt         DateTime?
   invoiceId           String?
   invoice             Invoice?           @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  // PM bridge: exactly one work order per PM occurrence (PM §22/§23 idempotency)
+  pmTaskId            String?            @unique
+  pmTask              PmTask?            @relation(fields: [pmTaskId], references: [id], onDelete: SetNull)
   createdAt           DateTime           @default(now())
   updatedAt           DateTime           @updatedAt
 
-  checklist   WorkOrderChecklistItem[]
-  materials   WorkOrderMaterial[]
-  irmsReports InspectionReport[]       @relation("irmsWorkOrders")
+  checklist       WorkOrderChecklistItem[]
+  materials       WorkOrderMaterial[]
+  irmsReports     InspectionReport[]       @relation("irmsWorkOrders")
+  pmFindingSource PmFinding?               @relation("pmCorrectiveWorkOrders")
 
   @@index([status])
   @@index([customerId])
+  @@index([sourceType, status])
 }
 
 model WorkOrderChecklistItem {
-  id          String    @id @default(cuid())
-  workOrderId String
-  workOrder   WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
-  label       String
-  done        Boolean   @default(false)
-  doneAt      DateTime?
-  sortOrder   Int       @default(0)
+  id           String    @id @default(cuid())
+  workOrderId  String
+  workOrder    WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  label        String
+  done         Boolean   @default(false)
+  doneAt       DateTime?
+  // PM §17 — rich checklist responses. done is the completion flag; response
+  // carries the recorded value for non-checkbox types; notes = technician note.
+  required     Boolean   @default(false)
+  responseType String    @default("CHECKBOX") // CHECKBOX | PASSFAIL | YESNO | NUMERIC | TEXT
+  response     String    @default("")
+  notes        String    @default("")
+  sortOrder    Int       @default(0)
 }
 
 model WorkOrderMaterial {
@@ -406,19 +423,48 @@ model PmPlan {
   id                   String             @id @default(cuid())
   code                 String             @unique
   name                 String
+  description          String             @default("")
   equipmentId          String
   equipment            Equipment          @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
-  frequency            String             @default("MONTHLY") // WEEKLY | MONTHLY | QUARTERLY | SEMI_ANNUAL | ANNUAL
+  // CALENDAR | METER | USAGE | RUNTIME | CONDITION | SEASONAL | INSPECTION
+  // Engine mapping: METER/USAGE/RUNTIME → meter engine; the rest → calendar engine.
+  planType             String             @default("CALENDAR")
+  frequency            String             @default("MONTHLY") // DAILY | WEEKLY | BIWEEKLY | MONTHLY | EVERY_2_MONTHS | QUARTERLY | SEMI_ANNUAL | ANNUAL | CUSTOM
+  customIntervalDays   Int? // CUSTOM frequency: every N days
+  intervalUnits        Int? // "every N" with intervalUnit
+  intervalUnit         String? // DAYS | WEEKS | MONTHS | YEARS
+  monthlyOccurrence    String? // FIRST | SECOND | THIRD | FOURTH | LAST (§8 advanced recurrence)
+  monthlyWeekday       Int? // 0=Sun … 6=Sat
+  priority             String             @default("MEDIUM") // LOW | MEDIUM | HIGH | CRITICAL
   assignedTechnicianId String?
   assignedTechnician   TechnicianProfile? @relation("assignedPmPlans", fields: [assignedTechnicianId], references: [id], onDelete: SetNull)
-  checklistTemplate    String             @default("[]") // JSON string of labels
+  checklistTemplate    String             @default("[]") // JSON: [{label, required, responseType}]
+  templateId           String?
+  template             PmTemplate?        @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  startDate            DateTime?
+  endDate              DateTime?
+  estimatedMinutes     Int                @default(60)
+  requiredSkills       String             @default("")
+  safetyRequirements   String             @default("")
+  instructions         String             @default("")
+  requiredParts        String             @default("[]") // JSON: [{inventoryItemId?, name, quantity, unit}]
+  // Meter-based PM (§9–§11)
+  meterId              String?
+  meter                EquipmentMeter?    @relation(fields: [meterId], references: [id], onDelete: SetNull)
+  meterInterval        Float?
+  nextDueMeter         Float?
+  slaResponseHours     Int?
+  slaCompletionHours   Int?
+  approvedById         String?
+  approvedAt           DateTime?
   active               Boolean            @default(true)
   nextDueDate          DateTime?
   lastCompletedAt      DateTime?
   createdAt            DateTime           @default(now())
   updatedAt            DateTime           @updatedAt
 
-  tasks PmTask[]
+  tasks    PmTask[]
+  findings PmFinding[]
 }
 
 model PmTask {
@@ -431,13 +477,32 @@ model PmTask {
   technicianId String?
   technician   TechnicianProfile? @relation("assignedPmTasks", fields: [technicianId], references: [id], onDelete: SetNull)
   dueDate      DateTime
-  status       String             @default("SCHEDULED") // SCHEDULED | OVERDUE | IN_PROGRESS | COMPLETED | SKIPPED
+  priority     String             @default("MEDIUM") // LOW | MEDIUM | HIGH | CRITICAL
+  // SCHEDULED | OVERDUE | IN_PROGRESS | COMPLETED | SKIPPED | CANCELLED | FAILED
+  status       String             @default("SCHEDULED")
   completedAt  DateTime?
   notes        String             @default("")
+  // §23/§61 idempotent occurrence identity (unique per plan)
+  occurrenceKey        String?
+  // §22/§25 — execution happens on the canonical Work Order (sourceType=PM)
+  workOrderId  String?            @unique
+  workOrder    WorkOrder?
+  // §73 audited rescheduling
+  rescheduleReason String         @default("")
+  rescheduledAt    DateTime?
+  rescheduledById  String?
+  // §75 failed PM (unsafe/defective equipment) — requires a finding
+  failedAt          DateTime?
+  failureReason     String         @default("")
   createdAt    DateTime           @default(now())
   updatedAt    DateTime           @updatedAt
 
   checklist PmTaskChecklistItem[]
+  findings  PmFinding[]
+  // photos: generic Document rows (resourceType="PM_TASK", resourceId=task.id)
+
+  @@unique([planId, occurrenceKey])
+  @@index([dueDate, status])
 }
 
 model PmTaskChecklistItem {
@@ -447,6 +512,81 @@ model PmTaskChecklistItem {
   label     String
   done      Boolean @default(false)
   sortOrder Int     @default(0)
+}
+
+// ─── PM §15/§54 — reusable task-template library (snapshot copied into plan) ───
+model PmTemplate {
+  id          String   @id @default(cuid())
+  name        String
+  category    String   @default("GENERAL") // HVAC | ELECTRICAL | PLUMBING | FIRE_PROTECTION | GENERATOR | LIFT | BUILDING | CIVIL | MECHANICAL | PEST_CONTROL | CLEANING | LANDSCAPE | GENERAL
+  description String   @default("")
+  // JSON: [{label, required, responseType}]
+  items       String   @default("[]")
+  active      Boolean  @default(true)
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  plans PmPlan[]
+}
+
+// ─── PM §19 — findings / observations with corrective-work bridge ───
+model PmFinding {
+  id                    String     @id @default(cuid())
+  pmTaskId              String?
+  pmTask                PmTask?    @relation(fields: [pmTaskId], references: [id], onDelete: SetNull)
+  workOrderId           String?
+  planId                String?
+  plan                  PmPlan?    @relation(fields: [planId], references: [id], onDelete: SetNull)
+  equipmentId           String
+  equipment             Equipment  @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  title                 String
+  description           String     @default("")
+  severity              String     @default("MEDIUM") // LOW | MEDIUM | HIGH | CRITICAL
+  cause                 String     @default("")
+  recommendation        String     @default("")
+  immediateAction       String     @default("")
+  followUpRequired      Boolean    @default(false)
+  correctiveWorkOrderId String?    @unique
+  correctiveWorkOrder   WorkOrder? @relation("pmCorrectiveWorkOrders", fields: [correctiveWorkOrderId], references: [id], onDelete: SetNull)
+  createdById           String?
+  createdAt             DateTime   @default(now())
+  updatedAt             DateTime   @updatedAt
+
+  @@index([equipmentId])
+  @@index([pmTaskId])
+}
+
+// ─── PM §9–§11 — multiple meters per asset with full reading history ───
+model EquipmentMeter {
+  id               String    @id @default(cuid())
+  equipmentId      String
+  equipment        Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  name             String // e.g. "Running Hours", "Mileage"
+  unit             String    @default("h") // h | km | cycles | …
+  currentReading   Float     @default(0)
+  currentReadingAt DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  readings EquipmentMeterReading[]
+  pmPlans  PmPlan[]
+
+  @@index([equipmentId])
+}
+
+model EquipmentMeterReading {
+  id           String         @id @default(cuid())
+  meterId      String
+  meter        EquipmentMeter @relation(fields: [meterId], references: [id], onDelete: Cascade)
+  reading      Float
+  readingDate  DateTime       @default(now())
+  recordedById String?
+  source       String         @default("MANUAL") // MANUAL | PM_EXECUTION | IMPORT
+  notes        String         @default("")
+  createdAt    DateTime       @default(now())
+
+  @@index([meterId, readingDate])
 }
 
 // ─────────────────────────── IRMS (Inspections) ───────────────────────────
@@ -910,6 +1050,8 @@ model Document {
   category     String   @default("GENERAL") // COMPLAINT | WORK_ORDER | EQUIPMENT | INSPECTION | QUOTATION | INVOICE | EMPLOYEE | GENERAL
   resourceType String   @default("")
   resourceId   String   @default("")
+  // PM §20 — evidence phase label: BEFORE | DURING | AFTER | FINDING | METER | ""
+  label        String   @default("")
   uploadedById String?
   createdAt    DateTime @default(now())
 }

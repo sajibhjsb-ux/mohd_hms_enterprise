@@ -13,6 +13,7 @@ import type { SessionUser } from "@/lib/hms/auth";
 import { WO_DETAIL_INCLUDE, assertViewWorkOrder, isAssignedTechnician, assertWoTransition } from "../../_lib";
 import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 import { dedupeSubmission } from "@/lib/hms/workflows/idempotency";
+import { computeNextDue } from "@/lib/hms/pm/schedule";
 
 type Ctx = { req: NextRequest; user: SessionUser };
 
@@ -83,6 +84,13 @@ export const POST = withId(
               });
             }
           }
+          // PM §25 — mirror the canonical work-order state onto the PM occurrence.
+          if (row.pmTaskId) {
+            await tx.pmTask.updateMany({
+              where: { id: row.pmTaskId, status: { in: ["SCHEDULED", "OVERDUE"] } },
+              data: { status: "IN_PROGRESS" },
+            });
+          }
           return row;
         });
         await audit({ actorId: user.id, actorEmail: user.email, action: "WORK_ORDER_STARTED", resourceType: "WORK_ORDER", resourceId: id, metadata: { code } });
@@ -128,13 +136,15 @@ export const POST = withId(
           const labourTotalCents = Math.round(current.labourHours * current.labourRateCents);
           const totalCents = labourTotalCents + materialsTotalCents;
 
-          // §15 — checklist enforcement is BACKEND-authoritative: a work order
+          // §15/§17 — checklist enforcement is BACKEND-authoritative: a work order
           // with unfinished checklist items cannot be completed, regardless of UI.
+          // For required rich items (PASSFAIL/YESNO/NUMERIC/TEXT) a recorded
+          // response is also mandatory — an unticked required item blocks completion.
           const checklist = await tx.workOrderChecklistItem.findMany({
             where: { workOrderId: id },
-            select: { label: true, done: true },
+            select: { label: true, done: true, required: true, responseType: true, response: true },
           });
-          const pending = checklist.filter((c) => !c.done);
+          const pending = checklist.filter((c) => !c.done || (c.required && c.responseType !== "CHECKBOX" && c.response.trim() === ""));
           if (pending.length > 0) {
             throw Errors.invalidTransition(
               `Cannot complete: ${pending.length} checklist item(s) still open (${pending.slice(0, 3).map((c) => c.label).join(", ")}${pending.length > 3 ? "…" : ""}).`
@@ -183,6 +193,33 @@ export const POST = withId(
             data: { status: "COMPLETED", completedAt: now, labourTotalCents, materialsTotalCents, totalCents, ...(body.note ? { notes: body.note } : {}) },
             include: WO_DETAIL_INCLUDE,
           });
+
+          // PM §2/§25/§31 — completing a PM work order closes its occurrence and
+          // triggers the next maintenance cycle (backend-authoritative, same tx).
+          if (current.pmTaskId) {
+            const task = await tx.pmTask.findUnique({
+              where: { id: current.pmTaskId },
+              include: { plan: true },
+            });
+            if (task && task.status !== "COMPLETED" && task.status !== "SKIPPED" && task.status !== "CANCELLED") {
+              await tx.pmTask.update({
+                where: { id: task.id },
+                data: { status: "COMPLETED", completedAt: now },
+              });
+              const plan = task.plan;
+              if (plan) {
+                const next = computeNextDue(plan, task.dueDate);
+                await tx.pmPlan.update({
+                  where: { id: plan.id },
+                  data: {
+                    lastCompletedAt: now,
+                    ...(next.nextDueDate ? { nextDueDate: next.nextDueDate > now ? next.nextDueDate : task.dueDate } : {}),
+                    ...(typeof next.nextDueMeter === "number" ? { nextDueMeter: next.nextDueMeter } : {}),
+                  },
+                });
+              }
+            }
+          }
           return { updated: row, lowStockItems: lowStock };
         });
 
@@ -190,6 +227,12 @@ export const POST = withId(
         await notifyRole("SUPERVISOR", { title: "Work order completed", message: `${code} completed by ${user.name}.`, type: "SUCCESS", resourceType: "WORK_ORDER", resourceId: id });
         if (portalUserId) {
           await notify({ userId: portalUserId, title: "Work order completed", message: `Work order ${code} for your site has been completed.`, type: "SUCCESS", resourceType: "WORK_ORDER", resourceId: id });
+        }
+        // PM §72 — PM completion audit + supervisor notification (occurrence closed,
+        // next cycle already computed inside the transaction above).
+        if (updated.pmTaskId) {
+          await audit({ actorId: user.id, actorEmail: user.email, action: "PM_COMPLETED", resourceType: "PM_TASK", resourceId: updated.pmTaskId, metadata: { taskCode: updated.pmTask?.code ?? null, workOrderCode: code } });
+          await notifyRole("SUPERVISOR", { title: "PM completed", message: `PM occurrence ${updated.pmTask?.code ?? ""} (${code}) completed by ${user.name}. Review when ready.`, type: "SUCCESS", resourceType: "PM_TASK", resourceId: updated.pmTaskId });
         }
         return ok(updated);
       }
@@ -199,6 +242,15 @@ export const POST = withId(
         const updated = await db.workOrder.update({
           where: { id }, data: { status: "CANCELLED" }, include: WO_DETAIL_INCLUDE,
         });
+        // PM §74 — cancelling a PM work order cancels the occurrence (never
+        // counted as completed; compliance excludes it on both sides).
+        if (updated.pmTaskId) {
+          await db.pmTask.updateMany({
+            where: { id: updated.pmTaskId, status: { in: ["SCHEDULED", "OVERDUE", "IN_PROGRESS"] } },
+            data: { status: "CANCELLED" },
+          });
+          await audit({ actorId: user.id, actorEmail: user.email, action: "PM_CANCELLED", resourceType: "PM_TASK", resourceId: updated.pmTaskId, metadata: { workOrderCode: code, reason: body.note ?? "" } });
+        }
         await audit({ actorId: user.id, actorEmail: user.email, action: "WORK_ORDER_CANCELLED", resourceType: "WORK_ORDER", resourceId: id, metadata: { code, fromStatus: from } });
         if (wo.technician?.user?.id && wo.technician.user.id !== user.id) {
           await notify({ userId: wo.technician.user.id, title: "Work order cancelled", message: `Work order ${code} was cancelled.`, type: "WARNING", resourceType: "WORK_ORDER", resourceId: id });

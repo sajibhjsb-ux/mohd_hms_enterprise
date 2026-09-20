@@ -39,24 +39,27 @@ export function PageHeader({ title, subtitle, actions }: { title: string; subtit
 /**
  * KPI stat card. When `href` is provided the whole card is a semantic link
  * (keyboard accessible, Enter to activate) to the drill-down feature page —
- * never a popup. Hover: subtle elevation + green-tinted border; active: press
- * effect. Without `href` it renders as a plain, non-clickable card.
+ * never a popup. With `onClick` (and no href) the card is a semantic button
+ * for in-page drill-down panels. Hover: subtle elevation + green-tinted
+ * border; active: press effect. Without either it renders as a plain,
+ * non-clickable card.
  */
-export function StatCard({ title, value, sub, icon, tone = "default", loading, href }: { title: string; value: string | number; sub?: string; icon?: ReactNode; tone?: "default" | "warning" | "danger" | "success"; loading?: boolean; href?: string }) {
+export function StatCard({ title, value, sub, icon, tone = "default", loading, href, onClick }: { title: string; value: string | number; sub?: string; icon?: ReactNode; tone?: "default" | "warning" | "danger" | "success"; loading?: boolean; href?: string; onClick?: () => void }) {
   const toneCls = {
     default: "text-primary bg-primary/10",
     warning: "text-amber-600 bg-amber-100",
     danger: "text-red-600 bg-red-100",
     success: "text-emerald-600 bg-emerald-100",
   }[tone];
+  const interactive = Boolean(href || onClick);
   const card = (
     <Card
       className={cn(
         "shadow-sm relative",
-        href && "transition-all duration-150 border-border group-hover:border-primary/45 group-hover:shadow-md group-hover:bg-primary/[0.035] group-active:translate-y-0 group-active:shadow-sm"
+        interactive && "transition-all duration-150 border-border group-hover:border-primary/45 group-hover:shadow-md group-hover:bg-primary/[0.035] group-active:translate-y-0 group-active:shadow-sm"
       )}
     >
-      {href ? (
+      {interactive ? (
         <ArrowUpRight
           className="absolute right-3 top-3 h-4 w-4 text-primary opacity-0 translate-x-0.5 -translate-y-0.5 group-hover:opacity-100 group-hover:translate-x-0 group-hover:translate-y-0 transition-all"
           aria-hidden
@@ -76,16 +79,30 @@ export function StatCard({ title, value, sub, icon, tone = "default", loading, h
       </CardContent>
     </Card>
   );
-  if (!href) return card;
-  return (
-    <a
-      href={href}
-      className="group block rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-      aria-label={loading ? `${title} — loading` : `${title}, ${value}. View ${title}.`}
-    >
-      {card}
-    </a>
-  );
+  if (href) {
+    return (
+      <a
+        href={href}
+        className="group block rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+        aria-label={loading ? `${title} — loading` : `${title}, ${value}. View ${title}.`}
+      >
+        {card}
+      </a>
+    );
+  }
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className="group block w-full text-left rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+        aria-label={loading ? `${title} — loading` : `${title}, ${value}. Show ${title}.`}
+      >
+        {card}
+      </button>
+    );
+  }
+  return card;
 }
 
 /** One drill-down filter chip derived from the URL query. */

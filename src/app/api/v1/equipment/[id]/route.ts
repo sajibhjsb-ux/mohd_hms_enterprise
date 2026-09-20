@@ -93,6 +93,7 @@ const patchSchema = z.object({
   installationDate: dateInput.nullable().optional(),
   warrantyExpiry: dateInput.nullable().optional(),
   pmFrequencyDays: z.number().int().min(1).max(3650).optional(),
+  criticality: z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]).optional(),
   status: z.enum(["ACTIVE", "UNDER_MAINTENANCE", "RETIRED"]).optional(),
   notes: z.string().max(2000).optional(),
 });
@@ -126,6 +127,7 @@ export const PATCH = withId(PERMISSIONS.equipment_update, async (id, { req, user
       ...(body.installationDate !== undefined ? { installationDate: body.installationDate ? new Date(body.installationDate) : null } : {}),
       ...(body.warrantyExpiry !== undefined ? { warrantyExpiry: body.warrantyExpiry ? new Date(body.warrantyExpiry) : null } : {}),
       ...(body.pmFrequencyDays !== undefined ? { pmFrequencyDays: body.pmFrequencyDays } : {}),
+      ...(body.criticality !== undefined ? { criticality: body.criticality } : {}),
       ...(body.status !== undefined ? { status: body.status } : {}),
       ...(body.notes !== undefined ? { notes: body.notes.trim() } : {}),
     },

@@ -12,7 +12,7 @@ import { api } from "@/lib/hms/api-client";
 import { hasPerm, useSession } from "@/components/hms/session";
 import { navigateTo } from "@/lib/hms/router";
 import { PageShell } from "@/components/hms/shared/page-shell";
-import { StatusBadge, LoadingState, EmptyState, ErrorState } from "@/components/hms/shared/ui-bits";
+import { PriorityBadge, StatusBadge, LoadingState, EmptyState, ErrorState } from "@/components/hms/shared/ui-bits";
 import { PERMISSIONS } from "@/lib/hms/constants";
 import { customerLabel, fmtDate } from "@/lib/hms/format";
 import { useToast } from "@/hooks/use-toast";
@@ -27,6 +27,8 @@ import {
 import { HistorySection, type EquipmentDetail, type HistoryItem } from "./shared";
 import { PdfButtons } from "@/components/hms/shared/pdf-buttons";
 
+type PmPlanLite = { id: string; code: string; name: string; frequency: string; priority: string | null; active: boolean; nextDueDate: string | null };
+
 export function EquipmentDetailPage({ id }: { id: string }) {
   const { user } = useSession();
   const { toast } = useToast();
@@ -34,6 +36,7 @@ export function EquipmentDetailPage({ id }: { id: string }) {
   const canDelete = hasPerm(user, PERMISSIONS.equipment_delete);
 
   const [detail, setDetail] = useState<EquipmentDetail | null>(null);
+  const [pmPlans, setPmPlans] = useState<PmPlanLite[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [confirmRetire, setConfirmRetire] = useState(false);
@@ -45,6 +48,12 @@ export function EquipmentDetailPage({ id }: { id: string }) {
     try {
       const res = await api.get<EquipmentDetail>(`/api/v1/equipment/${id}`);
       setDetail(res.data);
+      // §58 — PM schedule panel: linked plans + next due (best-effort, pm_read users).
+      if (hasPerm(user, PERMISSIONS.pm_read)) {
+        api.get<PmPlanLite[]>(`/api/v1/pm/plans?equipmentId=${encodeURIComponent(id)}&pageSize=20`)
+          .then((r) => setPmPlans(r.data ?? []))
+          .catch(() => setPmPlans([]));
+      }
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Could not load this equipment.");
     } finally {
@@ -105,6 +114,7 @@ export function EquipmentDetailPage({ id }: { id: string }) {
   const pmTasks: HistoryItem[] = detail.history.pmTasks.map((p) => ({
     id: p.id, code: p.code, primary: `Due ${fmtDate(p.dueDate)}`, badge: p.status,
     secondary: p.completedAt ? `Done ${fmtDate(p.completedAt)}` : "Not completed",
+    href: `/pm/tasks/${encodeURIComponent(p.id)}`,
   }));
   const inspections: HistoryItem[] = detail.history.inspections.map((i) => ({
     id: i.id, code: i.code, primary: i.title, badge: i.status,
@@ -162,6 +172,43 @@ export function EquipmentDetailPage({ id }: { id: string }) {
             </div>
           ) : null}
         </div>
+
+        {/* §58 — Preventive maintenance schedule (linked plans + next due) */}
+        {pmPlans ? (
+          <div className="rounded-xl border bg-card shadow-sm p-4 sm:p-5 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-semibold flex items-center gap-2">
+                <CalendarClock className="h-4 w-4 text-primary" /> Preventive maintenance schedule
+              </p>
+              <Button variant="outline" size="sm" onClick={() => navigateTo("pm", [], { tab: "plans" })}>
+                Open PM module
+              </Button>
+            </div>
+            {pmPlans.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No PM plans linked to this unit yet.</p>
+            ) : (
+              <div className="space-y-2 max-h-96 overflow-y-auto hms-scroll">
+                {pmPlans.map((pl) => {
+                  const overdue = pl.active && pl.nextDueDate && new Date(pl.nextDueDate).getTime() < Date.now();
+                  return (
+                    <div key={pl.id} className="flex flex-wrap sm:flex-nowrap items-center gap-x-3 gap-y-1 rounded-lg border px-3 py-2.5 min-h-[44px]">
+                      <span className="font-mono text-xs text-muted-foreground w-28 shrink-0">{pl.code}</span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium">{pl.name}</span>
+                        <span className="block text-xs text-muted-foreground">{pl.frequency}</span>
+                      </span>
+                      <span className={`text-xs whitespace-nowrap ${overdue ? "text-red-600 font-medium" : "text-muted-foreground"}`}>
+                        {pl.nextDueDate ? `Next ${fmtDate(pl.nextDueDate)}` : "Meter-driven"}
+                      </span>
+                      {pl.priority ? <PriorityBadge priority={pl.priority} /> : null}
+                      <StatusBadge status={pl.active ? "ACTIVE" : "INACTIVE"} />
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        ) : null}
 
         {/* Maintenance history (former dialog sections, moved 1:1) */}
         <div className="rounded-xl border bg-card shadow-sm p-4 sm:p-5 space-y-5">

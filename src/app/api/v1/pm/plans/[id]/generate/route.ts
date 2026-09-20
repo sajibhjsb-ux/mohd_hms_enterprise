@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { db } from "@/lib/db";
-import { handler, ok, Errors } from "@/lib/hms/api";
+import { handler, ok, parseBody, Errors } from "@/lib/hms/api";
 import type { SessionUser } from "@/lib/hms/auth";
-import { PERMISSIONS, FREQUENCY_DAYS } from "@/lib/hms/constants";
+import { PERMISSIONS } from "@/lib/hms/constants";
 import { roleCan } from "@/lib/hms/rbac";
-import { audit, nextNumber, notify } from "@/lib/hms/services";
+import { generatePmOccurrence, PmGenerateError } from "@/lib/hms/pm/generate";
 
 function withId(fn: (id: string, ctx: { req: NextRequest; user: SessionUser }) => Promise<NextResponse>) {
   return async (req: NextRequest, ctx: { params: Promise<{ id: string }> }) => {
@@ -13,87 +14,66 @@ function withId(fn: (id: string, ctx: { req: NextRequest; user: SessionUser }) =
   };
 }
 
+const generateSchema = z.object({
+  dueDate: z.string().datetime().optional(),
+});
+
 /**
- * Generate a scheduled PM task from a plan.
+ * Generate the next scheduled PM occurrence from a plan (PM §22/§23).
  * Allowed for pm_manage (supervisors) OR pm_execute (technicians may self-generate).
- * Creates the task + checklist items from the plan template and advances the
- * plan's nextDueDate by its frequency so the cycle always stays ahead.
+ * Idempotent: the same occurrence (planId + occurrenceKey) never produces two
+ * tasks/work orders — repeated calls return the existing open occurrence.
+ * Creates the PmTask occurrence + its execution Work Order (sourceType=PM) with
+ * the checklist snapshot, and advances the plan's next due (calendar or meter).
  */
 export const POST = withId(
   async (id, { req, user }) => {
     const allowed = roleCan(user.role, PERMISSIONS.pm_manage) || roleCan(user.role, PERMISSIONS.pm_execute);
     if (!allowed) throw Errors.forbidden();
 
-    const plan = await db.pmPlan.findUnique({
-      where: { id },
-      include: { equipment: true, assignedTechnician: { include: { user: true } } },
-    });
-    if (!plan) throw Errors.notFound("PM plan not found.");
-    if (!plan.active) throw Errors.invalidTransition("PM plan is inactive. Activate it before generating tasks.");
+    const body = await parseBody(req, generateSchema).catch(() => ({}) as { dueDate?: string });
+    const dueDate = body?.dueDate ? new Date(body.dueDate) : undefined;
+    if (dueDate && Number.isNaN(dueDate.getTime())) throw Errors.badRequest("dueDate must be a valid ISO date.");
 
-    // Template → checklist item labels
-    let labels: string[] = [];
+    let result: Awaited<ReturnType<typeof generatePmOccurrence>>;
     try {
-      const parsed: unknown = JSON.parse(plan.checklistTemplate || "[]");
-      if (Array.isArray(parsed)) labels = parsed.filter((l): l is string => typeof l === "string" && l.trim().length > 0);
-    } catch {
-      labels = [];
+      result = await generatePmOccurrence({
+        planId: id,
+        actorId: user.id,
+        actorEmail: user.email,
+        dueDate,
+        source: "MANUAL",
+      });
+    } catch (err) {
+      if (err instanceof PmGenerateError) {
+        if (err.code === "NOT_FOUND") throw Errors.notFound(err.message);
+        throw Errors.invalidTransition(err.message);
+      }
+      throw err;
     }
 
-    const code = await nextNumber("PMT");
-    const dueDate = plan.nextDueDate ?? new Date();
-    const nextDue = new Date(dueDate.getTime() + (FREQUENCY_DAYS[plan.frequency] ?? 30) * 86400000);
-
-    const task = await db.$transaction(async (tx) => {
-      const created = await tx.pmTask.create({
-        data: {
-          code,
-          planId: plan.id,
-          equipmentId: plan.equipmentId,
-          technicianId: plan.assignedTechnicianId ?? null,
-          dueDate,
-          status: "SCHEDULED",
-        },
-      });
-      if (labels.length > 0) {
-        await tx.pmTaskChecklistItem.createMany({
-          data: labels.map((label, i) => ({ taskId: created.id, label, done: false, sortOrder: i })),
-        });
-      }
-      await tx.pmPlan.update({ where: { id: plan.id }, data: { nextDueDate: nextDue } });
-      return created;
-    });
+    if (!result.created) {
+      // Idempotent success — the occurrence already exists; surface it so the
+      // UI can navigate there instead of duplicating work (PM §61).
+      return ok({ duplicate: true, reason: result.reason, taskId: result.existingTaskId ?? null, taskCode: result.existingTaskCode ?? null });
+    }
 
     const full = await db.pmTask.findUnique({
-      where: { id: task.id },
+      where: { id: result.taskId },
       include: {
-        plan: { select: { id: true, name: true, code: true } },
-        equipment: { select: { id: true, name: true, assetTag: true } },
+        plan: { select: { id: true, name: true, code: true, planType: true, priority: true } },
+        equipment: { select: { id: true, name: true, assetTag: true, criticality: true } },
         technician: { select: { id: true, user: { select: { name: true } } } },
         checklist: { orderBy: { sortOrder: "asc" } },
+        workOrder: {
+          select: {
+            id: true, code: true, status: true, priority: true,
+            checklist: { orderBy: { sortOrder: "asc" } },
+          },
+        },
       },
     });
 
-    await audit({
-      actorId: user.id,
-      actorEmail: user.email,
-      action: "PM_TASK_GENERATED",
-      resourceType: "PmTask",
-      resourceId: task.id,
-      metadata: { code, planCode: plan.code, equipment: plan.equipment.name },
-    });
-
-    if (plan.assignedTechnician) {
-      await notify({
-        userId: plan.assignedTechnician.userId,
-        title: "PM task scheduled",
-        message: `${code} — ${plan.name} on ${plan.equipment.name} is due ${dueDate.toISOString().slice(0, 10)}.`,
-        type: "INFO",
-        resourceType: "PmTask",
-        resourceId: task.id,
-      });
-    }
-
-    return ok(full, 201);
+    return ok({ duplicate: false, task: full, workOrderId: result.workOrderId, workOrderCode: result.workOrderCode, nextDueDate: result.nextDueDate, nextDueMeter: result.nextDueMeter }, 201);
   }
 );

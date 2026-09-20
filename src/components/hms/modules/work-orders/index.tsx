@@ -48,6 +48,7 @@ type WORow = {
   equipment?: { id: string; name: string; assetTag: string } | null;
   technician?: { id: string; user?: { id: string; name: string } | null } | null;
   complaint?: { id: string; code: string } | null;
+  sourceType?: string | null;
 };
 
 const PENDING_STATUSES = ["PENDING", "ACCEPTED"];
@@ -64,6 +65,9 @@ const STATUS_TABS: { key: string; label: string; match: (s: string) => boolean }
   { key: "COMPLETED", label: "Completed", match: (s) => s === "COMPLETED" },
   { key: "CANCELLED", label: "Cancelled", match: (s) => s === "CANCELLED" },
 ];
+
+const sourceTypeLabel = (s: string) =>
+  s === "PM" ? "PM" : s === "CORRECTIVE" ? "Corrective" : s === "COMPLAINT" ? "Complaint" : "Manual";
 
 // ── Module router ──
 
@@ -90,6 +94,10 @@ function WorkOrdersList() {
   const dq = useModuleQuery("work-orders");
   const statusTab = STATUS_TABS.find((t) => t.key === dq.params.status?.toUpperCase());
   const statusParam = statusTab?.key;
+  // PM KPI drill-down (?source=pm|corrective) — server-side sourceType filter.
+  const sourceParam = ["pm", "corrective", "general", "complaint"].includes((dq.params.source ?? "").toLowerCase())
+    ? (dq.params.source as string).toUpperCase()
+    : null;
 
   // All page navigation flows through the hash router (URL + Back/Forward).
   const openPage = useCallback((seg: string[]) => navigateTo("work-orders", seg), []);
@@ -104,7 +112,7 @@ function WorkOrdersList() {
     setLoading(true);
     setLoadError(null);
     try {
-      const res = await api.get<WORow[]>(`/api/v1/work-orders${qs({ pageSize: 200 })}`);
+      const res = await api.get<WORow[]>(`/api/v1/work-orders${qs({ pageSize: 200, ...(sourceParam ? { source: sourceParam } : {}) })}`);
       setRows(res.data);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Failed to load work orders.");
@@ -147,6 +155,16 @@ function WorkOrdersList() {
     { key: "code", header: "Code", value: (r) => r.code, className: "font-mono text-xs whitespace-nowrap" },
     { key: "title", header: "Title", value: (r) => r.title, className: "max-w-[240px] truncate" },
     { key: "status", header: "Status", render: (r) => <StatusBadge status={r.status} />, value: (r) => r.status },
+    {
+      key: "source", header: "Source", value: (r) => r.sourceType ?? "GENERAL", hideOnMobile: true,
+      render: (r) => {
+        const src = (r.sourceType ?? "GENERAL").toUpperCase();
+        if (src === "PM") return <span className="inline-flex items-center rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.5 text-[11px] font-medium">PM</span>;
+        if (src === "CORRECTIVE") return <span className="inline-flex items-center rounded-full bg-amber-100 text-amber-800 px-2 py-0.5 text-[11px] font-medium">Corrective</span>;
+        if (src === "COMPLAINT") return <span className="inline-flex items-center rounded-full bg-stone-100 text-stone-700 px-2 py-0.5 text-[11px] font-medium">Complaint</span>;
+        return <span className="text-xs text-muted-foreground">Manual</span>;
+      },
+    },
     { key: "priority", header: "Priority", render: (r) => <PriorityBadge priority={r.priority} />, value: (r) => r.priority, hideOnMobile: true },
     { key: "customer", header: "Customer", value: (r) => customerLabel(r.customer), hideOnMobile: true },
     { key: "technician", header: "Technician", value: (r) => r.technician?.user?.name ?? "", render: (r) => r.technician?.user?.name ?? "—" },
@@ -167,7 +185,10 @@ function WorkOrdersList() {
       />
 
       <DrilldownChips
-        chips={statusParam && statusParam !== "ALL" ? [{ key: "status", label: "Status", value: humanize(statusParam) }] : []}
+        chips={[
+          ...(statusParam && statusParam !== "ALL" ? [{ key: "status", label: "Status", value: humanize(statusParam) }] : []),
+          ...(sourceParam ? [{ key: "source", label: "Source", value: sourceTypeLabel(sourceParam) }] : []),
+        ]}
         onRemove={(key) => dq.apply({ [key]: undefined })}
         onClear={dq.clear}
       />
@@ -220,6 +241,16 @@ function WorkOrdersList() {
             label: "Priorities",
             options: PRIORITIES.map((p) => ({ value: p, label: humanize(p) })),
             match: (row, value) => row.priority === value,
+          }, {
+            key: "source",
+            label: "Source",
+            options: [
+              { value: "GENERAL", label: "Manual" },
+              { value: "PM", label: "PM" },
+              { value: "CORRECTIVE", label: "Corrective" },
+              { value: "COMPLAINT", label: "Complaint" },
+            ],
+            match: (row, value) => (row.sourceType ?? "GENERAL").toUpperCase() === value,
           }]}
           emptyTitle="No work orders match"
           exportName="work-orders"

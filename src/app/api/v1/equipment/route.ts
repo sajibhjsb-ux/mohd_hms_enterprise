@@ -26,6 +26,7 @@ const EQUIPMENT_SELECT = {
   installationDate: true,
   warrantyExpiry: true,
   pmFrequencyDays: true,
+  criticality: true,
   qrToken: true,
   notes: true,
   createdAt: true,
@@ -96,6 +97,7 @@ const createSchema = z.object({
   installationDate: dateInput.optional(),
   warrantyExpiry: dateInput.optional(),
   pmFrequencyDays: z.number().int().min(1).max(3650).optional(),
+  criticality: z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]).optional(),
   notes: z.string().max(2000).optional(),
 });
 
@@ -132,6 +134,7 @@ export const POST = handler(
         installationDate: body.installationDate ? new Date(body.installationDate) : null,
         warrantyExpiry: body.warrantyExpiry ? new Date(body.warrantyExpiry) : null,
         pmFrequencyDays: body.pmFrequencyDays ?? 90,
+        criticality: body.criticality ?? "MEDIUM",
         notes: body.notes?.trim() ?? "",
       },
       select: EQUIPMENT_SELECT,

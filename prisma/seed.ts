@@ -41,6 +41,8 @@ async function main() {
     db.workOrderMaterial.deleteMany(), db.workOrderChecklistItem.deleteMany(), db.workOrder.deleteMany(),
     db.complaintStatusHistory.deleteMany(), db.complaint.deleteMany(),
     db.pmTaskChecklistItem.deleteMany(), db.pmTask.deleteMany(), db.pmPlan.deleteMany(),
+    db.pmTemplate.deleteMany(), db.pmFinding.deleteMany(),
+    db.equipmentMeterReading.deleteMany(), db.equipmentMeter.deleteMany(),
     db.inspectionFinding.deleteMany(), db.inspectionReport.deleteMany(), db.irmsProject.deleteMany(),
     db.equipment.deleteMany(), db.location.deleteMany(),
     db.attendance.deleteMany(), db.leaveRequest.deleteMany(), db.employee.deleteMany(), db.department.deleteMany(),
@@ -105,6 +107,8 @@ async function main() {
         serialNumber: `SN-${randomBytes(3).toString("hex").toUpperCase()}${1000 + i}`,
         locationId: locs.find((l) => l.code === e[4])!.id,
         customerId: customers[i % 3].id,
+        // PM §34 — criticality drives default PM priority (chiller/fire pump critical, generator + lift high)
+        criticality: ["CRITICAL", "HIGH", "MEDIUM", "HIGH", "HIGH", "CRITICAL", "MEDIUM", "MEDIUM"][i] ?? "MEDIUM",
         installationDate: days(-400 - i * 30), warrantyExpiry: days(200 + i * 45),
         pmFrequencyDays: [30, 90, 60, 90, 180, 90, 365, 30][i],
         status: i === 3 ? "UNDER_MAINTENANCE" : "ACTIVE",
@@ -210,13 +214,23 @@ async function main() {
     ["Generator annual overhaul", 3, "SEMI_ANNUAL", 0],
     ["Cooling tower monthly clean", 7, "MONTHLY", 1],
   ] as const;
+  // First plan uses the RICH checklist format (PM §17/§54) so both the legacy
+  // string format and the rich {label,required,responseType} path stay exercised.
+  const firstPlanRichChecklist = [
+    { label: "Inspect compressor oil level", required: false, responseType: "CHECKBOX" },
+    { label: "Check refrigerant pressures", required: true, responseType: "NUMERIC" },
+    { label: "Test safety controls", required: true, responseType: "PASSFAIL" },
+    { label: "Clean condenser coils", required: false, responseType: "CHECKBOX" },
+  ];
   for (const [i, p] of pmPlanDefs.entries()) {
     const eq = equipment[p[1]];
     await db.pmPlan.create({
       data: {
         code: `PM-2025-${String(i + 1).padStart(4, "0")}`, name: p[0], equipmentId: eq.id,
         frequency: p[2], assignedTechnicianId: techs[p[3]].id,
-        checklistTemplate: JSON.stringify(pmChecklists[eq.category] ?? pmChecklists.HVAC),
+        checklistTemplate: i === 0
+          ? JSON.stringify(firstPlanRichChecklist)
+          : JSON.stringify(pmChecklists[eq.category] ?? pmChecklists.HVAC),
         nextDueDate: days([5, 12, 3, 60, 9][i]),
         lastCompletedAt: i % 2 === 0 ? days(-FREQ(p[2]) + 10) : null,
       },
@@ -225,21 +239,122 @@ async function main() {
   function FREQ(f: string): number { return { WEEKLY: 7, MONTHLY: 30, QUARTERLY: 90, SEMI_ANNUAL: 182, ANNUAL: 365 }[f] ?? 30; }
   const plans = await db.pmPlan.findMany();
   const taskStates = ["SCHEDULED", "OVERDUE", "COMPLETED", "SCHEDULED", "IN_PROGRESS"] as const;
+  let woSeq = 0;
   for (const [i, plan] of plans.entries()) {
     const st = taskStates[i];
+    const eq = await db.equipment.findUnique({ where: { id: plan.equipmentId }, select: { customerId: true, name: true } });
+    if (!eq?.customerId) continue;
+    // §22 — every seeded occurrence executes through the canonical work order system.
+    const woStatus = st === "COMPLETED" ? "COMPLETED" : st === "IN_PROGRESS" ? "IN_PROGRESS" : "PENDING";
+    woSeq += 1;
+    const wo = await db.workOrder.create({
+      data: {
+        code: `WO-2026-${String(woSeq).padStart(4, "0")}`,
+        customerId: eq.customerId, equipmentId: plan.equipmentId, technicianId: plan.assignedTechnicianId,
+        title: `[PM] ${plan.name} — ${eq.name}`,
+        description: `Preventive maintenance from plan ${plan.code}.`,
+        priority: plan.priority === "CRITICAL" ? "URGENT" : plan.priority ?? "MEDIUM",
+        sourceType: "PM", status: woStatus,
+        scheduledDate: days([-3, -1, -20, 12, 2][i]),
+        startedAt: ["IN_PROGRESS", "COMPLETED"].includes(st) ? days(st === "COMPLETED" ? -20 : -1) : null,
+        completedAt: st === "COMPLETED" ? days(-19) : null,
+      },
+    });
     const task = await db.pmTask.create({
       data: {
         code: `PMT-2025-${String(i + 1).padStart(4, "0")}`, planId: plan.id, equipmentId: plan.equipmentId,
         technicianId: plan.assignedTechnicianId, dueDate: days([-3, -1, -20, 12, 2][i]),
+        priority: plan.priority ?? "MEDIUM",
         status: st, completedAt: st === "COMPLETED" ? days(-19) : null,
+        occurrenceKey: `cal:${days([-3, -1, -20, 12, 2][i]).toISOString().slice(0, 10)}`,
+        workOrderId: wo.id,
         notes: st === "COMPLETED" ? "All checklist items verified, readings normal." : "",
       },
     });
-    const labels = JSON.parse(plan.checklistTemplate) as string[];
-    for (const [li, label] of labels.entries()) {
+    // Link the 1:1 bridge from the work-order side (WorkOrder.pmTaskId owns the FK).
+    await db.workOrder.update({ where: { id: wo.id }, data: { pmTaskId: task.id } });
+    // Rich checklist snapshot on the execution work order (§17).
+    const parsedTemplate = JSON.parse(plan.checklistTemplate) as (string | { label: string; required?: boolean; responseType?: string })[];
+    for (const [li, raw] of parsedTemplate.entries()) {
+      const item = typeof raw === "string" ? { label: raw, required: false, responseType: "CHECKBOX" } : raw;
+      await db.workOrderChecklistItem.create({
+        data: {
+          workOrderId: wo.id, label: item.label, required: !!item.required,
+          responseType: item.responseType ?? "CHECKBOX",
+          done: st === "COMPLETED" || (st === "IN_PROGRESS" && li === 0),
+          doneAt: st === "COMPLETED" ? days(-19) : st === "IN_PROGRESS" && li === 0 ? days(-1) : null,
+          response: item.responseType && item.responseType !== "CHECKBOX" && (st === "COMPLETED" || (st === "IN_PROGRESS" && li === 0)) ? "OK" : "",
+          sortOrder: li,
+        },
+      });
+    }
+    // Legacy mirror kept for historical parity.
+    for (const [li, raw] of parsedTemplate.entries()) {
+      const label = typeof raw === "string" ? raw : raw.label;
       await db.pmTaskChecklistItem.create({ data: { taskId: task.id, label, done: st === "COMPLETED", sortOrder: li } });
     }
   }
+
+  // ── PM template library (§15/§54) ──
+  await db.pmTemplate.create({
+    data: {
+      name: "HVAC Preventive Maintenance", category: "HVAC",
+      description: "Standard split/central HVAC preventive service checklist.",
+      items: JSON.stringify([
+        { label: "Inspect evaporator coil", required: false, responseType: "CHECKBOX" },
+        { label: "Inspect condenser coil", required: false, responseType: "CHECKBOX" },
+        { label: "Check refrigerant condition", required: false, responseType: "CHECKBOX" },
+        { label: "Check electrical terminals", required: false, responseType: "CHECKBOX" },
+        { label: "Check drain line", required: false, responseType: "CHECKBOX" },
+        { label: "Inspect fan motor", required: false, responseType: "CHECKBOX" },
+        { label: "Inspect filter", required: false, responseType: "CHECKBOX" },
+        { label: "Test thermostat", required: true, responseType: "PASSFAIL" },
+        { label: "Record operating current", required: true, responseType: "NUMERIC" },
+        { label: "Record temperature", required: true, responseType: "NUMERIC" },
+        { label: "Clean equipment", required: false, responseType: "CHECKBOX" },
+      ]),
+    },
+  });
+  await db.pmTemplate.create({
+    data: {
+      name: "Electrical DB Maintenance", category: "ELECTRICAL",
+      description: "Distribution board inspection and testing routine.",
+      items: JSON.stringify([
+        { label: "Inspect distribution board", required: false, responseType: "CHECKBOX" },
+        { label: "Test protection devices", required: true, responseType: "PASSFAIL" },
+        { label: "Check cable connections", required: false, responseType: "CHECKBOX" },
+        { label: "Check contactor", required: false, responseType: "CHECKBOX" },
+        { label: "Check isolator", required: false, responseType: "CHECKBOX" },
+        { label: "Thermal inspection where applicable", required: false, responseType: "CHECKBOX" },
+        { label: "Record readings", required: true, responseType: "TEXT" },
+      ]),
+    },
+  });
+
+  // ── Meter-based PM demo (§9–§11): generator running hours ──
+  const genMeter = await db.equipmentMeter.create({
+    data: { equipmentId: equipment[3].id, name: "Running Hours", unit: "h", currentReading: 430, currentReadingAt: days(-2) },
+  });
+  for (const [reading, offsetDays] of [[380, -75], [400, -45], [430, -2]] as [number, number][]) {
+    await db.equipmentMeterReading.create({
+      data: { meterId: genMeter.id, reading, readingDate: days(offsetDays), recordedById: techUsers[0].id, source: "MANUAL" },
+    });
+  }
+  await db.pmPlan.create({
+    data: {
+      code: "PM-2025-0006", name: "Generator 500-Hour Service", equipmentId: equipment[3].id,
+      description: "Major service every 500 running hours — oil, filters and full inspection.",
+      planType: "METER", frequency: "MONTHLY", // placeholder cadence; the meter engine drives the real due
+      priority: equipment[3].criticality, // from criticality (HIGH)
+      assignedTechnicianId: techs[0].id,
+      checklistTemplate: JSON.stringify([
+        { label: "Change engine oil", required: true, responseType: "CHECKBOX" },
+        { label: "Record running hours", required: true, responseType: "NUMERIC" },
+      ]),
+      meterId: genMeter.id, meterInterval: 500, nextDueMeter: 500,
+      nextDueDate: null, active: true,
+    },
+  });
 
   // ── Suppliers & Inventory ──
   const suppliers: Supplier[] = [];
@@ -463,10 +578,14 @@ async function main() {
     { actorId: supervisor.id, actorEmail: supervisor.email, action: "COMPLAINT_ASSIGNED", resourceType: "COMPLAINT", resourceId: complaints[0].id, metadata: JSON.stringify({ technician: "Ahmad Faizal" }) },
   ] });
 
-  // counters
-  await counter("CPT", 6); await counter("WO", 4); await counter("PM", 5); await counter("PMT", 5);
+  // counters — legacy keys kept + year-suffixed keys so runtime nextNumber()
+  // (which uses `${prefix}-${year}` keys) continues AFTER the seeded codes with
+  // no collisions (seed ends at PM-2025-0006 / PMT-2025-0005 / WO-2025-0004 / WO-2026-0005 PM jobs).
+  await counter("CPT", 6); await counter("WO", 4); await counter("PM", 6); await counter("PMT", 5);
   await counter("QTN", 1); await counter("INV", 2); await counter("PAY", 2); await counter("PO", 1);
   await counter("TRX", 3); await counter("EXP", 1); await counter("INS", 2); await counter("PRJ", 2);
+  await counter("PM-2025", 6); await counter("PMT-2025", 5); await counter("WO-2025", 4); await counter("CPT-2025", 6);
+  await counter("WO-2026", 5);
 
   console.log("Seed complete.");
   console.log("Logins (password Password@123):");

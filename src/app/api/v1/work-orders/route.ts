@@ -51,6 +51,15 @@ export const GET = handler(
     if (q.status) where.status = q.status;
     if (technicianId && user.role !== "CUSTOMER") where.technicianId = technicianId;
     if (complaintId && user.role !== "CUSTOMER") where.complaintId = complaintId;
+    // PM §26/§44 — source filter so PM/Corrective work can be listed separately.
+    const source = (sp.get("source") ?? "").trim();
+    if (source) {
+      const upper = source.toUpperCase();
+      if (!["GENERAL", "COMPLAINT", "PM", "CORRECTIVE"].includes(upper)) {
+        throw Errors.badRequest("Unknown work order source. Use GENERAL, COMPLAINT, PM or CORRECTIVE.");
+      }
+      where.sourceType = upper;
+    }
     if (q.search) {
       where.AND = [{ OR: [{ code: { contains: q.search } }, { title: { contains: q.search } }] }];
     }

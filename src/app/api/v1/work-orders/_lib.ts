@@ -9,6 +9,7 @@ export const WO_INCLUDE = {
   equipment: { select: { id: true, name: true, assetTag: true } },
   technician: { select: { id: true, user: { select: { id: true, name: true } } } },
   complaint: { select: { id: true, code: true } },
+  pmTask: { select: { id: true, code: true, planId: true } },
 } satisfies Prisma.WorkOrderInclude;
 
 export const WO_DETAIL_INCLUDE = {
