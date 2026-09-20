@@ -9,7 +9,7 @@ import {
   LayoutDashboard, Users, Building2, UserCog, HardHat, AlertTriangle, ClipboardList,
   Wrench, CalendarClock, Boxes, ShoppingCart, FileText, Receipt, Wallet, IdCard,
   SearchCheck, BarChart3, Settings, History, Truck, QrCode, CircleUserRound,
-  ScrollText, ShieldCheck, MessageCircle, ScanLine, Mail,
+  ScrollText, ShieldCheck, MessageCircle, ScanLine, Mail, FolderClosed,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -43,6 +43,7 @@ import { FinanceModule } from "./modules/finance";
 import { HrModule } from "./modules/hr";
 import { EmailModule } from "./modules/email";
 import { WhatsAppModule } from "./modules/whatsapp";
+import { FilesModule } from "./modules/files";
 import { IrmsModule } from "./modules/irms";
 import { ReportsModule } from "./modules/reports";
 import { VehiclesModule } from "./modules/vehicles";
@@ -83,6 +84,10 @@ export const MODULES: ModuleDef[] = [
   { key: "email", label: "Email Configuration", shortLabel: "Email", icon: Mail, permissions: ["email.view"], component: EmailModule },
   { key: "whatsapp", label: "WhatsApp", shortLabel: "Chat", icon: MessageCircle, permissions: ["whatsapp.view"], component: WhatsAppModule },
   { key: "irms", label: "IRMS Inspections", shortLabel: "IRMS", icon: SearchCheck, permissions: ["irms.read", "irms.portal"], component: IrmsModule },
+  // Files — centralized private file management (MinIO-backed, spec §2/§31):
+  // every role gets a personal space (files.read); object-level authorization
+  // and sharing govern access to other users' content — never role alone.
+  { key: "files", label: "Files", icon: FolderClosed, permissions: ["files.read"], component: FilesModule },
   { key: "vehicles", label: "Vehicles", icon: Truck, permissions: ["vehicles.read"], component: VehiclesModule },
   { key: "reports", label: "Reports", icon: BarChart3, permissions: ["reports.read"], component: ReportsModule },
   { key: "audit", label: "Audit Logs", shortLabel: "Audit", icon: History, roles: ["SUPER_ADMIN", "ADMIN"], permissions: ["audit.read"], component: AuditModule },

@@ -91,6 +91,8 @@ export const EVENT_TYPES = {
   IRMS_REPORT_UPDATED: "IRMS_REPORT_UPDATED",
   IRMS_PHOTOS_UPDATED: "IRMS_PHOTOS_UPDATED",
   VEHICLE_UPDATED: "VEHICLE_UPDATED",
+  // Files module — content/share changes for the owner + share recipients
+  FILES_UPDATED: "FILES_UPDATED",
 } as const;
 
 export type EventType = (typeof EVENT_TYPES)[keyof typeof EVENT_TYPES];

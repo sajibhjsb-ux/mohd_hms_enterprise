@@ -68,6 +68,16 @@ model User {
   payrollRunsPaid      PayrollRun[] @relation("PayrollRunPayer")
   payrollRunsLocked    PayrollRun[] @relation("PayrollRunLocker")
   overtimeApproved     OvertimeRequest[] @relation("OvertimeApprover")
+  // Files module (§11) — ownership + attribution across file entities
+  fileFolders          FileFolder[]      @relation("FileFolders")
+  fileFoldersTrashed   FileFolder[]      @relation("FileFoldersTrashed")
+  fileEntries          FileEntry[]       @relation("FileEntries")
+  fileEntriesTrashed   FileEntry[]       @relation("FileEntriesTrashed")
+  fileVersionsUploaded FileVersion[]     @relation("FileVersions")
+  fileSharesGiven      FileShare[]       @relation("FileSharesGiven")
+  fileSharesReceived   FileShare[]       @relation("FileSharesReceived")
+  fileStars            FileStar[]        @relation("FileStars")
+  fileUploadSessions   FileUploadSession[] @relation("FileUploadSessions")
 
   @@index([role])
   @@index([status])
@@ -2294,4 +2304,141 @@ model WhatsAppWebhookEvent {
 
   @@index([event, receivedAt])
   @@index([status])
+}
+
+// ── Files module (§3–§23) — centralized private file management ─────────────
+// MinIO (S3) stores file content under server-generated keys; PostgreSQL
+// (SQLite in dev) stores metadata. Buckets stay private — every download is
+// served through authorized API routes (no presigned URLs, no public objects).
+
+model FileFolder {
+  id          String       @id @default(cuid())
+  ownerId     String
+  owner       User         @relation("FileFolders", fields: [ownerId], references: [id], onDelete: Cascade)
+  parentId    String?
+  parent      FileFolder?  @relation("FileFolderTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children    FileFolder[] @relation("FileFolderTree")
+  name        String
+  // Trash (soft deletion §17) — batch timestamp lets a folder restore exactly
+  // the descendants trashed together with it (not items deleted separately).
+  trashedAt   DateTime?
+  trashedById String?
+  trashedBy   User?        @relation("FileFoldersTrashed", fields: [trashedById], references: [id], onDelete: SetNull)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  files       FileEntry[]
+
+  @@index([ownerId, parentId])
+  @@index([trashedAt])
+}
+
+model FileEntry {
+  id             String        @id @default(cuid())
+  ownerId        String
+  owner          User          @relation("FileEntries", fields: [ownerId], references: [id], onDelete: Cascade)
+  folderId       String?
+  folder         FileFolder?   @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  name           String
+  mimeType       String
+  sizeBytes      Int
+  checksum       String        @default("") // sha256 hex of the CURRENT version (server-computed)
+  objectKey      String        // MinIO key of the CURRENT version (server-generated)
+  currentVersion Int           @default(1)
+  // Trash (§17) — originalFolderId survives a trash/restore cycle.
+  trashedAt      DateTime?
+  trashedById    String?
+  trashedBy      User?         @relation("FileEntriesTrashed", fields: [trashedById], references: [id], onDelete: SetNull)
+  originalFolderId String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  versions       FileVersion[]
+
+  @@index([ownerId, folderId])
+  @@index([ownerId, trashedAt])
+  @@index([name])
+}
+
+model FileVersion {
+  id           String    @id @default(cuid())
+  fileId       String
+  file         FileEntry @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  version      Int
+  objectKey    String
+  sizeBytes    Int
+  mimeType     String
+  checksum     String
+  uploadedById String?
+  uploadedBy   User?     @relation("FileVersions", fields: [uploadedById], references: [id], onDelete: SetNull)
+  note         String    @default("")
+  createdAt    DateTime  @default(now())
+
+  @@unique([fileId, version])
+  @@index([fileId])
+}
+
+// §13 — object-level grants. EDIT ⊇ DOWNLOAD ⊇ VIEW; MANAGE ⊇ EDIT.
+// Folder grants apply to the folder tree (inherited permissions §13/§15);
+// file grants are direct (§13). Revocation is immediate (no cached access).
+model FileShare {
+  id          String    @id @default(cuid())
+  targetType  String // FILE | FOLDER
+  targetId    String
+  sharedById  String
+  sharedBy    User      @relation("FileSharesGiven", fields: [sharedById], references: [id], onDelete: Cascade)
+  sharedWithId String
+  sharedWith  User      @relation("FileSharesReceived", fields: [sharedWithId], references: [id], onDelete: Cascade)
+  // VIEW | DOWNLOAD | EDIT | MANAGE
+  permission  String    @default("VIEW")
+  expiresAt   DateTime?
+  revokedAt   DateTime?
+  revokedById String?
+  createdAt   DateTime  @default(now())
+
+  // Polymorphic target — targetId references FileEntry or FileFolder by
+  // targetType. Prisma has no polymorphic FKs, so integrity is enforced in
+  // the service layer (existence checks inside transactions + cascade in code).
+
+  @@unique([targetType, targetId, sharedWithId])
+  @@index([sharedWithId, targetType])
+  @@index([targetId])
+}
+
+// §23 — per-user favorites for files AND folders.
+model FileStar {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation("FileStars", fields: [userId], references: [id], onDelete: Cascade)
+  targetType String // FILE | FOLDER
+  targetId   String
+  createdAt  DateTime @default(now())
+
+  @@unique([userId, targetType, targetId])
+  @@index([userId])
+}
+
+// §8/§11 — chunked/resumable upload sessions. Chunks are staged as MinIO
+// objects under uploads-tmp/{sessionId}/{index}; complete = assemble + verify
+// checksum + move to the permanent key, all server-side.
+model FileUploadSession {
+  id           String    @id @default(cuid())
+  userId       String
+  user         User      @relation("FileUploadSessions", fields: [userId], references: [id], onDelete: Cascade)
+  name         String
+  mimeType     String    @default("")
+  sizeBytes    Int
+  totalChunks  Int
+  receivedChunks String  @default("") // comma-separated indexes of stored chunks
+  receivedBytes Int      @default(0)
+  // PENDING | COMPLETED | ABORTED
+  status       String    @default("PENDING")
+  folderId     String?
+  checksum     String    @default("")
+  fileId       String?   // set on completion (resulting FileEntry)
+  error        String    @default("")
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([userId, status])
 }

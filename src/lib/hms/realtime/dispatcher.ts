@@ -305,6 +305,15 @@ export async function resolveRooms(event: RealtimeEventRow): Promise<Room[]> {
     case EVENT_TYPES.CUSTOMER_UPDATED:
       return [...staffAll(), ...customer(event.resourceId)];
 
+    // ── Files: content/share changes reach the exact affected users —
+    //    payload.userIds (owner + share recipients) when present, otherwise
+    //    the owner's user room. Never broadcast file activity to bystanders.
+    case EVENT_TYPES.FILES_UPDATED: {
+      const ids = Array.isArray(payload.userIds) ? (payload.userIds as unknown[]) : [];
+      const rooms = ids.filter((v): v is string => typeof v === "string").flatMap((id) => user(id));
+      return rooms.length > 0 ? rooms : user(event.resourceId ?? undefined);
+    }
+
     default:
       // Fail closed: unknown/new event types reach management only —
       // never technicians or customers without an explicit rule.

@@ -142,6 +142,18 @@ export const PERMISSIONS = {
   payroll_read: "payroll.read",
   payroll_manage: "payroll.manage",
   payroll_approve: "payroll.approve",
+  // Files (centralized private file management) — read/create/update/delete/
+  // share are PERSONAL-space permissions granted to every role (each user
+  // manages their own files; object-level authorization + sharing govern
+  // access to OTHERS' files — role permissions are the coarse gate only).
+  // manage_storage/audit are ADMIN/SUPER_ADMIN capabilities.
+  files_read: "files.read",
+  files_create: "files.create",
+  files_update: "files.update",
+  files_delete: "files.delete",
+  files_share: "files.share",
+  files_manage_storage: "files.manage_storage",
+  files_audit: "files.audit",
 } as const;
 
 export type Permission = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
@@ -168,6 +180,9 @@ const SUPERVISOR_PERMS: Permission[] = [
   PERMISSIONS.irms_read, PERMISSIONS.irms_create, PERMISSIONS.irms_manage,
   PERMISSIONS.reports_read, PERMISSIONS.reports_export,
   PERMISSIONS.vehicles_read, PERMISSIONS.vehicles_manage,
+  // Files — personal file manager for every staff role (spec §31/§34)
+  PERMISSIONS.files_read, PERMISSIONS.files_create, PERMISSIONS.files_update,
+  PERMISSIONS.files_delete, PERMISSIONS.files_share,
 ];
 
 const TECHNICIAN_PERMS: Permission[] = [
@@ -179,6 +194,8 @@ const TECHNICIAN_PERMS: Permission[] = [
   PERMISSIONS.checklist_view,
   PERMISSIONS.inventory_read,
   PERMISSIONS.irms_read, PERMISSIONS.irms_create,
+  PERMISSIONS.files_read, PERMISSIONS.files_create, PERMISSIONS.files_update,
+  PERMISSIONS.files_delete, PERMISSIONS.files_share,
 ];
 
 const CUSTOMER_PERMS: Permission[] = [
@@ -194,6 +211,10 @@ const CUSTOMER_PERMS: Permission[] = [
   // Checklist engine §52 — customers see only their own checklists/results,
   // sanitized (no technician notes / AI metadata / approval internals).
   PERMISSIONS.checklist_view,
+  // Files §33 — customers manage their OWN private files + shared-with-them;
+  // administrative Files features stay behind files.manage_storage/audit.
+  PERMISSIONS.files_read, PERMISSIONS.files_create, PERMISSIONS.files_update,
+  PERMISSIONS.files_delete, PERMISSIONS.files_share,
 ];
 
 const FINANCE_PERMS: Permission[] = [
@@ -207,6 +228,8 @@ const FINANCE_PERMS: Permission[] = [
   // Payroll (spec §29) — Finance reviews, approves and marks payment;
   // preparation stays with HR (segregation of duties).
   PERMISSIONS.payroll_read, PERMISSIONS.payroll_approve,
+  PERMISSIONS.files_read, PERMISSIONS.files_create, PERMISSIONS.files_update,
+  PERMISSIONS.files_delete, PERMISSIONS.files_share,
 ];
 
 const HR_PERMS: Permission[] = [
@@ -222,6 +245,8 @@ const HR_PERMS: Permission[] = [
   // Payroll (spec §28/§29) — HR prepares, calculates and adjusts payroll;
   // approval stays with FINANCE/ADMIN (segregation of duties, spec §28).
   PERMISSIONS.payroll_read, PERMISSIONS.payroll_manage,
+  PERMISSIONS.files_read, PERMISSIONS.files_create, PERMISSIONS.files_update,
+  PERMISSIONS.files_delete, PERMISSIONS.files_share,
 ];
 
 export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
