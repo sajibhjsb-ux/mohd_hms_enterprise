@@ -41,6 +41,18 @@ function assertNotSuperAdminTarget(target: { role: string }, actor: SessionUser)
   }
 }
 
+/**
+ * Role-assignment escalation guard (role/position spec §25): granting the
+ * SUPER_ADMIN role itself is a SUPER_ADMIN-only act. The edit UI hides the
+ * option for non-SA actors — this makes that rule backend-enforced, not just
+ * a disabled dropdown.
+ */
+function assertCanAssignRole(newRole: string | undefined, actor: SessionUser) {
+  if (newRole === "SUPER_ADMIN" && actor.role !== "SUPER_ADMIN") {
+    throw Errors.forbidden("Only a SUPER_ADMIN can grant the SUPER_ADMIN role.");
+  }
+}
+
 export const GET = withId(PERMISSIONS.users_read, async (id) => {
   const u = await db.user.findUnique({
     where: { id },
@@ -50,6 +62,9 @@ export const GET = withId(PERMISSIONS.users_read, async (id) => {
       customer: { select: { id: true, companyName: true, code: true } },
       technicianProfile: { select: { id: true, employeeNo: true, specialty: true, skills: true, status: true } },
       employee: { select: { id: true, employeeNo: true, firstName: true, lastName: true } },
+      // Job position (organizational title) — displayed SEPARATELY from role.
+      positionId: true,
+      position: { select: { id: true, name: true, status: true } },
     },
   });
   if (!u) throw Errors.notFound("User not found.");
@@ -62,6 +77,9 @@ const patchSchema = z.object({
   // SUPER_ADMIN-only identity field (spec §5/§17/§29).
   email: z.string().trim().toLowerCase().email("Enter a valid email address.").max(200).optional(),
   role: z.enum(["SUPER_ADMIN", "ADMIN", "SUPERVISOR", "TECHNICIAN", "CUSTOMER", "FINANCE", "HR"]).optional(),
+  // JOB POSITION (job title) — independent from role (spec §1/§13/§22). May be
+  // sent alone, with role, or cleared with null. NEVER affects permissions.
+  positionId: z.string().min(1).nullable().optional(),
   status: z.enum(["ACTIVE", "DISABLED"]).optional(),
   action: z.literal("reset_password").optional(),
   newPassword: z.string().max(200).optional(),
@@ -73,11 +91,19 @@ export const PATCH = withId(PERMISSIONS.users_update, async (id, { req, user }) 
 
   const target = await db.user.findUnique({
     where: { id },
-    select: { id: true, email: true, name: true, phone: true, role: true, status: true, googleId: true, technicianProfile: { select: { id: true } } },
+    select: {
+      id: true, email: true, name: true, phone: true, role: true, status: true, googleId: true,
+      positionId: true,
+      position: { select: { id: true, name: true } },
+      technicianProfile: { select: { id: true } },
+      employee: { select: { id: true, position: true } },
+    },
   });
   if (!target) throw Errors.notFound("User not found.");
 
   assertNotSuperAdminTarget(target, user);
+  // §25 escalation guard: only a SUPER_ADMIN may grant the SUPER_ADMIN role.
+  assertCanAssignRole(body.role, user);
 
   // ── Identity-field gate (spec §5) — BACKEND enforcement, not UI-only ──
   // Only a SUPER_ADMIN may change a user's name, email or phone. This
@@ -142,6 +168,21 @@ export const PATCH = withId(PERMISSIONS.users_update, async (id, { req, user }) 
     }
   }
 
+  // ── Job-position validation (spec §29) ──
+  // The position must exist and be ACTIVE to be assigned (a deactivated title
+  // stays on people who already hold it — clearing or reassignment is how
+  // they move off it). Position changes are independent of role changes.
+  const positionChanged = body.positionId !== undefined && body.positionId !== target.positionId;
+  let newPositionName: string | null = null;
+  if (body.positionId !== undefined && body.positionId !== null) {
+    const pos = await db.jobPosition.findUnique({ where: { id: body.positionId }, select: { id: true, name: true, status: true } });
+    if (!pos) throw Errors.badRequest("Selected position does not exist.", [{ path: "positionId", message: "Unknown position." }]);
+    if (pos.status !== "ACTIVE" && pos.id !== target.positionId) {
+      throw Errors.badRequest("This position is inactive and cannot be assigned.", [{ path: "positionId", message: "Position is inactive." }]);
+    }
+    newPositionName = pos.name;
+  }
+
   // Pre-allocate a technician number OUTSIDE the transaction — nextNumber()
   // writes via the global db client, which would deadlock on SQLite inside one.
   const tecEmployeeNo = body.role === "TECHNICIAN" && !target.technicianProfile ? await nextNumber("TEC") : null;
@@ -177,6 +218,7 @@ export const PATCH = withId(PERMISSIONS.users_update, async (id, { req, user }) 
         ...(body.phone !== undefined ? { phone: body.phone?.trim() || null } : {}),
         ...(body.email !== undefined ? { email: body.email, emailVerified: null } : {}),
         ...(body.role !== undefined ? { role: body.role } : {}),
+        ...(body.positionId !== undefined ? { positionId: body.positionId } : {}),
         ...(body.status !== undefined ? { status: body.status } : {}),
       },
       select: {
@@ -202,6 +244,18 @@ export const PATCH = withId(PERMISSIONS.users_update, async (id, { req, user }) 
     // Employee contact mirror (HR/employee records read their own email).
     if (body.email !== undefined) {
       await tx.employee.updateMany({ where: { userId: id }, data: { email: body.email } });
+    }
+
+    // Job-position mirror (role/position spec — one person, ONE job title):
+    // the linked Employee record follows the account's position, its free-text
+    // `position` string stays the denormalized snapshot used by letters,
+    // attendance and the profile page. Clearing the account position clears
+    // the linked employee's catalog link and snapshot together.
+    if (positionChanged) {
+      await tx.employee.updateMany({
+        where: { userId: id },
+        data: { positionId: body.positionId ?? null, position: newPositionName ?? "" },
+      });
     }
 
     // Becoming a technician: provision a profile if missing (role-change spec
@@ -238,6 +292,8 @@ export const PATCH = withId(PERMISSIONS.users_update, async (id, { req, user }) 
       lastLoginAt: true, createdAt: true,
       customer: { select: { id: true, companyName: true, code: true } },
       technicianProfile: { select: { id: true, employeeNo: true, specialty: true, status: true } },
+      positionId: true,
+      position: { select: { id: true, name: true } },
     },
   });
 
@@ -263,6 +319,8 @@ export const PATCH = withId(PERMISSIONS.users_update, async (id, { req, user }) 
   // ── Dedicated role-change audit record (role-change spec §17/§18) ──
   // A clear ROLE CHANGE row (previous → new, SUCCESS) that the user-detail
   // role history reads; from→to keeps each change reviewable in the audit UI.
+  // Position context is included so a combined role+position change (spec §14)
+  // is reviewable from either dedicated row.
   if (roleChanged) {
     await audit({
       actorId: user.id, actorEmail: user.email,
@@ -270,6 +328,10 @@ export const PATCH = withId(PERMISSIONS.users_update, async (id, { req, user }) 
       metadata: {
         targetEmail: target.email, targetName: target.name,
         previousRole: target.role, newRole: body.role, result: "SUCCESS",
+        // Position context at change time — role change NEVER moves the
+        // position (spec §12); this only documents what it was.
+        positionAtChange: target.position?.name ?? null,
+        ...(positionChanged ? { previousPosition: target.position?.name ?? null, newPosition: newPositionName } : {}),
       },
       ip,
     });
@@ -277,6 +339,35 @@ export const PATCH = withId(PERMISSIONS.users_update, async (id, { req, user }) 
       userId: id,
       title: "Your account role was changed",
       message: `Your role was changed from ${target.role} to ${body.role} by ${user.name}. You may need to refresh to see your new access.`,
+      type: "INFO", resourceType: "USER", resourceId: id,
+    });
+  }
+
+  // ── Dedicated position-change audit record (role/position spec §15) ──
+  // Previous → new JOB TITLE, changed-by, result — the position history view
+  // reads these rows. Position changes never alter permissions (spec §22), so
+  // sessions are untouched; the USER_UPDATED realtime event lets the target's
+  // open app refresh its display.
+  if (positionChanged) {
+    const previousPositionName = target.position?.name ?? null;
+    await audit({
+      actorId: user.id, actorEmail: user.email,
+      action: "USER_POSITION_CHANGED", resourceType: "USER", resourceId: id,
+      metadata: {
+        targetEmail: target.email, targetName: target.name,
+        previousPosition: previousPositionName, newPosition: newPositionName,
+        // Role context at change time — position change NEVER moves the role.
+        roleAtChange: body.role ?? target.role,
+        result: "SUCCESS",
+      },
+      ip,
+    });
+    await notify({
+      userId: id,
+      title: "Your position has been updated",
+      message: newPositionName
+        ? `Your position has been updated to ${newPositionName} by ${user.name}.`
+        : `Your position (${previousPositionName ?? "—"}) has been cleared by ${user.name}.`,
       type: "INFO", resourceType: "USER", resourceId: id,
     });
   }
@@ -330,7 +421,7 @@ export const PATCH = withId(PERMISSIONS.users_update, async (id, { req, user }) 
   // authoritative on the user's very next API call. Sessions are intentionally
   // KEPT (no forced re-login); the client refreshes its own session state when
   // the USER_UPDATED event for its own id arrives (shell.tsx sync).
-  await emit({ type: EVENT_TYPES.USER_UPDATED, resourceType: "USER", resourceId: id, payload: { fields: Object.keys(body).filter((k) => k !== "action"), roleChanged }, actorType: "USER", actorId: user.id });
+  await emit({ type: EVENT_TYPES.USER_UPDATED, resourceType: "USER", resourceId: id, payload: { fields: Object.keys(body).filter((k) => k !== "action"), roleChanged, positionChanged }, actorType: "USER", actorId: user.id });
   return ok(fresh ?? updated);
 });
 

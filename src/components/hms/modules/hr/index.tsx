@@ -14,7 +14,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Users, UserCheck, CalendarOff, UserX, Clock, CalendarPlus, Plus, Check, X, Info, FileText,
+  Users, UserCheck, CalendarOff, UserX, Clock, CalendarPlus, Plus, Check, X, Info, FileText, Briefcase,
 } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api, qs } from "@/lib/hms/api-client";
@@ -37,6 +37,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { HrAttendancePage } from "./attendance-page";
 import { HrLeaveNewPage } from "./leave-page";
 import { HrDepartmentNewPage } from "./department-page";
+import { PositionsTab, HrPositionNewPage, HrPositionEditPage } from "./positions";
 import { LettersHome } from "./letters/letters-home";
 import { LetterWizardPage } from "./letters/wizard";
 import { LetterEditorPage } from "./letters/editor";
@@ -123,6 +124,9 @@ export function HrModule() {
   if (page.view === "attendance" && page.id) return <HrAttendancePage attendanceId={page.id} />;
   if (page.view === "leave" && page.id === "new") return <HrLeaveNewPage />;
   if (page.view === "departments" && page.id === "new") return <HrDepartmentNewPage />;
+  // Position management (role/position spec §9): dedicated pages under /hr/positions/*.
+  if (page.view === "positions" && page.id === "new") return <HrPositionNewPage />;
+  if (page.view === "positions-edit" && page.id) return <HrPositionEditPage id={page.id} />;
   return <HrList />;
 }
 
@@ -454,6 +458,7 @@ function HrList({ initialTab }: { initialTab?: string } = {}) {
         <TabsList className="mb-4">
           <TabsTrigger value="letters"><FileText className="h-4 w-4 mr-1.5" /> Letters</TabsTrigger>
           <TabsTrigger value="employees"><Users className="h-4 w-4 mr-1.5" /> Employees</TabsTrigger>
+          <TabsTrigger value="positions"><Briefcase className="h-4 w-4 mr-1.5" /> Positions</TabsTrigger>
           <TabsTrigger value="attendance"><Clock className="h-4 w-4 mr-1.5" /> Attendance</TabsTrigger>
           <TabsTrigger value="leave"><CalendarPlus className="h-4 w-4 mr-1.5" /> Leave</TabsTrigger>
         </TabsList>
@@ -490,6 +495,10 @@ function HrList({ initialTab }: { initialTab?: string } = {}) {
               exportName="employees"
             />
           )}
+        </TabsContent>
+
+        <TabsContent value="positions">
+          <PositionsTab />
         </TabsContent>
 
         <TabsContent value="attendance">

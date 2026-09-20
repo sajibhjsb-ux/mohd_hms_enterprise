@@ -14,16 +14,20 @@ import { PageShell } from "@/components/hms/shared/page-shell";
 import { EmptyState } from "@/components/hms/shared/ui-bits";
 import { PERMISSIONS } from "@/lib/hms/constants";
 import { useToast } from "@/hooks/use-toast";
-import { api, ClientApiError } from "@/lib/hms/api-client";
+import { api, ClientApiError, qs } from "@/lib/hms/api-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DepartmentField } from "./department-field";
 import {
   EMPTY_FORM, FieldError, SalaryField, extractFieldErrors, payloadFor,
   type EmployeeRow, type FieldErrors, type FormState,
 } from "./shared";
+
+/** Position catalog option (ACTIVE titles only are assignable). */
+type PositionOption = { id: string; name: string };
 
 export function EmployeeNewPage() {
   const { user } = useSession();
@@ -34,6 +38,16 @@ export function EmployeeNewPage() {
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [saving, setSaving] = useState(false);
+  const [positions, setPositions] = useState<PositionOption[] | null>(null);
+
+  // Position catalog — ACTIVE titles only (managed in HR → Positions).
+  useEffect(() => {
+    let alive = true;
+    api.get<PositionOption[]>(`/api/v1/hr/positions${qs({ status: "ACTIVE", pageSize: 200, sort: "name" })}`)
+      .then((res) => { if (alive) setPositions(res.data); })
+      .catch(() => { if (alive) setPositions(null); });
+    return () => { alive = false; };
+  }, []);
 
   // ── Dirty-state wiring (central router guard + data protection) ──
   const dirty = useMemo(() => JSON.stringify(form) !== JSON.stringify(EMPTY_FORM), [form]);
@@ -121,7 +135,17 @@ export function EmployeeNewPage() {
               />
               <div>
                 <Label htmlFor="e-position">Position</Label>
-                <Input id="e-position" value={form.position} onChange={(e) => set({ position: e.target.value })} placeholder="e.g. HVAC Technician" />
+                <Select value={form.positionId || "none"} onValueChange={(v) => set({ positionId: v === "none" ? "" : v })}>
+                  <SelectTrigger id="e-position" aria-label="Position"><SelectValue placeholder="No position assigned" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No position assigned</SelectItem>
+                    {(positions ?? []).map((p) => (
+                      <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-[11px] text-muted-foreground mt-1">Managed job titles live in HR → Positions.</p>
+                <FieldError msg={fieldErrors.positionId} />
               </div>
               <div>
                 <Label htmlFor="e-email">Email</Label>

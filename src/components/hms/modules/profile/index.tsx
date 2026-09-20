@@ -45,7 +45,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  AlertTriangle, ArrowLeft, BadgeCheck, Building2, CheckCircle2, ChevronRight, Clock,
+  AlertTriangle, ArrowLeft, BadgeCheck, Briefcase, Building2, CheckCircle2, ChevronRight, Clock,
   IdCard, ImagePlus, KeyRound, Loader2, Lock, Mail, MapPin, Pencil, Phone, Save,
   ScrollText, ShieldCheck, Smartphone, Trash2, User, Wrench,
 } from "lucide-react";
@@ -58,6 +58,8 @@ type ProfilePayload = {
     name: string;
     phone: string | null;
     role: string;
+    // Organizational job title — display-only, separate from the RBAC role.
+    position?: string | null;
     status: string;
     avatarUrl: string | null;
     googleLinked: boolean;
@@ -378,6 +380,16 @@ function ProfileViewPage() {
               {humanize(data.user.role)}
             </Badge>
           </div>
+          {/* Job position (role/position spec §6) — shown with the role so the
+              distinction between ACCESS (role) and JOB TITLE (position) is
+              obvious. Falls back to the employee record's snapshot title. */}
+          {(data.user.position ?? data.employee?.position) ? (
+            <div className="flex items-center gap-2 text-sm">
+              <Briefcase className="h-4 w-4 text-muted-foreground shrink-0" aria-hidden />
+              <span className="text-muted-foreground">Position:</span>
+              <span>{data.user.position ?? data.employee?.position}</span>
+            </div>
+          ) : null}
           <Separator />
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
             <div className="flex items-center gap-2">

@@ -60,6 +60,8 @@ export const GET = handler(async ({ user }) => {
       technicianProfile: true,
       employee: { include: { department: true } },
       customer: true,
+      // Job position (job title) — independent of the RBAC role above.
+      position: true,
     },
   });
   if (!me) throw Errors.notFound("User not found.");
@@ -82,6 +84,8 @@ export const GET = handler(async ({ user }) => {
       name: me.name,
       phone: me.phone,
       role: me.role,
+      // Organizational job title — display-only, never an authorization input.
+      position: me.position?.name ?? null,
       status: me.status,
       avatarUrl: me.avatarUrl,
       googleLinked: !!me.googleId,

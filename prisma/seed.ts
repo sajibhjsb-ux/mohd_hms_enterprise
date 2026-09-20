@@ -1,6 +1,6 @@
 // MOHD.HMS ENTERPRISE — database seed (initial production data)
 // Run: bunx tsx prisma/seed.ts   (or: bun run prisma/seed.ts)
-import { PrismaClient, type User, type Customer, type Location, type Equipment, type Complaint, type WorkOrder, type Supplier, type InventoryItem, type Employee, type TechnicianProfile } from "@prisma/client";
+import { PrismaClient, type User, type Customer, type Location, type Equipment, type Complaint, type WorkOrder, type Supplier, type InventoryItem, type Employee, type TechnicianProfile, type Department } from "@prisma/client";
 import { randomBytes, scrypt as _scrypt } from "crypto";
 import { promisify } from "util";
 
@@ -50,6 +50,7 @@ async function main() {
     db.attendance.deleteMany(), db.leaveRequest.deleteMany(), db.employee.deleteMany(), db.department.deleteMany(),
     db.vehicle.deleteMany(), db.technicianProfile.deleteMany(),
     db.session.deleteMany(), db.passwordResetToken.deleteMany(), db.user.deleteMany(),
+    db.jobPosition.deleteMany(), // after employees & users (they reference positions)
     db.customer.deleteMany(), db.setting.deleteMany(), db.counter.deleteMany(),
   ]);
 
@@ -593,6 +594,68 @@ async function main() {
   }
   await db.leaveRequest.create({ data: { employeeId: employees[1].id, type: "ANNUAL", startDate: days(14), endDate: days(18), days: 5, reason: "Family holiday", status: "PENDING" } });
   await db.leaveRequest.create({ data: { employeeId: employees[2].id, type: "SICK", startDate: days(-5), endDate: days(-4), days: 2, reason: "Fever", status: "APPROVED", approvedById: hrUser.id, approvedAt: days(-5) } });
+
+  // ── Position catalog (ROLE ≠ POSITION spec §10) ──
+  // Managed job titles, independent of application roles. Grouped by the
+  // organizational function; linked to the seeded departments where they
+  // match. Existing employee free-text titles are catalogued + backfilled so
+  // every seeded person has positionId set and history stays continuous.
+  const positionDefs: [string, Department | null, string][] = [
+    // Management
+    ["Managing Director", deptAdmin, "Executive leadership"],
+    ["General Manager", deptAdmin, "Executive leadership"],
+    ["Operations Manager", deptAdmin, "Day-to-day operations leadership"],
+    ["Finance Director", deptAdmin, "Financial strategy and oversight"],
+    ["HR Manager", deptAdmin, "People and culture leadership"],
+    ["Project Manager", deptAdmin, "Project delivery leadership"],
+    // Finance
+    ["Accounts Manager", deptAdmin, "Accounting operations"],
+    ["Accounts Officer", deptAdmin, "Bookkeeping and reconciliations"],
+    ["Finance Officer", deptAdmin, "Day-to-day finance operations"],
+    // HR
+    ["HR Officer", deptAdmin, "HR operations and records"],
+    ["HR Executive", deptAdmin, "Recruitment and onboarding"],
+    // Operations
+    ["Maintenance Manager", deptIT, "Maintenance operations"],
+    ["Maintenance Supervisor", deptIT, "Maintenance team supervision"],
+    ["Supervisor", deptIT, "Field crew supervision"],
+    ["Technician", deptIT, "General maintenance technician"],
+    ["HVAC Technician", deptIT, "Heating, ventilation and air conditioning"],
+    ["Plumbing Technician", deptIT, "Plumbing and hydraulics"],
+    ["Electrical Technician", deptIT, "Electrical systems"],
+    ["Senior HVAC Technician", deptIT, "Senior HVAC diagnosis and repair"],
+    // Technical
+    ["Electrical Engineer", deptIT, "Electrical engineering"],
+    ["HVAC Engineer", deptIT, "HVAC engineering"],
+    ["Mechanical Engineer", deptIT, "Mechanical engineering"],
+    ["Civil Engineer", deptIT, "Civil engineering"],
+    ["Senior Technician", deptIT, "Senior field technician"],
+    // Administration
+    ["Office Administrator", deptAdmin, "Office administration"],
+  ];
+  const positions: Record<string, string> = {}; // name → id
+  for (const [name, dept, description] of positionDefs) {
+    const p = await db.jobPosition.create({
+      data: { name, description, departmentId: dept?.id ?? null, createdBy: superAdmin.id, updatedBy: superAdmin.id },
+    });
+    positions[name] = p.id;
+  }
+  // Backfill: catalogue every existing employee title (idempotent by name) and
+  // link the person's account — one person, one job title (User ↔ Employee).
+  for (const emp of employees) {
+    let posId = positions[emp.position];
+    if (!posId && emp.position) {
+      const created = await db.jobPosition.create({
+        data: { name: emp.position, description: "Imported from the employee register", departmentId: emp.departmentId, createdBy: superAdmin.id, updatedBy: superAdmin.id },
+      });
+      posId = created.id;
+      positions[emp.position] = created.id;
+    }
+    if (posId) {
+      await db.employee.update({ where: { id: emp.id }, data: { positionId: posId } });
+      if (emp.userId) await db.user.update({ where: { id: emp.userId }, data: { positionId: posId } });
+    }
+  }
 
   // ── IRMS ──
   const proj = await db.irmsProject.create({

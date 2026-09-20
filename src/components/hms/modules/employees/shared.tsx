@@ -4,6 +4,9 @@
 // Used by the dedicated New Employee page (new-page.tsx) and Edit Employee
 // page (edit-page.tsx). Field ids, payload mapping (BND → cents) and
 // server field-error mapping are identical to the original dialogs.
+// POSITION (role/position spec): the job title comes from the managed
+// position catalog (positionId) — the free-text `position` field is a
+// server-side snapshot used by letters/attendance/profile.
 
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -17,6 +20,8 @@ export type EmployeeRow = {
   firstName: string;
   lastName: string;
   position: string;
+  positionId: string | null;
+  positionRef: { id: string; name: string; status: string } | null;
   email: string;
   phone: string;
   status: string;
@@ -24,14 +29,16 @@ export type EmployeeRow = {
   joinDate: string | null;
   departmentId: string | null;
   department: { id: string; name: string } | null;
+  /** Linked account's application role (authorization axis, §19 filter). */
+  user?: { role: string } | null;
 };
 
 export type FormState = {
-  firstName: string; lastName: string; departmentId: string; position: string;
+  firstName: string; lastName: string; departmentId: string; positionId: string;
   email: string; phone: string; joinDate: string; salary: string; status: string;
 };
 
-export const EMPTY_FORM: FormState = { firstName: "", lastName: "", departmentId: "", position: "", email: "", phone: "", joinDate: "", salary: "", status: "ACTIVE" };
+export const EMPTY_FORM: FormState = { firstName: "", lastName: "", departmentId: "", positionId: "", email: "", phone: "", joinDate: "", salary: "", status: "ACTIVE" };
 
 /** Prefill an edit form from a list/detail row (employee number is not editable). */
 export function formFromRow(row: EmployeeRow): FormState {
@@ -39,7 +46,7 @@ export function formFromRow(row: EmployeeRow): FormState {
     firstName: row.firstName,
     lastName: row.lastName,
     departmentId: row.departmentId ?? "",
-    position: row.position,
+    positionId: row.positionId ?? "",
     email: row.email,
     phone: row.phone,
     joinDate: row.joinDate ? row.joinDate.slice(0, 10) : "",
@@ -53,7 +60,7 @@ export function payloadFor(f: FormState) {
     firstName: f.firstName,
     lastName: f.lastName,
     departmentId: f.departmentId || null,
-    position: f.position || undefined,
+    positionId: f.positionId || null,
     email: f.email || undefined,
     phone: f.phone || undefined,
     joinDate: f.joinDate || undefined,

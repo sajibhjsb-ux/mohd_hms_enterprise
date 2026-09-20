@@ -24,6 +24,10 @@ const USER_SELECT = {
   status: true,
   lastLoginAt: true,
   createdAt: true,
+  // Job position (job title) — displayed as its OWN column, never merged
+  // with the role (role/position spec §7).
+  positionId: true,
+  position: { select: { id: true, name: true } },
   customer: { select: { id: true, companyName: true, code: true, contactPerson: true } },
   technicianProfile: { select: { id: true, employeeNo: true, specialty: true, status: true } },
   _count: { select: { sessions: true } },

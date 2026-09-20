@@ -34,6 +34,13 @@ model User {
   avatarUrl     String?
   customerId    String?   @unique
   customer      Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  // JOB POSITION (organizational job title) — SEPARATE from `role`.
+  // `role` is the RBAC access level (authorization); positionId is the
+  // person's job title from the HR position catalog and NEVER affects
+  // permissions. Canonical for the account; mirrored onto the linked
+  // Employee record when one exists (same person, one job title).
+  positionId    String?
+  position      JobPosition? @relation(fields: [positionId], references: [id], onDelete: SetNull)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
   createdBy     String?
@@ -56,6 +63,7 @@ model User {
 
   @@index([role])
   @@index([status])
+  @@index([positionId])
 }
 
 model Session {
@@ -292,7 +300,29 @@ model Department {
   name        String @unique
   description String @default("")
 
+  employees   Employee[]
+  jobPositions JobPosition[]
+}
+
+// ── Position catalog (HR master data, spec §9/§24) ──
+// Managed job titles, SEPARATE from application roles: a position describes
+// WHAT a person's job is ("Finance Director"), a role describes what they may
+// DO in the application (ADMIN). Positions are deactivated — never deleted —
+// so historical employee records stay valid.
+model JobPosition {
+  id           String      @id @default(cuid())
+  name         String      @unique
+  departmentId String?
+  department   Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  description  String      @default("")
+  status       String      @default("ACTIVE") // ACTIVE | INACTIVE
+  createdBy    String?
+  updatedBy    String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
   employees Employee[]
+  users     User[]
 }
 
 model Employee {
@@ -304,7 +334,13 @@ model Employee {
   lastName     String
   departmentId String?
   department   Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  // Free-text job title kept for display/history (letters, attendance,
+  // profile). The managed source is positionRef (catalog FK) — the string is
+  // snapshotted from the catalog name on every catalog-linked write so
+  // legacy readers stay untouched.
   position     String      @default("")
+  positionId   String?
+  positionRef  JobPosition? @relation(fields: [positionId], references: [id], onDelete: SetNull)
   email        String      @default("")
   phone        String      @default("")
   address      String      @default("")

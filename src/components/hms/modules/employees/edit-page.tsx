@@ -17,9 +17,9 @@ import { useUi } from "@/lib/hms/ui-store";
 import { navigateTo } from "@/lib/hms/router";
 import { PageShell } from "@/components/hms/shared/page-shell";
 import { EmptyState, ErrorState, LoadingState } from "@/components/hms/shared/ui-bits";
-import { PERMISSIONS } from "@/lib/hms/constants";
+import { PERMISSIONS, humanize } from "@/lib/hms/constants";
 import { useToast } from "@/hooks/use-toast";
-import { api, ClientApiError } from "@/lib/hms/api-client";
+import { api, ClientApiError, qs } from "@/lib/hms/api-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -31,13 +31,21 @@ import {
   type EmployeeRow, type FieldErrors, type FormState,
 } from "./shared";
 
+/** Detail contract: list shape + positionRef catalog link + the linked user. */
+type EmployeeDetail = EmployeeRow & {
+  user: { id: string; email: string; name: string; role: string } | null;
+};
+
+/** Position catalog option (ACTIVE titles only are assignable). */
+type PositionOption = { id: string; name: string };
+
 export function EmployeeEditPage({ id }: { id: string }) {
   const { user } = useSession();
   const { toast } = useToast();
   const setPageDirty = useUi((s) => s.setPageDirty);
   const canUpdate = hasPerm(user, PERMISSIONS.employees_update);
 
-  const [row, setRow] = useState<EmployeeRow | null>(null);
+  const [row, setRow] = useState<EmployeeDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -45,12 +53,22 @@ export function EmployeeEditPage({ id }: { id: string }) {
   const [initial, setInitial] = useState<FormState | null>(null);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [saving, setSaving] = useState(false);
+  const [positions, setPositions] = useState<PositionOption[] | null>(null);
+
+  // Position catalog — ACTIVE titles only (inactive cannot be assigned).
+  useEffect(() => {
+    let alive = true;
+    api.get<PositionOption[]>(`/api/v1/hr/positions${qs({ status: "ACTIVE", pageSize: 200, sort: "name" })}`)
+      .then((res) => { if (alive) setPositions(res.data); })
+      .catch(() => { if (alive) setPositions(null); });
+    return () => { alive = false; };
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
     try {
-      const res = await api.get<EmployeeRow>(`/api/v1/employees/${id}`);
+      const res = await api.get<EmployeeDetail>(`/api/v1/employees/${id}`);
       setRow(res.data);
       const f = formFromRow(res.data);
       setForm(f);
@@ -181,7 +199,27 @@ export function EmployeeEditPage({ id }: { id: string }) {
               />
               <div>
                 <Label htmlFor="ee-position">Position</Label>
-                <Input id="ee-position" value={form.position} onChange={(e) => set({ position: e.target.value })} />
+                <Select value={form.positionId || "none"} onValueChange={(v) => set({ positionId: v === "none" ? "" : v })}>
+                  <SelectTrigger id="ee-position" aria-label="Position"><SelectValue placeholder="No position assigned" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No position assigned</SelectItem>
+                    {row.positionRef && !positions?.some((p) => p.id === row.positionRef?.id) ? (
+                      <SelectItem value={row.positionRef.id}>{row.positionRef.name} (inactive)</SelectItem>
+                    ) : null}
+                    {(positions ?? []).map((p) => (
+                      <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-[11px] text-muted-foreground mt-1">Managed job titles live in HR → Positions.</p>
+                <FieldError msg={fieldErrors.positionId} />
+              </div>
+              <div>
+                <Label>System access (role)</Label>
+                <div className="h-9 flex items-center rounded-md border bg-muted/40 px-3 text-sm">
+                  {row.user ? humanize(row.user.role) : <span className="text-muted-foreground">No linked account</span>}
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-1">Controlled by User Management — the role (not the position) defines access.</p>
               </div>
               <div>
                 <Label htmlFor="ee-email">Email</Label>
