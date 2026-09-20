@@ -112,6 +112,16 @@ async function inspectionCtx(reportId: string): Promise<IrmsCtx> {
     : null;
 }
 
+/** Payroll: owning employee's linked account (self-service payslip room). */
+async function payslipUserRoom(itemId: string | null | undefined): Promise<string | null> {
+  if (!itemId) return null;
+  const item = await db.payrollItem.findUnique({
+    where: { id: itemId },
+    select: { employee: { select: { userId: true } } },
+  });
+  return item?.employee.userId ?? null;
+}
+
 /**
  * Map an outbox event to the rooms that should receive it.
  * Unknown event types default to `staff` (fail-closed: never broadcast business
@@ -240,6 +250,19 @@ export async function resolveRooms(event: RealtimeEventRow): Promise<Room[]> {
     // ── HR / users / vehicles (STEP 10-18 matrix): staff only.
     case EVENT_TYPES.HR_LEAVE_UPDATED:
     case EVENT_TYPES.EMPLOYEE_UPDATED:
+      return [...hrAud(), ...mgmt()].filter((r, i, a) => a.indexOf(r) === i);
+    // ── Payroll: run lifecycle → HR + Finance + management (salary data is
+    //    sensitive — never broadcast to plain staff/customers, spec §30).
+    case EVENT_TYPES.PAYROLL_RUN_UPDATED:
+      return [...hrAud(), ...financeAud()].filter((r, i, a) => a.indexOf(r) === i);
+    // Payslip published → the owning employee's user room + payroll audiences.
+    case EVENT_TYPES.PAYSLIP_PUBLISHED: {
+      const payUserId = await payslipUserRoom(event.resourceId);
+      return [...hrAud(), ...financeAud(), ...user(payUserId)].filter(
+        (r, i, a) => a.indexOf(r) === i,
+      );
+    }
+    case EVENT_TYPES.HR_OVERTIME_UPDATED:
       return [...hrAud(), ...mgmt()].filter((r, i, a) => a.indexOf(r) === i);
     case EVENT_TYPES.VEHICLE_UPDATED:
       return mgmt();

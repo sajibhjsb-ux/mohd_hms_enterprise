@@ -70,7 +70,10 @@ export const MODULES: ModuleDef[] = [
   { key: "quotations", label: "Quotations", icon: FileText, permissions: ["quotations.read"], component: QuotationsModule },
   { key: "invoices", label: "Invoices", icon: Receipt, permissions: ["invoices.read"], component: InvoicesModule },
   { key: "finance", label: "Finance", icon: Wallet, permissions: ["finance.read", "invoices.read"], component: FinanceModule },
-  { key: "hr", label: "HR", icon: UserCog, permissions: ["hr.read", "employees.read"], component: HrModule },
+  // Payroll lives UNDER HR (payroll spec §2): payroll.read holders (FINANCE)
+  // enter this module for payroll review/approval only — non-payroll tabs and
+  // the overview stay gated behind hr.read inside the module.
+  { key: "hr", label: "HR", icon: UserCog, permissions: ["hr.read", "employees.read", "payroll.read"], component: HrModule },
   // Communication pair — Email + WhatsApp sit adjacent in the desktop floating
   // navigation and under the "Communication" group of the mobile More menu.
   // /email renders the SAME EmailTab as Settings → Email (one EmailService,

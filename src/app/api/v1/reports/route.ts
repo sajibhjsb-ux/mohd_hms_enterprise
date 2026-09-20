@@ -1,5 +1,5 @@
 // MOHD.HMS ENTERPRISE — Reports API: aggregated report data by type + date range.
-// GET /api/v1/reports?type=complaints|work_orders|equipment|pm_compliance|finance|technicians&from=YYYY-MM-DD&to=YYYY-MM-DD
+// GET /api/v1/reports?type=complaints|work_orders|equipment|pm_compliance|finance|technicians|payroll&from=YYYY-MM-DD&to=YYYY-MM-DD
 
 import { NextRequest } from "next/server";
 import { z } from "zod";
@@ -9,7 +9,7 @@ import { PERMISSIONS } from "@/lib/hms/constants";
 import { isStaff } from "@/lib/hms/rbac";
 import type { SessionUser } from "@/lib/hms/auth";
 
-const REPORT_TYPES = ["complaints", "work_orders", "equipment", "pm_compliance", "finance", "technicians"] as const;
+const REPORT_TYPES = ["complaints", "work_orders", "equipment", "pm_compliance", "finance", "technicians", "payroll"] as const;
 type ReportType = (typeof REPORT_TYPES)[number];
 
 type Row = Record<string, string | number | null>;
@@ -204,6 +204,48 @@ async function buildReport(type: ReportType, from: Date, to: Date, user: Session
         expensesCents: expenses.reduce((s, e) => s + e.amountCents, 0),
       };
       return { summary, rows, expenses: expenseRows };
+    }
+
+    case "payroll": {
+      // Payroll register (spec §42): one row per employee per finalized+ run in
+      // the range. Salary data is reports_read-gated at the route level; the
+      // rows keep the house `*Cents` naming so CSV export divides by 100.
+      const runs = await db.payrollRun.findMany({
+        where: { periodStart: { gte: from, lte: to }, status: { in: ["REVIEW", "APPROVED", "FINALIZED", "PAID", "LOCKED"] } },
+        orderBy: { periodStart: "asc" },
+        select: { id: true, code: true, name: true, status: true },
+      });
+      const items = runs.length
+        ? await db.payrollItem.findMany({
+            where: { runId: { in: runs.map((r) => r.id) }, status: "CALCULATED" },
+            orderBy: { employeeNo: "asc" },
+          })
+        : [];
+      const runById = new Map(runs.map((r) => [r.id, r]));
+      const rows: Row[] = items.map((i) => ({
+        run: runById.get(i.runId)?.code ?? "",
+        period: runById.get(i.runId)?.name ?? "",
+        employeeNo: i.employeeNo,
+        employee: i.employeeName,
+        department: i.departmentName,
+        position: i.positionName,
+        basicCents: i.basicCents,
+        allowancesCents: i.allowancesCents,
+        overtimeCents: i.overtimeCents,
+        grossCents: i.grossCents,
+        deductionsCents: i.deductionsCents,
+        netCents: i.netCents,
+        status: i.status,
+      }));
+      const summary: Summary = {
+        runs: runs.length,
+        employees: new Set(items.map((i) => i.employeeId)).size,
+        grossCents: items.reduce((s, i) => s + i.grossCents, 0),
+        deductionsCents: items.reduce((s, i) => s + i.deductionsCents, 0),
+        employerCostCents: items.reduce((s, i) => s + i.employerCostCents, 0),
+        netCents: items.reduce((s, i) => s + i.netCents, 0),
+      };
+      return { summary, rows };
     }
 
     case "technicians": {

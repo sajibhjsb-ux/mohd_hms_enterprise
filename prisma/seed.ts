@@ -47,6 +47,9 @@ async function main() {
     db.equipmentMeterReading.deleteMany(), db.equipmentMeter.deleteMany(),
     db.inspectionFinding.deleteMany(), db.inspectionReport.deleteMany(), db.irmsProject.deleteMany(),
     db.equipment.deleteMany(), db.location.deleteMany(),
+    db.payrollItem.deleteMany(), db.payrollAdjustment.deleteMany(), db.payrollRun.deleteMany(),
+    db.salaryStructure.deleteMany(), db.overtimeRequest.deleteMany(),
+    db.statutoryRule.deleteMany(), db.salaryComponent.deleteMany(),
     db.attendance.deleteMany(), db.leaveRequest.deleteMany(), db.employee.deleteMany(), db.department.deleteMany(),
     db.vehicle.deleteMany(), db.technicianProfile.deleteMany(),
     db.session.deleteMany(), db.passwordResetToken.deleteMany(), db.user.deleteMany(),
@@ -657,6 +660,82 @@ async function main() {
     }
   }
 
+  // ── PAYROLL (spec: PAYROLL SYSTEM UNDER HR §6/§17/§18) ──
+  // Configurable salary components. System components are engine hooks and
+  // cannot be deleted; company-specific extras are plain data rows.
+  const componentDefs: [string, "EARNING" | "DEDUCTION", string, boolean, string][] = [
+    // [name, type, category, system, description]
+    ["Basic Salary", "EARNING", "BASIC", true, "Monthly basic salary — managed via salary structures"],
+    ["Overtime", "EARNING", "OVERTIME", true, "Approved overtime pay (computed at approval)"],
+    ["Unpaid Leave", "DEDUCTION", "UNPAID_LEAVE", true, "Approved unpaid leave days × daily rate"],
+    ["Housing Allowance", "EARNING", "ALLOWANCE", false, "Monthly housing allowance"],
+    ["Transport Allowance", "EARNING", "ALLOWANCE", false, "Monthly transport allowance"],
+    ["Meal Allowance", "EARNING", "ALLOWANCE", false, "Monthly meal allowance"],
+    ["Phone Allowance", "EARNING", "ALLOWANCE", false, "Monthly phone allowance"],
+    ["Site Allowance", "EARNING", "ALLOWANCE", false, "Temporary site allowance"],
+    ["Responsibility Allowance", "EARNING", "ALLOWANCE", false, "Role responsibility allowance"],
+    ["Attendance Allowance", "EARNING", "ALLOWANCE", false, "Full-attendance incentive"],
+    ["Bonus", "EARNING", "BONUS", false, "Performance / festive bonus"],
+    ["Commission", "EARNING", "COMMISSION", false, "Sales or job commission"],
+    ["Reimbursement", "EARNING", "REIMBURSEMENT", false, "Expense reimbursement"],
+    ["Loan Repayment", "DEDUCTION", "LOAN", false, "Employee loan repayment instalment"],
+    ["Salary Advance Recovery", "DEDUCTION", "LOAN", false, "Recovered salary advance"],
+    ["Absence Deduction", "DEDUCTION", "ABSENCE", false, "Recorded absence days × daily rate (engine-computed)"],
+    ["Other Deduction", "DEDUCTION", "OTHER", false, "Approved miscellaneous deduction"],
+  ];
+  const components: Record<string, string> = {}; // name → id
+  for (const [name, type, category, system, description] of componentDefs) {
+    const c = await db.salaryComponent.create({
+      data: { name, type, category, system, description, createdById: superAdmin.id },
+    });
+    components[name] = c.id;
+  }
+
+  // Effective-dated salary structures — Basic mirrors each employee's existing
+  // salaryCents (spec §5: reuse existing records; history starts here).
+  for (const emp of employees) {
+    await db.salaryStructure.create({
+      data: {
+        employeeId: emp.id, componentId: components["Basic Salary"],
+        amountCents: emp.salaryCents, effectiveFrom: emp.joinDate ?? days(-700),
+        note: "Initial basic salary from the employee register", createdById: superAdmin.id,
+      },
+    });
+  }
+  // A couple of allowance examples (fixed monthly amounts).
+  await db.salaryStructure.create({ data: { employeeId: employees[0].id, componentId: components["Transport Allowance"], amountCents: 25000, effectiveFrom: days(-700), note: "Standard transport allowance", createdById: superAdmin.id } });
+  await db.salaryStructure.create({ data: { employeeId: employees[1].id, componentId: components["Transport Allowance"], amountCents: 25000, effectiveFrom: days(-700), note: "Standard transport allowance", createdById: superAdmin.id } });
+  await db.salaryStructure.create({ data: { employeeId: employees[0].id, componentId: components["Phone Allowance"], amountCents: 8000, effectiveFrom: days(-400), note: "On-call phone allowance", createdById: superAdmin.id } });
+  await db.salaryStructure.create({ data: { employeeId: employees[3].id, componentId: components["Meal Allowance"], amountCents: 15000, effectiveFrom: days(-300), note: "Office staff meal allowance", createdById: superAdmin.id } });
+
+  // Statutory rules — CONFIGURABLE, VERSIONED data rows (spec §18/§19: never
+  // hard-coded; verify current rates with the company before production use).
+  // Commonly applied Brunei contributions for citizens/PR (TAP 5% + SCP 3.7%,
+  // both employee and employer sides) as the initial company-configured set.
+  const statutoryDefs: [string, "EMPLOYEE" | "EMPLOYER", number, string][] = [
+    ["TAP — Employee (5%)", "EMPLOYEE", 500, "Tabung Amanah Pekerja — citizens & PR (TAP Act, Cap. 84). Verify current rate before production use."],
+    ["TAP — Employer (5%)", "EMPLOYER", 500, "Tabung Amanah Pekerja employer share — citizens & PR. Verify current rate before production use."],
+    ["SCP — Employee (3.7%)", "EMPLOYEE", 370, "Supplementary Contributory Pension employee share — citizens & PR. Verify current rate before production use."],
+    ["SCP — Employer (3.7%)", "EMPLOYER", 370, "Supplementary Contributory Pension employer share — citizens & PR. Verify current rate before production use."],
+  ];
+  for (const [name, payer, rateBps, notes] of statutoryDefs) {
+    await db.statutoryRule.create({
+      data: {
+        name, payer, category: "SOCIAL", employeeCategory: "CITIZEN_PR",
+        calcType: "PERCENTAGE", rateBps, appliesTo: "GROSS",
+        effectiveFrom: new Date("2025-01-01T00:00:00.000Z"),
+        calcOrder: payer === "EMPLOYEE" ? 10 : 20,
+        reference: "Company payroll configuration — editable, versioned by effective date",
+        notes, createdById: superAdmin.id,
+      },
+    });
+  }
+
+  // Demo overtime + unpaid leave so the engine has approved inputs to weave in.
+  await db.overtimeRequest.create({ data: { employeeId: employees[0].id, date: days(-10), minutes: 240, multiplier: 1.5, reason: "Chiller emergency call-out", status: "PENDING", createdById: techUsers[0].id } });
+  await db.overtimeRequest.create({ data: { employeeId: employees[1].id, date: days(-8), minutes: 180, multiplier: 1.5, reason: "Weekend pump replacement", status: "PENDING", createdById: techUsers[1].id } });
+  await db.leaveRequest.create({ data: { employeeId: employees[2].id, type: "UNPAID", startDate: days(-3), endDate: days(-3), days: 1, reason: "Personal leave (unpaid)", status: "APPROVED", approvedById: hrUser.id, approvedAt: days(-4) } });
+
   // ── IRMS ──
   const proj = await db.irmsProject.create({
     data: {
@@ -741,6 +820,7 @@ async function main() {
   await counter("TRX", 3); await counter("EXP", 1); await counter("INS", 2); await counter("PRJ", 2);
   await counter("PM-2025", 6); await counter("PMT-2025", 5); await counter("WO-2025", 4); await counter("CPT-2025", 6);
   await counter("WO-2026", 5);
+  await counter("PRR", 0);
 
   console.log("Seed complete.");
   console.log("Logins (password Password@123):");

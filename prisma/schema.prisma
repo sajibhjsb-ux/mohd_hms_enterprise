@@ -60,6 +60,14 @@ model User {
   legalAcceptances  LegalAcceptance[]
   whatsappContacts  WhatsAppContact[]    @relation("WhatsAppContactUser")
   profileChangeRequests ProfileChangeRequest[]
+  // Payroll actors (spec §9 — every workflow step is attributable)
+  payrollRunsCreated   PayrollRun[] @relation("PayrollRunCreator")
+  payrollRunsSubmitted PayrollRun[] @relation("PayrollRunSubmitter")
+  payrollRunsApproved  PayrollRun[] @relation("PayrollRunApprover")
+  payrollRunsFinalized PayrollRun[] @relation("PayrollRunFinalizer")
+  payrollRunsPaid      PayrollRun[] @relation("PayrollRunPayer")
+  payrollRunsLocked    PayrollRun[] @relation("PayrollRunLocker")
+  overtimeApproved     OvertimeRequest[] @relation("OvertimeApprover")
 
   @@index([role])
   @@index([status])
@@ -351,9 +359,14 @@ model Employee {
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 
-  leaveRequests LeaveRequest[]
-  letters       Letter[]
-  attendance    Attendance[]
+  leaveRequests     LeaveRequest[]
+  letters           Letter[]
+  attendance        Attendance[]
+  // Payroll (spec: PAYROLL SYSTEM UNDER HR) — money is Int cents (house convention)
+  salaryStructures  SalaryStructure[]
+  payrollItems      PayrollItem[]
+  payrollAdjustments PayrollAdjustment[]
+  overtimeRequests  OvertimeRequest[]
 }
 
 model Attendance {
@@ -387,6 +400,226 @@ model LeaveRequest {
   createdAt    DateTime  @default(now())
 
   @@index([status])
+}
+
+// ─────────────────────────── PAYROLL (UNDER HR) ───────────────────────────
+// PAYROLL SYSTEM (spec §58 — smallest clean model, reuses canonical Employee).
+// All money is stored as Int cents (BND). ROLE / POSITION / SALARY stay
+// separate axes: role = User.role (RBAC), position = Employee.positionRef
+// (job title snapshot on items), salary = the structures below.
+
+// Configurable salary components catalog (spec §6). Engine-managed "system"
+// components (BASIC / OVERTIME / UNPAID_LEAVE) cannot be deleted.
+model SalaryComponent {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  type        String   @default("EARNING")  // EARNING | DEDUCTION
+  category    String   @default("ALLOWANCE") // BASIC | ALLOWANCE | OVERTIME | BONUS | COMMISSION | REIMBURSEMENT | STATUTORY | UNPAID_LEAVE | ABSENCE | LOAN | OTHER
+  description String   @default("")
+  taxable     Boolean  @default(false)
+  system      Boolean  @default(false)      // engine-managed — hidden from delete
+  active      Boolean  @default(true)
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  structures SalaryStructure[]
+}
+
+// Effective-dated employee salary structure (spec §6/§7 — salary history with
+// effective dates; history rows are never overwritten, only ended).
+model SalaryStructure {
+  id            String    @id @default(cuid())
+  employeeId    String
+  employee      Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  componentId   String
+  component     SalaryComponent @relation(fields: [componentId], references: [id])
+  amountCents   Int       @default(0)   // fixed monthly amount
+  percentBps    Int?      // optional % of basic (basis points, 500 = 5%)
+  effectiveFrom DateTime
+  effectiveTo   DateTime? // null = current
+  note          String    @default("")
+  createdById   String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([employeeId, effectiveFrom])
+  @@index([componentId])
+}
+
+// A payroll run for one period (spec §8/§9). periodKey unique → duplicate
+// prevention (§55). Status machine: DRAFT → CALCULATING → REVIEW → APPROVED →
+// FINALIZED → PAID → LOCKED (+ FAILED, CANCELLED).
+model PayrollRun {
+  id                String    @id @default(cuid())
+  code              String    @unique // PRR-YYYY-NNNN via Counter
+  periodKey         String    @unique // "2026-09" — one run per period
+  name              String
+  periodStart       DateTime
+  periodEnd         DateTime
+  frequency         String    @default("MONTHLY")
+  status            String    @default("DRAFT") // DRAFT | CALCULATING | REVIEW | APPROVED | FINALIZED | PAID | LOCKED | FAILED | CANCELLED
+  employeeCount     Int       @default(0)
+  grossCents        Int       @default(0)
+  deductionsCents   Int       @default(0)
+  employerCostCents Int       @default(0)
+  netCents          Int       @default(0)
+  exceptionCount    Int       @default(0)
+  payDate           DateTime?
+  paymentRef        String    @default("")
+  errorNote         String    @default("") // safe failure reason (§63)
+  configJson        String    @default("") // engine config snapshot used (§46)
+  createdById       String?
+  submittedById     String?
+  submittedAt       DateTime?
+  approvedById      String?
+  approvedAt        DateTime?
+  finalizedById     String?
+  finalizedAt       DateTime?
+  paidById          String?
+  paidAt            DateTime?
+  lockedById        String?
+  lockedAt          DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  creator   User? @relation("PayrollRunCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  submitter User? @relation("PayrollRunSubmitter", fields: [submittedById], references: [id], onDelete: SetNull)
+  approver  User? @relation("PayrollRunApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  finalizer User? @relation("PayrollRunFinalizer", fields: [finalizedById], references: [id], onDelete: SetNull)
+  payer     User? @relation("PayrollRunPayer", fields: [paidById], references: [id], onDelete: SetNull)
+  lockUser  User? @relation("PayrollRunLocker", fields: [lockedById], references: [id], onDelete: SetNull)
+
+  items       PayrollItem[]
+  adjustments PayrollAdjustment[]
+
+  @@index([status])
+}
+
+// Per-employee payroll calculation snapshot (spec §34/§46/§48 — fully
+// traceable lines; immutable once the run is FINALIZED).
+model PayrollItem {
+  id                         String    @id @default(cuid())
+  runId                      String
+  run                        PayrollRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  employeeId                 String
+  employee                   Employee  @relation(fields: [employeeId], references: [id])
+  // snapshots (§46 — do not recalculate history with today's config)
+  employeeNo                 String    @default("")
+  employeeName               String    @default("")
+  departmentName             String    @default("")
+  positionName               String    @default("") // POSITION snapshot — never the RBAC role (§33)
+  status                     String    @default("CALCULATED") // CALCULATED | EXCLUDED
+  excludedReason             String    @default("")
+  // attendance / leave inputs actually used
+  workingDays                Int       @default(0)
+  workedDays                 Int       @default(0)
+  paidLeaveDays              Int       @default(0)
+  unpaidLeaveDays            Int       @default(0)
+  absentDays                 Int       @default(0)
+  otMinutes                  Int       @default(0)
+  // money (Int cents)
+  basicCents                 Int       @default(0)
+  allowancesCents            Int       @default(0)
+  overtimeCents              Int       @default(0)
+  bonusCents                 Int       @default(0)
+  adjustmentsEarningsCents   Int       @default(0)
+  grossCents                 Int       @default(0)
+  statutoryCents             Int       @default(0) // employee statutory subtotal
+  otherDeductionsCents       Int       @default(0)
+  adjustmentsDeductionsCents Int       @default(0)
+  deductionsCents            Int       @default(0)
+  netCents                   Int       @default(0)
+  employerCostCents          Int       @default(0)
+  linesJson                  String    @default("[]") // traceable component lines (§48)
+  // variance review (§44)
+  varianceBps                Int?      // net change vs previous run (basis points)
+  exceptionFlags             String    @default("") // JSON array of flag codes
+  // stored payslip (§36 — PDF in MinIO, metadata here)
+  payslipObjectKey           String?
+  payslipSizeBytes           Int?
+  payslipGeneratedAt         DateTime?
+  createdAt                  DateTime  @default(now())
+  updatedAt                  DateTime  @updatedAt
+
+  @@unique([runId, employeeId]) // idempotency (§55)
+  @@index([employeeId])
+}
+
+// Authorized payroll adjustment (spec §24) — never edit finalized values
+// directly; adjustments are approved then included by recalculation.
+model PayrollAdjustment {
+  id           String    @id @default(cuid())
+  runId        String
+  run          PayrollRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  employeeId   String
+  employee     Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  direction    String    @default("EARNING") // EARNING | DEDUCTION
+  category     String    @default("CORRECTION") // ARREAR | CORRECTION | RETROACTIVE | BONUS | REIMBURSEMENT | OTHER
+  amountCents  Int
+  reason       String
+  status       String    @default("PENDING") // PENDING | APPROVED | REJECTED | APPLIED
+  appliedAt    DateTime?
+  createdById  String?
+  approvedById String?
+  approvedAt   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([runId])
+  @@index([employeeId])
+}
+
+// Configurable + versioned statutory rules (spec §18/§19 — no hard-coded legal
+// rates; EMPLOYEE rows deduct from net, EMPLOYER rows are cost-only).
+model StatutoryRule {
+  id               String    @id @default(cuid())
+  name             String
+  jurisdiction     String    @default("BN")
+  category         String    @default("SOCIAL") // SOCIAL | TAX | OTHER
+  payer            String    @default("EMPLOYEE") // EMPLOYEE (deducted) | EMPLOYER (employer cost)
+  employeeCategory String    @default("ALL") // ALL | CITIZEN_PR | FOREIGN
+  calcType         String    @default("PERCENTAGE") // PERCENTAGE | FIXED
+  rateBps          Int       @default(0)  // 500 = 5.00%
+  amountCents      Int       @default(0)  // for FIXED
+  appliesTo        String    @default("GROSS") // GROSS | BASIC
+  thresholdCents   Int       @default(0)  // base below this → not applicable
+  effectiveFrom    DateTime
+  effectiveTo      DateTime? // null = no expiry (versioned by dated rows)
+  calcOrder        Int       @default(100)
+  active           Boolean   @default(true)
+  reference        String    @default("") // legal/company source reference
+  notes            String    @default("")
+  createdById      String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([active, effectiveFrom])
+}
+
+// Overtime request with the existing HR approval pattern (spec §15 — only
+// APPROVED overtime enters payroll; amount snapshotted at approval).
+model OvertimeRequest {
+  id            String    @id @default(cuid())
+  employeeId    String
+  employee      Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  date          DateTime
+  minutes       Int       @default(0) // stored in minutes for exactness
+  multiplier    Float     @default(1.5)
+  reason        String    @default("")
+  status        String    @default("PENDING") // PENDING | APPROVED | REJECTED
+  amountCents   Int       @default(0) // computed at approval (rate snapshot)
+  rateBasisCents Int      @default(0) // hourly rate used at approval
+  approvedById  String?
+  approvedAt    DateTime?
+  createdById   String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  approver User? @relation("OvertimeApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([employeeId, date])
 }
 
 // ─────────────────────────── LOCATIONS / EQUIPMENT ───────────────────────────

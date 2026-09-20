@@ -134,6 +134,14 @@ export const PERMISSIONS = {
   // vehicles
   vehicles_read: "vehicles.read",
   vehicles_manage: "vehicles.manage",
+  // Payroll (under HR) — salary data is highly sensitive (spec §29/§30):
+  // read = view runs/dashboard, manage = prepare/calculate/adjust (HR),
+  // approve = review/approve/finalize/mark-paid (Finance + admins).
+  // Employees always see ONLY their own payslips via the self-service route
+  // (ownership enforced server-side; needs no permission).
+  payroll_read: "payroll.read",
+  payroll_manage: "payroll.manage",
+  payroll_approve: "payroll.approve",
 } as const;
 
 export type Permission = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
@@ -196,6 +204,9 @@ const FINANCE_PERMS: Permission[] = [
   PERMISSIONS.finance_read, PERMISSIONS.finance_manage,
   PERMISSIONS.purchases_read, PERMISSIONS.purchases_approve,
   PERMISSIONS.reports_read, PERMISSIONS.reports_export,
+  // Payroll (spec §29) — Finance reviews, approves and marks payment;
+  // preparation stays with HR (segregation of duties).
+  PERMISSIONS.payroll_read, PERMISSIONS.payroll_approve,
 ];
 
 const HR_PERMS: Permission[] = [
@@ -208,6 +219,9 @@ const HR_PERMS: Permission[] = [
   PERMISSIONS.letters_view, PERMISSIONS.letters_create, PERMISSIONS.letters_edit,
   PERMISSIONS.letters_ai, PERMISSIONS.letters_templates, PERMISSIONS.letters_finalize,
   PERMISSIONS.letters_send, PERMISSIONS.letters_delete,
+  // Payroll (spec §28/§29) — HR prepares, calculates and adjusts payroll;
+  // approval stays with FINANCE/ADMIN (segregation of duties, spec §28).
+  PERMISSIONS.payroll_read, PERMISSIONS.payroll_manage,
 ];
 
 export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {

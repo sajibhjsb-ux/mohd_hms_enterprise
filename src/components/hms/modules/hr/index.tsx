@@ -14,7 +14,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Users, UserCheck, CalendarOff, UserX, Clock, CalendarPlus, Plus, Check, X, Info, FileText, Briefcase,
+  Users, UserCheck, CalendarOff, UserX, Clock, CalendarPlus, Plus, Check, X, Info, FileText, Briefcase, Timer, Banknote as BanknoteIcon,
 } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api, qs } from "@/lib/hms/api-client";
@@ -38,6 +38,11 @@ import { HrAttendancePage } from "./attendance-page";
 import { HrLeaveNewPage } from "./leave-page";
 import { HrDepartmentNewPage } from "./department-page";
 import { PositionsTab, HrPositionNewPage, HrPositionEditPage } from "./positions";
+import { PayrollTab } from "./payroll/payroll-tab";
+import { PayrollRunNewPage } from "./payroll/run-new";
+import { PayrollRunDetailPage } from "./payroll/run-detail";
+import { PayrollSetupPage } from "./payroll/setup";
+import { OvertimeTab } from "./payroll/overtime-tab";
 import { LettersHome } from "./letters/letters-home";
 import { LetterWizardPage } from "./letters/wizard";
 import { LetterEditorPage } from "./letters/editor";
@@ -119,6 +124,19 @@ export function HrModule() {
     return <LetterEditorPage letterId={a} />;
   }
 
+  // Payroll subtree (payroll spec §2 — payroll lives UNDER HR):
+  //   ["payroll"]              → Payroll tab (dashboard + runs list)
+  //   ["payroll", "new"]       → New payroll run page
+  //   ["payroll", "setup"]     → Components / salaries / statutory setup
+  //   ["payroll", runId]       → Run detail (workflow + employee items)
+  if (seg[0] === "payroll") {
+    const [, a] = seg;
+    if (!a) return <HrList initialTab="payroll" />;
+    if (a === "new") return <PayrollRunNewPage />;
+    if (a === "setup") return <PayrollSetupPage />;
+    return <PayrollRunDetailPage runId={a} />;
+  }
+
   const page = pageFromSeg(seg);
 
   if (page.view === "attendance" && page.id) return <HrAttendancePage attendanceId={page.id} />;
@@ -138,6 +156,10 @@ function HrList({ initialTab }: { initialTab?: string } = {}) {
 
   const canManage = hasPerm(user, PERMISSIONS.hr_manage);
   const canReadEmployees = hasPerm(user, PERMISSIONS.employees_read) || canManage;
+  // Payroll integration (payroll spec §2/§29): FINANCE holds payroll.read but
+  // not hr.read — they enter the HR module for payroll only.
+  const canReadHr = hasPerm(user, PERMISSIONS.hr_read);
+  const canPayroll = hasPerm(user, PERMISSIONS.payroll_read);
 
   // All page navigation flows through the hash router (URL + Back/Forward).
   const openPage = useCallback((seg: string[]) => navigateTo("hr", seg), []);
@@ -157,11 +179,14 @@ function HrList({ initialTab }: { initialTab?: string } = {}) {
   const [leaveStatus, setLeaveStatus] = useState("ALL");
   const [leaveLoading, setLeaveLoading] = useState(true);
 
-  const [tab, setTab] = useState(initialTab ?? "attendance");
+  const [tab, setTab] = useState(initialTab ?? "__auto__");
+  // Payroll-only viewers (FINANCE) land on the Payroll tab (§2/§29).
+  const activeTab = tab === "__auto__" ? (canReadHr ? "attendance" : "payroll") : tab;
 
   const [busyLeaveId, setBusyLeaveId] = useState<string | null>(null);
 
   const loadOverview = useCallback(async () => {
+    if (!canReadHr) return;
     setOverviewError(null);
     try {
       const res = await api.get<Overview>("/api/v1/hr/overview");
@@ -169,7 +194,7 @@ function HrList({ initialTab }: { initialTab?: string } = {}) {
     } catch (e) {
       setOverviewError(e instanceof Error ? e.message : "Unable to load HR overview.");
     }
-  }, []);
+  }, [canReadHr]);
 
   const loadEmployees = useCallback(async () => {
     if (!canReadEmployees) return;
@@ -184,6 +209,7 @@ function HrList({ initialTab }: { initialTab?: string } = {}) {
   }, [canReadEmployees]);
 
   const loadAttendance = useCallback(async () => {
+    if (!canReadHr) return;
     setAttendanceLoading(true);
     try {
       const res = await api.get<AttendanceRecord[]>(`/api/v1/hr/attendance${qs({ date: attendanceDate, pageSize: "200" })}`);
@@ -193,9 +219,10 @@ function HrList({ initialTab }: { initialTab?: string } = {}) {
     } finally {
       setAttendanceLoading(false);
     }
-  }, [attendanceDate]);
+  }, [attendanceDate, canReadHr]);
 
   const loadLeaves = useCallback(async () => {
+    if (!canReadHr) return;
     setLeaveLoading(true);
     try {
       const res = await api.get<LeaveRequest[]>(`/api/v1/hr/leave${qs({ pageSize: "200", ...(leaveStatus !== "ALL" ? { status: leaveStatus } : {}) })}`);
@@ -205,7 +232,7 @@ function HrList({ initialTab }: { initialTab?: string } = {}) {
     } finally {
       setLeaveLoading(false);
     }
-  }, [leaveStatus]);
+  }, [leaveStatus, canReadHr]);
 
   useEffect(() => {
     loadOverview();
@@ -360,9 +387,9 @@ function HrList({ initialTab }: { initialTab?: string } = {}) {
     <div>
       <PageHeader
         title="Human Resources"
-        subtitle="Headcount, attendance and leave management"
+        subtitle="Headcount, attendance, leave and payroll management"
         actions={
-          canManage ? (
+          !canReadHr ? null : canManage ? (
             <>
               <Button variant="outline" size="sm" onClick={() => navigateTo("hr", ["letters", "new"])}>
                 <FileText className="h-4 w-4 mr-1.5" /> Create Letter
@@ -385,8 +412,8 @@ function HrList({ initialTab }: { initialTab?: string } = {}) {
         }
       />
 
-      {/* ── Overview ── */}
-      {overviewError ? (
+      {/* ── Overview (HR readers only — FINANCE enters for payroll, §29) ── */}
+      {canReadHr && (overviewError ? (
         <ErrorState message={overviewError} onRetry={() => void loadOverview()} />
       ) : !overview ? (
         <LoadingState label="Loading HR overview…" rows={2} />
@@ -451,17 +478,25 @@ function HrList({ initialTab }: { initialTab?: string } = {}) {
             </div>
           </div>
         </>
-      )}
+      ))}
 
       {/* ── Tabs ── */}
-      <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="mb-4">
+      <Tabs value={activeTab} onValueChange={setTab}>
+        {canReadHr ? (
+        <TabsList className="mb-4 max-w-full overflow-x-auto">
           <TabsTrigger value="letters"><FileText className="h-4 w-4 mr-1.5" /> Letters</TabsTrigger>
           <TabsTrigger value="employees"><Users className="h-4 w-4 mr-1.5" /> Employees</TabsTrigger>
           <TabsTrigger value="positions"><Briefcase className="h-4 w-4 mr-1.5" /> Positions</TabsTrigger>
           <TabsTrigger value="attendance"><Clock className="h-4 w-4 mr-1.5" /> Attendance</TabsTrigger>
           <TabsTrigger value="leave"><CalendarPlus className="h-4 w-4 mr-1.5" /> Leave</TabsTrigger>
+          <TabsTrigger value="overtime"><Timer className="h-4 w-4 mr-1.5" /> Overtime</TabsTrigger>
+          <TabsTrigger value="payroll"><BanknoteIcon className="h-4 w-4 mr-1.5" /> Payroll</TabsTrigger>
         </TabsList>
+        ) : (
+        <TabsList className="mb-4 max-w-full overflow-x-auto">
+          <TabsTrigger value="payroll"><BanknoteIcon className="h-4 w-4 mr-1.5" /> Payroll</TabsTrigger>
+        </TabsList>
+        )}
 
         <TabsContent value="letters">
           <LettersHome />
@@ -559,6 +594,14 @@ function HrList({ initialTab }: { initialTab?: string } = {}) {
               exportName="leave-requests"
             />
           )}
+        </TabsContent>
+
+        <TabsContent value="overtime">
+          <OvertimeTab />
+        </TabsContent>
+
+        <TabsContent value="payroll">
+          <PayrollTab />
         </TabsContent>
       </Tabs>
     </div>
