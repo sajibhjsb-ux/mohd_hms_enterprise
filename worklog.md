@@ -1639,3 +1639,19 @@ Work Log:
 
 Stage Summary:
 - Portal user role changes now work end-to-end: UI reaches the backend for ANY user (portal or staff), ADMINs can change roles (403 payload bug fixed), TECHNICIAN↔CUSTOMER fully propagates (roster + assignment dropdowns + session permissions, history preserved, TEC number reused), last-SA protected, dedicated audit + notify + role history UI, no duplicate systems (single User.role column, existing RBAC/audit/session/technician architecture). Remaining known limitation: concurrency version-stamp (409 on simultaneous edits) intentionally not added — house pattern is last-write-wins with full audit.
+
+---
+Task ID: push-github-1
+Agent: Z.ai Code (main orchestrator)
+Task: Push all completed work to GitHub (trace 1a0bf4593243b921) — tidy the unpushed auto-snapshot commit and sync origin/main
+
+Work Log:
+- Git state audit: 1 unpushed commit (auto-snapshot d6bdbae, UUID message, 40 files +3224/-48 = portal role-change fix R1-R5 + checklist engine backend) + 98 working-tree changes that were MODE-ONLY noise (100644→100755, zero content changes, zero untracked files)
+- Verified the Profile system (Task 38-profile-field-permissions) was ALREADY on origin/main: origin contains src/components/hms/modules/profile/index.tsx and the /api/v1/profile routes (pushed earlier in c74bef5)
+- Reverted the 98 mode-only changes via git restore (clean tree, no content loss)
+- Amended the unpushed HEAD (safe — never pushed) from UUID message to a descriptive commit: "feat(users): fix portal role changing end-to-end + rich checklist engine backend" (627b330) covering root causes, RBAC hardening, SelfSessionSync, role history, checklist engine + WO photos routes
+- Pushed origin/main: 4333d10..627b330; verified 0 unpushed commits, 0 dirty files
+- Sanity check: / returns 200, /api/v1/profile returns 401 anonymous (auth guard correct)
+
+Stage Summary:
+- GitHub main = 627b330, fully synced, clean tree. Repository sajibhjsb-ux/mohd_hms_enterprise now carries descriptive commits for all major work streams (PM system, role-change fix + checklist engine; profile system present in earlier history). Remaining backlog unchanged: Task 29 forgot-password OTP, T&C professionalization, mobile toast overlap, nav badges.
