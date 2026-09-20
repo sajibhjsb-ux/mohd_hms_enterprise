@@ -114,9 +114,20 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     // the previous session so the role-based post-login landing applies.
     clearLastRoute();
     setUser(res.data);
+    // Push lifecycle (spec §34): if THIS browser was already granted
+    // notification permission, silently re-bind its FCM installation to the
+    // freshly authenticated user. Never prompts (no context-free permission
+    // request) and never blocks login.
+    void import("@/lib/hms/push-client").then((m) => m.syncPushOnLogin()).catch(() => undefined);
   }, []);
 
   const signOut = useCallback(async () => {
+    // Push lifecycle (spec §34): unregister THIS browser's FCM installation so
+    // the outgoing user's push identity never leaks into the next session on
+    // this device. Other devices of the user are untouched; legacy VAPID
+    // subscriptions keep the existing owner-binding policy (re-bound on next
+    // enable by whoever logs in here).
+    void import("@/lib/hms/push-client").then((m) => m.disableFcm()).catch(() => undefined);
     await api.post("/api/v1/auth/logout").catch(() => undefined);
     clearLastRoute();
     setUser(null);

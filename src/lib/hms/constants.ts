@@ -128,6 +128,9 @@ export const PERMISSIONS = {
   whatsapp_templates: "whatsapp.templates", // template create/edit/version
   whatsapp_automations: "whatsapp.automations", // automation create/edit/enable/disable
   whatsapp_actions: "whatsapp.actions", // retry/cancel queued or failed messages
+  // Push notifications (FCM) — admin notification center + test sends
+  push_view: "push.view", // view the push notification center (devices, queue, history)
+  push_manage: "push.manage", // send test notifications / manage the push channel
   // vehicles
   vehicles_read: "vehicles.read",
   vehicles_manage: "vehicles.manage",

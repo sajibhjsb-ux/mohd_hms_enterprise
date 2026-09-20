@@ -31,6 +31,7 @@ import { navigateTo } from "@/lib/hms/router";
 import { useToast } from "@/hooks/use-toast";
 import { useDraft } from "@/hooks/use-draft";
 import { PageHeader, StatusBadge, ErrorState, LoadingState } from "@/components/hms/shared/ui-bits";
+import { PushSettingsCards } from "@/components/hms/modules/profile/push-settings";
 import { humanize } from "@/lib/hms/constants";
 import { initials, fmtDate } from "@/lib/hms/format";
 import { Button } from "@/components/ui/button";
@@ -404,6 +405,9 @@ function ProfileViewPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Notifications: registered devices + push preferences (spec §19/§32) */}
+      <PushSettingsCards />
 
       {/* Customer identity card (canonical record) */}
       {c ? (

@@ -42,6 +42,9 @@ model User {
   passwordResets    PasswordResetToken[]
   emailOtps         EmailOtp[]
   pushSubscriptions PushSubscription[]
+  pushDevices       PushDevice[]
+  pushLogs          PushLog[]
+  notificationPreference NotificationPreference?
   technicianProfile TechnicianProfile?
   employee          Employee?
   notifications     Notification[]
@@ -127,6 +130,107 @@ model PushSubscription {
   revokedAt  DateTime?
 
   @@index([userId, revokedAt])
+}
+
+// FCM device registry (spec §6 "notification_devices"). One row per Firebase
+// Installation/registration token — a browser/PWA install may register once and
+// refresh its token in place (upsert by token). Multiple devices per user are
+// supported and expected. The token is a provider-generated opaque identifier
+// (NOT a secret); server credentials never touch this table.
+model PushDevice {
+  id               String    @id @default(cuid())
+  userId           String
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // FCM registration token — provider-unique key for this browser install.
+  token            String    @unique
+  // Firebase Installation ID (current Firebase-recommended device identifier).
+  installationId   String    @default("")
+  platform         String    @default("WEB") // WEB | ANDROID | IOS
+  deviceName       String?
+  browser          String?
+  operatingSystem  String?
+  appVersion       String?
+  // GRANTED | DENIED — permission state reported at registration time.
+  permissionStatus String    @default("GRANTED")
+  active           Boolean   @default(true)
+  // Login-session binding (logout policy §34): the last session that
+  // registered/refreshed this device. Cleared on self-unregister.
+  lastSessionId    String    @default("")
+  // Consecutive permanent/transient failure bookkeeping (worker prunes at >=5).
+  failureCount     Int       @default(0)
+  lastError        String    @default("")
+  lastSeenAt       DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([userId, active])
+  @@index([active, updatedAt])
+}
+
+// Push delivery log — the authoritative history for the push channel
+// (EmailLog pattern): QUEUED → SENDING → SENT / FAILED (retry w/ backoff)
+// → DEAD_LETTER, or SKIPPED when the channel cannot attempt delivery.
+// One row per recipient per business notification (fan-out counts inside).
+model PushLog {
+  id             String    @id @default(cuid())
+  status         String    @default("QUEUED")
+  // Idempotency: the in-app Notification id this push belongs to ("" for
+  // direct/admin/test sends). The enqueue path never creates a second QUEUED
+  // row for the same notificationId+user.
+  dedupeKey      String    @default("")
+  // DomainEvent id that produced this push ("" for direct/admin sends).
+  eventId        String    @default("")
+  userId         String
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  notificationId String    @default("") // in-app Notification id (soft reference, not an FK — "" for direct sends)
+  type           String    @default("INFO") // INFO | SUCCESS | WARNING | ERROR
+  title          String
+  body           String
+  resourceType   String    @default("")
+  resourceId     String    @default("")
+  // Server-computed application route (RBAC applied per module — §15).
+  route          String    @default("/dashboard")
+  priority       String    @default("NORMAL") // NORMAL | HIGH | CRITICAL
+  // Transport actually used: FCM | VAPID (legacy web-push fallback).
+  channel        String    @default("FCM")
+  deviceCount    Int       @default(0)
+  sentCount      Int       @default(0)
+  failedCount    Int       @default(0)
+  skippedCount   Int       @default(0)
+  attemptCount   Int       @default(0)
+  maxAttempts    Int       @default(3)
+  scheduledAt    DateTime  @default(now())
+  sentAt         DateTime?
+  lastError      String    @default("")
+  // Transient | Permanent | Unconfigured | ChannelDisabled | Throttled
+  errorCode      String    @default("")
+  // First FCM message id on partial success (per-message ids are per token).
+  fcmMessageId   String    @default("")
+  // Admin/test targeting: restrict delivery to ONE device id ("" = all of the
+  // user's active devices).
+  targetDeviceId String    @default("")
+  // Admin test sends are always clearly marked.
+  isTest         Boolean   @default(false)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([status, scheduledAt])
+  @@index([userId, createdAt])
+  @@index([dedupeKey])
+  @@index([channel, status, createdAt])
+}
+
+// Per-user notification preferences (spec §19). One row per user; `channels`
+// is a JSON map category → { push: boolean } (absent category = default on).
+// Categories mirror the business domains (COMPLAINTS, WORK_ORDERS, PM,
+// INVOICES, QUOTATIONS, PAYMENTS, EQUIPMENT, IRMS, HR, SYSTEM_ALERTS).
+// In-app/Email/WhatsApp remain governed by the existing business rules and
+// automation toggles — preferences only gate the user-facing push channel.
+model NotificationPreference {
+  userId    String   @id
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channels  String   @default("{}")
+  updatedAt DateTime @updatedAt
 }
 
 model TechnicianProfile {

@@ -55,6 +55,8 @@ type NotifyInput = {
   resourceType?: string;
   resourceId?: string;
   channels?: ("IN_APP" | "EMAIL" | "WHATSAPP" | "PUSH")[];
+  /** Push priority (spec §20). Defaults: ERROR/WARNING → HIGH, else NORMAL. */
+  priority?: "NORMAL" | "HIGH" | "CRITICAL";
 };
 
 /**
@@ -128,13 +130,18 @@ export async function notify(input: NotifyInput) {
         console.log(JSON.stringify({ ts: new Date().toISOString(), level: "info", channel, to: input.userId, title: input.title, queued: true }));
       }
     }
-    // Web Push (PWA): deliver the same business notification the user already
-    // receives in-app to their registered devices. Best-effort, never blocking.
+    // Web Push (PWA + FCM): deliver the same business notification the user
+    // already receives in-app to their registered devices (FCM queue + legacy
+    // VAPID). Best-effort, never blocking; notificationId links the in-app row
+    // with the PushLog delivery record (§13) and dedupes repeat events (§26).
     void sendPushToUser(input.userId, {
       title: input.title,
       body: input.message,
       resourceType: input.resourceType,
       resourceId: input.resourceId,
+      notificationId,
+      type: input.type ?? "INFO",
+      priority: input.priority,
     });
     // Realtime delivery (STEP 17): the persisted notification becomes an outbox
     // event so the recipient's badge/panel/toast update without any refresh.
