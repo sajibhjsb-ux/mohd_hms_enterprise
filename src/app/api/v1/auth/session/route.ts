@@ -1,5 +1,5 @@
 import { handler, ok } from "@/lib/hms/api";
-import { getSessionUser } from "@/lib/hms/auth";
+import { getSessionUser, SESSION_IDLE_TIMEOUT_SECONDS } from "@/lib/hms/auth";
 import { db } from "@/lib/db";
 import { customerProfileState } from "@/lib/hms/customer-profile";
 import { termsStatusFor } from "@/lib/hms/legal/legal";
@@ -33,6 +33,9 @@ export const GET = handler(
         avatarUrl: avatarUrl,
       },
       sessionExpiresAt: user.sessionExpiresAt,
+      // Centralized idle-timeout configuration (seconds) — the client builds
+      // its warning/UX timers from THIS value; 300 in production.
+      idleTimeoutSeconds: SESSION_IDLE_TIMEOUT_SECONDS,
     });
   },
   { auth: false }

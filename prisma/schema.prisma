@@ -65,6 +65,11 @@ model Session {
   userAgent  String?
   createdAt  DateTime @default(now())
   lastSeenAt DateTime @default(now())
+  // Idle-timeout clock (spec: auto logout after inactivity). Advanced ONLY by
+  // genuine-user-activity reports — background polling/heartbeat/WS traffic
+  // never touches it. The server enforces: idle >= SESSION_IDLE_TIMEOUT_MS
+  // invalidates the session on the next authenticated request.
+  lastActivityAt DateTime @default(now())
 
   @@index([userId])
   @@index([expiresAt])

@@ -5,7 +5,7 @@ import "server-only";
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { ZodError, ZodType } from "zod";
-import { getSessionUser, SessionUser } from "./auth";
+import { getSessionUser, consumeSessionRejectionReason, SessionUser } from "./auth";
 import { roleCan } from "./rbac";
 import type { Permission } from "./constants";
 
@@ -78,7 +78,14 @@ export function handler(
     try {
       const needsAuth = opts?.auth !== false;
       const user = await getSessionUser();
-      if (needsAuth && !user) throw Errors.unauthorized();
+      if (needsAuth && !user) {
+        // Precise 401 code: an idle-expired session answers SESSION_EXPIRED so
+        // the client can run the central session-expired flow (§17/§26).
+        if (consumeSessionRejectionReason() === "IDLE_TIMEOUT") {
+          throw new ApiError(401, "SESSION_EXPIRED", "Your session has expired due to inactivity. Please log in again.");
+        }
+        throw Errors.unauthorized();
+      }
       if (opts?.permission && (!user || !roleCan(user.role, opts.permission))) {
         throw Errors.forbidden();
       }

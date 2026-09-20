@@ -14,6 +14,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ClientApiError, api } from "@/lib/hms/api-client";
+import { consumeSessionExpiredFlag } from "@/components/hms/session";
 import {
   AuthDivider,
   AuthError,
@@ -31,6 +32,7 @@ export function AuthLoginScreen({
   onBack,
   autoFocusEmail,
   oauthError,
+  notice,
   remember,
   onRememberChange,
   onAuthenticated,
@@ -40,6 +42,8 @@ export function AuthLoginScreen({
   onBack: () => void;
   autoFocusEmail: boolean;
   oauthError: string | null;
+  /** One-shot informational banner, e.g. the inactivity session-expired notice. */
+  notice?: string | null;
   /** Lifted so the OTP verification request can reuse the same choice. */
   remember: boolean;
   onRememberChange: (v: boolean) => void;
@@ -56,6 +60,19 @@ export function AuthLoginScreen({
   const [busy, setBusy] = useState(false);
   const [googleBusy, setGoogleBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // One-shot inactivity session-expired notice (set by the idle-logout flow
+  // right before it navigates to the login screen). Consumed lazily ONCE per
+  // mount — this screen only mounts when the login form is actually shown,
+  // so a transient auth-flow mount during the logout navigation can never
+  // swallow the message, and it never replays on later visits.
+  const noticeRef = useRef<string | null | undefined>(undefined);
+  if (noticeRef.current === undefined) {
+    noticeRef.current = consumeSessionExpiredFlag()
+      ? "Your session has expired due to inactivity. Please log in again."
+      : null;
+  }
+  const expiredNotice = noticeRef.current;
 
   const emailRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
@@ -180,6 +197,12 @@ export function AuthLoginScreen({
             Forgot Password?
           </button>
         </div>
+
+        {notice ?? expiredNotice ? (
+          <p role="status" className="rounded-lg border border-amber-300 bg-amber-50 px-3.5 py-2.5 text-sm font-medium text-amber-900">
+            {notice ?? expiredNotice}
+          </p>
+        ) : null}
 
         <AuthError message={error ?? oauthError} />
 

@@ -35,6 +35,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<ApiEnvelope
   }
   if (!res.ok || !body || body.ok === false) {
     const err = body && body.ok === false ? body.error : { code: "UNKNOWN", message: "Something went wrong. Please try again." };
+    // Central session-expired interception (§17): the backend answers
+    // 401 SESSION_EXPIRED when the idle timeout has passed. Dispatch ONCE
+    // here so every caller shares the same logout flow — no per-call logic.
+    if (res.status === 401 && err.code === "SESSION_EXPIRED" && typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("hms:session-expired"));
+    }
     throw new ClientApiError(err.message, err.code, res.status, (err as { details?: unknown }).details);
   }
   return body;

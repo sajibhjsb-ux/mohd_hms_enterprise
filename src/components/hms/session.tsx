@@ -38,11 +38,19 @@ type SessionCtx = {
   refresh: () => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
+  /** Server-configured idle timeout (seconds; 300 in production). The
+   *  IdleSessionGuard builds its warning/UX timers from this — no client-side
+   *  hardcoding of the timeout value anywhere. */
+  idleTimeoutSeconds: number | null;
 };
 
 const Ctx = createContext<SessionCtx>({
-  user: null, loading: true, refresh: async () => {}, signIn: async () => {}, signOut: async () => {},
+  user: null, loading: true, refresh: async () => {}, signIn: async () => {}, signOut: async () => {}, idleTimeoutSeconds: null,
 });
+
+/** sessionStorage key for the post-expiry login banner (set before the
+ *  redirect, consumed + cleared once by the auth flow). */
+export const SESSION_EXPIRED_NOTICE_KEY = "hms_session_expired_notice";
 
 export function useSession() {
   return useContext(Ctx);
@@ -51,12 +59,14 @@ export function useSession() {
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<SessionUser | null>(null);
   const [loading, setLoading] = useState(true);
+  const [idleTimeoutSeconds, setIdleTimeoutSeconds] = useState<number | null>(null);
   const beatRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const refresh = useCallback(async () => {
     try {
-      const res = await api.get<{ authenticated: boolean; user?: SessionUser }>("/api/v1/auth/session");
+      const res = await api.get<{ authenticated: boolean; user?: SessionUser; idleTimeoutSeconds?: number }>("/api/v1/auth/session");
       setUser(res.data.authenticated && res.data.user ? res.data.user : null);
+      if (res.data.idleTimeoutSeconds) setIdleTimeoutSeconds(res.data.idleTimeoutSeconds);
     } catch {
       setUser(null);
     } finally {
@@ -65,6 +75,22 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => { refresh(); }, [refresh]);
+
+  // Central SESSION_EXPIRED interception (§10/§17): the api-client dispatches
+  // this once for any 401 SESSION_EXPIRED; every component shares this single
+  // cleanup — clear auth state, clear the persisted launch route, and go to
+  // the login screen with the inactivity notice. A full navigation also tears
+  // down the WebSocket, polls and all authenticated state in one move.
+  useEffect(() => {
+    const onExpired = () => {
+      try { sessionStorage.setItem(SESSION_EXPIRED_NOTICE_KEY, "1"); } catch { /* best effort */ }
+      clearLastRoute();
+      setUser(null);
+      if (window.location.pathname !== "/") window.location.assign("/?auth=login");
+    };
+    window.addEventListener("hms:session-expired", onExpired);
+    return () => window.removeEventListener("hms:session-expired", onExpired);
+  }, []);
 
   // Silent heartbeat: renews sliding session, keeps work alive. No reloads, ever.
   useEffect(() => {
@@ -96,7 +122,20 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }, []);
 
-  return <Ctx.Provider value={{ user, loading, refresh, signIn, signOut }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ user, loading, refresh, signIn, signOut, idleTimeoutSeconds }}>{children}</Ctx.Provider>;
+}
+
+/** True when the current page load came through an idle-session expiry
+ *  (consumed by the auth flow to show the exact expired message once). */
+export function consumeSessionExpiredFlag(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    if (sessionStorage.getItem(SESSION_EXPIRED_NOTICE_KEY) === "1") {
+      sessionStorage.removeItem(SESSION_EXPIRED_NOTICE_KEY);
+      return true;
+    }
+  } catch { /* best effort */ }
+  return false;
 }
 
 export function hasPerm(user: SessionUser | null, perm: Permission): boolean {

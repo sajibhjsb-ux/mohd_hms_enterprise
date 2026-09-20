@@ -38,6 +38,7 @@ import { GlobalSearch, type SearchNavigateTarget } from "./shell/global-search";
 import { QrScanDialog } from "./shell/qr-dialog";
 import { RealtimeProvider } from "./realtime/realtime-provider";
 import { TermsConsentGate } from "./legal/terms-consent-gate";
+import { IdleSessionGuard } from "./idle-session-guard";
 
 export function AppShell() {
   const { user } = useSession();
@@ -300,6 +301,7 @@ export function AppShell() {
       />
 
       {/* Overlays (utility dialogs only — business CRUD uses dedicated pages) */}
+      <IdleSessionGuard />
       <ChangePasswordDialog open={changePwOpen} onOpenChange={setChangePwOpen} />
       <GlobalSearch open={searchOpen} onOpenChange={setSearchOpen} onNavigate={navigateFromSearch} />
       <QrScanDialog open={qrOpen} onOpenChange={setQrOpen} onNavigate={navigateFromQr} />
