@@ -369,6 +369,45 @@ export async function deleteDraft(user: { id: string }, messageId: string) {
 
 export type SendInput = DraftInput & { draftId?: string };
 
+/**
+ * Resolve the mailbox that should receive a colleague's mail (INBOX copy).
+ * Preference: their own PERSONAL mailbox → a PERSONAL mailbox they can read →
+ * a SHARED mailbox they can read → auto-provision a PERSONAL mailbox at the
+ * user's own email address (corporate-directory semantics — every staff
+ * member can receive internal mail even before an admin assigns mailboxes).
+ * Returns null only when the user's address is claimed by someone else's
+ * personal mailbox and no other readable mailbox exists (nowhere honest to
+ * deliver).
+ */
+async function inboxTargetMailbox(u: { id: string; email: string; name: string }): Promise<string | null> {
+  const boxes = await db.mailbox.findMany({
+    where: { isActive: true, OR: [{ ownerUserId: u.id }, { members: { some: { userId: u.id } } }] },
+    orderBy: { createdAt: "asc" },
+    select: { id: true, kind: true, ownerUserId: true },
+  });
+  const ownedPersonal = boxes.find((b) => b.kind === "PERSONAL" && b.ownerUserId === u.id);
+  if (ownedPersonal) return ownedPersonal.id;
+  const personalMember = boxes.find((b) => b.kind === "PERSONAL");
+  if (personalMember) return personalMember.id;
+  const shared = boxes.find((b) => b.kind === "SHARED");
+  if (shared) return shared.id;
+  const conflict = await db.mailbox.findUnique({ where: { email: u.email }, select: { id: true, kind: true } });
+  if (conflict) {
+    if (conflict.kind === "SHARED") {
+      await db.mailboxMember
+        .create({ data: { mailboxId: conflict.id, userId: u.id, canSend: false } })
+        .catch(() => undefined);
+      return conflict.id;
+    }
+    return null;
+  }
+  const created = await db.mailbox.create({
+    data: { email: u.email, displayName: u.name, kind: "PERSONAL", ownerUserId: u.id },
+    select: { id: true },
+  });
+  return created.id;
+}
+
 export async function sendCompose(user: { id: string; email: string }, input: SendInput) {
   // Resolve the working draft first (if any) so its mailbox is the default
   // sender — the browser never gets to pick an unapproved identity (§45).
@@ -427,34 +466,99 @@ export async function sendCompose(user: { id: string; email: string }, input: Se
     throw Errors.badRequest(reason);
   }
 
-  // Move the message into the delivery pipeline.
+  // ── Recipient classification — internal corporate mail vs external SMTP ──
+  // A recipient is INTERNAL when the address is an active org mailbox OR an
+  // active staff member's email. Internal recipients receive a REAL INBOX
+  // copy in their mailbox and are excluded from the SMTP envelope (no double
+  // delivery). Internal-only email needs no SMTP at all — it is delivered
+  // immediately; external parts go through the ONE EmailService queue.
+  const allAddresses = [...new Set([...to, ...cc, ...bcc])].map((a) => a.toLowerCase());
+  const orgMailboxes = allAddresses.length
+    ? await db.mailbox.findMany({ where: { email: { in: allAddresses }, isActive: true }, select: { id: true, email: true } })
+    : [];
+  const orgMailboxByEmail = new Map(orgMailboxes.map((m) => [m.email.toLowerCase(), m.id] as const));
+  const staffAddresses = allAddresses.filter((a) => !orgMailboxByEmail.has(a));
+  const staffUsers = staffAddresses.length
+    ? await db.user.findMany({
+        where: { email: { in: staffAddresses }, role: { not: "CUSTOMER" }, status: "ACTIVE" },
+        select: { id: true, email: true, name: true },
+      })
+    : [];
+  const staffByEmail = new Map(staffUsers.map((u) => [u.email.toLowerCase(), u] as const));
+  const isInternal = (a: string) => orgMailboxByEmail.has(a.toLowerCase()) || staffByEmail.has(a.toLowerCase());
+  const externalTo = to.filter((a) => !isInternal(a));
+  const externalCc = cc.filter((a) => !isInternal(a));
+  const externalBcc = bcc.filter((a) => !isInternal(a));
+  const externalCount = externalTo.length + externalCc.length + externalBcc.length;
+  const threadRoot = message.threadId || message.id;
+
+  // Move the message into the delivery pipeline. All-internal sends are
+  // DELIVERED immediately (folder SENT, real INBOX copies below); mixed or
+  // external sends stay OUTBOX/QUEUED until the worker's SMTP outcome lands.
   await db.mailMessage.update({
     where: { id: message.id },
-    data: { folder: "OUTBOX", status: "QUEUED", lastError: "" },
+    data: externalCount > 0
+      ? { folder: "OUTBOX", status: "QUEUED", lastError: "" }
+      : { folder: "SENT", status: "SENT", sentAt: new Date(), lastError: "" },
   });
 
-  const result = await queueClientEmail({
-    mailMessageId: message.id,
-    to, cc, bcc,
-    subject: subject || "(no subject)",
-    html: message.bodyHtml,
-    text: message.bodyText,
-    sender: { fromName: mailbox.displayName || "MOHD.HMS Enterprise", fromEmail: mailbox.email, replyTo: mailbox.email },
-    attachments: materialized,
-  });
+  let emailLogId = "";
+  if (externalCount > 0) {
+    const result = await queueClientEmail({
+      mailMessageId: message.id,
+      to: externalTo, cc: externalCc, bcc: externalBcc,
+      subject: subject || "(no subject)",
+      html: message.bodyHtml,
+      text: message.bodyText,
+      sender: { fromName: mailbox.displayName || "MOHD.HMS Enterprise", fromEmail: mailbox.email, replyTo: mailbox.email },
+      attachments: materialized,
+    });
+    if (!result.ok) {
+      // Honest failure — the message is kept, marked FAILED, retryable (§12/§49).
+      await db.mailMessage.update({ where: { id: message.id }, data: { status: "FAILED", lastError: result.reason ?? "send rejected" } }).catch(() => undefined);
+      throw Errors.badRequest(result.reason ?? "The email could not be queued for delivery.");
+    }
+    emailLogId = result.id ?? "";
+  }
 
-  if (!result.ok) {
-    // Honest failure — the message is kept, marked FAILED, retryable (§12/§49).
-    await db.mailMessage.update({ where: { id: message.id }, data: { status: "FAILED", lastError: result.reason ?? "send rejected" } }).catch(() => undefined);
-    throw Errors.badRequest(result.reason ?? "The email could not be queued for delivery.");
+  // Internal INBOX copies — real delivery into colleagues'/shared mailboxes.
+  let internalDelivered = 0;
+  const seenMailboxes = new Set<string>([mailbox.id]); // never copy into the sending mailbox
+  for (const addr of allAddresses) {
+    const directBox = orgMailboxByEmail.get(addr) ?? null;
+    const staffUser = staffByEmail.get(addr) ?? null;
+    const targetBoxId = directBox ?? (staffUser ? await inboxTargetMailbox(staffUser) : null);
+    if (!targetBoxId || seenMailboxes.has(targetBoxId)) continue;
+    seenMailboxes.add(targetBoxId);
+    const copy = await db.mailMessage.create({
+      data: {
+        mailboxId: targetBoxId, folder: "INBOX", status: "SENT", direction: "IN",
+        threadId: threadRoot, subject,
+        bodyText: body, bodyHtml: message.bodyHtml,
+        fromEmail: mailbox.email, fromName: mailbox.displayName,
+        // BCC privacy — received copies never reveal BCC recipients.
+        toEmail: [...to, ...cc].join(", "), ccEmail: cc.join(", "), bccEmail: "",
+        messageId: "",
+      },
+      select: { id: true },
+    });
+    if (attachments.length > 0) {
+      await db.mailAttachment.createMany({
+        data: attachments.map((a) => ({
+          messageId: copy.id, filename: a.filename, contentType: a.contentType,
+          sizeBytes: a.sizeBytes, objectKey: a.objectKey, fileId: a.fileId,
+        })),
+      });
+    }
+    internalDelivered += 1;
   }
 
   await audit({
     actorId: user.id, actorEmail: user.email, action: "MAIL_SENT", resourceType: "MAIL_MESSAGE", resourceId: message.id,
-    metadata: { from: mailbox.email, recipients: [...to, ...cc, ...bcc].length, subject: (subject || "(no subject)").slice(0, 120), attachments: materialized.length, emailLogId: result.id },
+    metadata: { from: mailbox.email, recipients: [...to, ...cc, ...bcc].length, internalDelivered, externalQueued: externalCount, subject: (subject || "(no subject)").slice(0, 120), attachments: materialized.length, emailLogId },
   });
 
-  return { messageId: message.id, status: "QUEUED", emailLogId: result.id ?? "" };
+  return { messageId: message.id, status: externalCount > 0 ? "QUEUED" : "SENT", emailLogId, internalDelivered, externalQueued: externalCount };
 }
 
 /** Requeue a FAILED client email through the existing EmailService retry. */

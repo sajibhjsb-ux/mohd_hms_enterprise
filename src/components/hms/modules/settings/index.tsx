@@ -262,11 +262,9 @@ export function SettingsModule() {
           <AutomationTab />
         </TabsContent>
 
-        {/* Email administration is NOT part of Settings — it lives in the
-            dedicated Email Configuration module (/email, registry key "email").
-            One email configuration UI, managed only from that module. */}
-
-        {/* ── Email (§30 — centralized EmailService administration, now in Settings) ── */}
+        {/* ── Email (§30 — ALL email infrastructure administration lives here:
+            SMTP, mailboxes, templates, automations, logs — per the user's
+            direction. The /email module is the pure mailbox client.) ── */}
         {canViewEmail ? (
           <TabsContent value="email">
             <EmailTab />

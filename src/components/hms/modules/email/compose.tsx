@@ -27,7 +27,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { api, qs, ClientApiError } from "@/lib/hms/api-client";
+import { api, qs, ClientApiError, type ApiEnvelope } from "@/lib/hms/api-client";
 import { PageHeader, ErrorState } from "@/components/hms/shared/ui-bits";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -682,10 +682,12 @@ export function ComposePage() {
     }
     setSending(true);
     try {
+      type SendResult = { messageId: string; status: string; emailLogId: string; internalDelivered?: number; externalQueued?: number };
+      let result: ApiEnvelope<SendResult> | null = null;
       if (draftId) {
         // Persist the latest content silently, then queue the draft.
         await api.patch(`/api/v1/email/client/drafts/${draftId}`, { mailboxId, to, cc, bcc, subject, body });
-        await api.post<{ messageId: string; status: string; emailLogId: string }>(
+        result = await api.post<{ messageId: string; status: string; emailLogId: string; internalDelivered?: number; externalQueued?: number }>(
           `/api/v1/email/client/drafts/${draftId}/send`,
           { to, cc, bcc, subject, body }
         );
@@ -701,12 +703,12 @@ export function ComposePage() {
           body,
           forwardFrom,
         });
-        await api.post<{ messageId: string; status: string; emailLogId: string }>(
+        result = await api.post<{ messageId: string; status: string; emailLogId: string; internalDelivered?: number; externalQueued?: number }>(
           `/api/v1/email/client/drafts/${created.data.id}/send`,
           { to, cc, bcc, subject, body }
         );
       } else {
-        await api.post<{ messageId: string; status: string; emailLogId: string }>(
+        result = await api.post<{ messageId: string; status: string; emailLogId: string; internalDelivered?: number; externalQueued?: number }>(
           "/api/v1/email/client/send",
           {
             mailboxId,
@@ -721,10 +723,19 @@ export function ComposePage() {
       }
       setDirty(false);
       setPageDirty(false);
-      // NEVER claim "sent" — the backend only queues (§49); the Outbox shows
-      // the real delivery status.
-      toast({ title: "Email queued for delivery", description: "Track its status in the Outbox." });
-      navigateTo("email", ["f", "OUTBOX"]);
+      // Honest result (§49) — the backend reports what ACTUALLY happened:
+      // internal colleagues are delivered immediately (no SMTP involved);
+      // anything external is QUEUED until the mail server really accepts it.
+      if (result?.data?.status === "SENT") {
+        toast({
+          title: "Email delivered",
+          description: `Delivered internally to ${result.data.internalDelivered ?? 1} mailbox${(result.data.internalDelivered ?? 1) === 1 ? "" : "es"}.`,
+        });
+        navigateTo("email", ["f", "SENT"]);
+      } else {
+        toast({ title: "Email queued for delivery", description: "Track its status in the Outbox." });
+        navigateTo("email", ["f", "OUTBOX"]);
+      }
     } catch (e) {
       // Everything the user wrote is preserved on failure (§12).
       toast({
