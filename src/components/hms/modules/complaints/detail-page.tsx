@@ -28,7 +28,7 @@ import {
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
-  CheckCircle2, ClipboardCheck, Hammer, Pencil, UserPlus,
+  ArrowUpRight, CheckCircle2, ClipboardCheck, Hammer, Pencil, UserPlus,
 } from "lucide-react";
 
 type HistoryRow = {
@@ -162,6 +162,61 @@ export function ComplaintDetailPage({ id }: { id: string }) {
       <div className="grid gap-4 lg:grid-cols-3">
         {/* Main column */}
         <div className="lg:col-span-2 space-y-4">
+          {/* ── Chapter 12 — conversion display. The linked Work Order itself is
+              the conversion indicator — there is intentionally NO "Converted:
+              YES" flag anywhere. The WO code opens the REAL work order detail
+              page through the existing router (never a modal). ── */}
+          {detail.workOrders.length > 0 ? (
+            <div className="rounded-xl border bg-card shadow-sm p-4 sm:p-5 space-y-4">
+              <p className="text-muted-foreground text-xs uppercase tracking-wide">
+                {detail.workOrders.length > 1 ? "Linked work orders" : "Linked work order"}
+              </p>
+              <div className="grid gap-4 sm:grid-cols-3 text-sm">
+                <div className="space-y-1.5">
+                  <p className="text-muted-foreground text-xs uppercase tracking-wide">Complaint status</p>
+                  <StatusBadge status={detail.status} />
+                </div>
+                <div className="space-y-1.5">
+                  <p className="text-muted-foreground text-xs uppercase tracking-wide">Linked work order</p>
+                  <button
+                    type="button"
+                    onClick={() => navigateTo("work-orders", [detail.workOrders[0].id])}
+                    title={detail.workOrders[0].title || undefined}
+                    aria-label={`Open work order ${detail.workOrders[0].code}`}
+                    className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 font-mono text-sm text-primary hover:bg-accent/60 transition-colors min-h-[44px] sm:min-h-0"
+                  >
+                    {detail.workOrders[0].code}
+                    <ArrowUpRight className="h-3.5 w-3.5" aria-hidden />
+                  </button>
+                </div>
+                <div className="space-y-1.5">
+                  <p className="text-muted-foreground text-xs uppercase tracking-wide">Work order status</p>
+                  <StatusBadge status={detail.workOrders[0].status} />
+                </div>
+              </div>
+              {detail.workOrders.length > 1 ? (
+                <div className="space-y-2 border-t pt-3">
+                  {detail.workOrders.slice(1).map((w) => (
+                    <div key={w.id} className="flex flex-wrap items-center gap-2 text-sm">
+                      <button
+                        type="button"
+                        onClick={() => navigateTo("work-orders", [w.id])}
+                        title={w.title || undefined}
+                        aria-label={`Open work order ${w.code}`}
+                        className="inline-flex items-center gap-1 font-mono text-primary hover:underline min-h-[44px] sm:min-h-0"
+                      >
+                        {w.code}
+                        <ArrowUpRight className="h-3.5 w-3.5" aria-hidden />
+                      </button>
+                      <StatusBadge status={w.status} />
+                      {w.technician?.user?.name ? <span className="text-xs text-muted-foreground">{w.technician.user.name}</span> : null}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
           <div className="rounded-xl border bg-card shadow-sm p-4 sm:p-5 space-y-4">
             <div className="flex items-center justify-between gap-2 text-sm">
               <span className="font-mono text-muted-foreground">{detail.code}</span>
@@ -217,24 +272,6 @@ export function ComplaintDetailPage({ id }: { id: string }) {
             )}
           </div>
 
-          {detail.workOrders.length > 0 ? (
-            <div className="rounded-xl border bg-card shadow-sm p-4 sm:p-5 text-sm">
-              <p className="text-muted-foreground text-xs uppercase tracking-wide mb-3">Linked work orders</p>
-              <div className="flex flex-wrap gap-2">
-                {detail.workOrders.map((w) => (
-                  <a
-                    key={w.id}
-                    href={`/work-orders/${encodeURIComponent(w.id)}`}
-                    className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs hover:bg-accent transition-colors"
-                  >
-                    <span className="font-mono">{w.code}</span>
-                    <StatusBadge status={w.status} />
-                    {w.technician?.user?.name ? <span className="text-muted-foreground">{w.technician.user.name}</span> : null}
-                  </a>
-                ))}
-              </div>
-            </div>
-          ) : null}
         </div>
 
         {/* Action column — contextual to role and status */}
