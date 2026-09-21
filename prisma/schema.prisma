@@ -2193,6 +2193,23 @@ model MailAttachment {
   @@index([messageId])
 }
 
+// Shared contact group (distribution list) for the Email client compose UI —
+// one click inserts every member's address. Members are stored as display
+// references [{name,email}] validated server-side on every write; the send
+// path never trusts them beyond being recipient email addresses.
+model MailContactGroup {
+  id        String   @id @default(cuid())
+  name      String
+  // Tone token for the compose chip ("emerald", "amber", …).
+  color     String   @default("")
+  members   String   @default("[]")
+  createdBy String   @default("")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([name])
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // WHATSAPP AUTOMATION (OpenWA gateway integration)
 // OpenWA = transport ONLY. MOHD.HMS remains the system of record:

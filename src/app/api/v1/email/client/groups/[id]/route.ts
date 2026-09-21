@@ -5,24 +5,18 @@
 import { db } from "@/lib/db";
 import { handler, ok, Errors, parseBody } from "@/lib/hms/api";
 import { PERMISSIONS } from "@/lib/hms/constants";
-import { mailGroupSchema, normalizeGroupMembers } from "@/lib/hms/email/client";
+import { mailGroupSchema, normalizeGroupMembers } from "@/lib/hms/email/groups";
 
 function idFromPath(url: string): string {
   // /api/v1/email/client/groups/{id}
   return new URL(url).pathname.split("/").filter(Boolean)[5] ?? "";
 }
 
-function normalizeOrThrow(members: { name: string; email: string }[]) {
-  const res = normalizeGroupMembers(members);
-  if (!res.ok) throw Errors.badRequest(res.error);
-  return res.list;
-}
-
 export const PATCH = handler(
   async ({ req, user }) => {
     const id = idFromPath(req.url);
     const body = await parseBody(req, mailGroupSchema);
-    const members = normalizeOrThrow(body.members);
+    const members = normalizeGroupMembers(body.members);
     const name = body.name.replace(/[\r\n\t]+/g, " ").trim();
 
     const group = await db.mailContactGroup.findUnique({ where: { id }, select: { id: true } });

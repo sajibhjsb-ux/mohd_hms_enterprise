@@ -49,6 +49,7 @@ import { useUi } from "@/lib/hms/ui-store";
 import { navigateTo, parseQueryParams, replacePath } from "@/lib/hms/router";
 import { cn } from "@/lib/utils";
 import { FilesPickerDialog, type PickerFile } from "./files-picker";
+import { GroupsManager } from "./groups-manager";
 import type {
   AttachmentInfo,
   Bootstrap,
@@ -97,6 +98,7 @@ function RecipientField({
   names,
   onName,
   onAdd,
+  onAddMany,
   onRemove,
 }: {
   id: string;
@@ -106,6 +108,7 @@ function RecipientField({
   names: Record<string, string>;
   onName: (email: string, name: string) => void;
   onAdd: (email: string) => void;
+  onAddMany?: (members: { name: string; email: string }[]) => void;
   onRemove: (email: string) => void;
 }) {
   const [text, setText] = useState("");
@@ -149,7 +152,8 @@ function RecipientField({
     setOpen(false);
   };
 
-  const groups: { label: string; items: { email: string; name: string }[] }[] = [
+  const groups: { label: string; items: { email: string; name: string; members?: { name: string; email: string }[] }[] }[] = [
+    { label: "Groups", items: (suggestions?.groups ?? []).map((g) => ({ email: `group:${g.id}`, name: `${g.name} · ${g.count} member${g.count === 1 ? "" : "s"}`, members: g.members })) },
     { label: "Users", items: (suggestions?.users ?? []).map((u) => ({ email: u.email, name: u.name })) },
     { label: "Mailboxes", items: (suggestions?.mailboxes ?? []).map((m) => ({ email: m.email, name: m.name })) },
     { label: "Customers", items: (suggestions?.customers ?? []).map((c) => ({ email: c.email, name: c.name })) },
@@ -217,10 +221,17 @@ function RecipientField({
                         type="button"
                         role="option"
                         aria-selected={false}
+                        data-group={s.members ? "true" : undefined}
                         onMouseDown={(e) => {
                           e.preventDefault(); // keep the input focused (no blur-commit)
-                          onName(s.email.toLowerCase(), s.name);
-                          onAdd(s.email);
+                          if (s.members && onAddMany) {
+                            // Distribution list: insert every member address.
+                            for (const m of s.members) onName(m.email.toLowerCase(), m.name || m.email);
+                            onAddMany(s.members);
+                          } else {
+                            onName(s.email.toLowerCase(), s.name);
+                            onAdd(s.email);
+                          }
                           setText("");
                           setOpen(false);
                         }}
@@ -529,6 +540,19 @@ export function ComposePage() {
   const addName = useCallback((email: string, name: string) => {
     setNames((prev) => ({ ...prev, [email]: name }));
   }, []);
+
+  // Insert a whole contact group (distribution list) into a recipient field.
+  const addRecipientsMany = useCallback(
+    (field: "to" | "cc" | "bcc", members: { name: string; email: string }[]) => {
+      for (const m of members) {
+        const email = m.email.trim().toLowerCase();
+        if (!email) continue;
+        if (m.name) addName(email, m.name);
+        addRecipient(field, email);
+      }
+    },
+    [addName, addRecipient]
+  );
 
   // ── Attachments ──
   const attachments: ChipAttachment[] = draftId
@@ -840,10 +864,14 @@ export function ComposePage() {
                     names={names}
                     onName={addName}
                     onAdd={(email) => addRecipient("to", email)}
+                    onAddMany={(members) => addRecipientsMany("to", members)}
                     onRemove={(email) => removeRecipient("to", email)}
                   />
                 </div>
                 <div className="flex shrink-0 gap-1 pb-0.5">
+                  <GroupsManager
+                    onInsert={(members) => addRecipientsMany("to", members)}
+                  />
                   <Button
                     type="button"
                     variant="ghost"
@@ -875,6 +903,7 @@ export function ComposePage() {
                   names={names}
                   onName={addName}
                   onAdd={(email) => addRecipient("cc", email)}
+                  onAddMany={(members) => addRecipientsMany("cc", members)}
                   onRemove={(email) => removeRecipient("cc", email)}
                 />
               ) : null}
@@ -887,6 +916,7 @@ export function ComposePage() {
                   names={names}
                   onName={addName}
                   onAdd={(email) => addRecipient("bcc", email)}
+                  onAddMany={(members) => addRecipientsMany("bcc", members)}
                   onRemove={(email) => removeRecipient("bcc", email)}
                 />
               ) : null}

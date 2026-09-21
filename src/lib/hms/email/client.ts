@@ -39,6 +39,7 @@ import {
   sanitizeFileName, sniffMimeType, sha256,
 } from "@/lib/hms/files/service";
 import { getEmailConfig, isValidEmail } from "./config";
+import { parseGroupMembers } from "./groups";
 import { queueClientEmail, retryEmail } from "./service";
 
 // ─── Vocabulary ─────────────────────────────────────────────────────────────
@@ -869,7 +870,7 @@ export async function readAttachment(userId: string, messageId: string, attachme
 
 export async function recipientSuggestions(user: { id: string; role: string }, q: string) {
   const query = q.trim().slice(0, 80);
-  if (!query) return { users: [], customers: [], mailboxes: [] };
+  if (!query) return { users: [], customers: [], mailboxes: [], groups: [] };
   const like = { contains: query };
   const [users, mailboxes, customers] = await Promise.all([
     db.user.findMany({
@@ -893,6 +894,18 @@ export async function recipientSuggestions(user: { id: string; role: string }, q
     customers: customers
       .filter((c) => Boolean(c.email))
       .map((c) => ({ id: c.id, name: c.companyName || c.contactPerson, email: c.email })),
+    // Contact groups (distribution lists) matching the query — the compose UI
+    // inserts ALL member addresses when one is selected.
+    groups: await db.mailContactGroup
+      .findMany({ where: { name: like }, orderBy: { name: "asc" }, take: 3 })
+      .then((rows) =>
+        rows.map((g) => ({
+          id: g.id,
+          name: g.name,
+          count: parseGroupMembers(g.members).length,
+          members: parseGroupMembers(g.members),
+        }))
+      ),
   };
 }
 

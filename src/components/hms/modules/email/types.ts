@@ -109,6 +109,8 @@ export type Suggestions = {
   users: { id: string; name: string; email: string; role: string }[];
   mailboxes: { id: string; name: string; email: string }[];
   customers: { id: string; name: string; email: string }[];
+  // Contact groups (distribution lists) — selecting one inserts EVERY member.
+  groups: { id: string; name: string; count: number; members: { name: string; email: string }[] }[];
 };
 
 export const MAIL_FOLDER_LABELS: Record<string, string> = {

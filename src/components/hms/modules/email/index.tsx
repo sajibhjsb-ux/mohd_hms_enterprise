@@ -2,8 +2,9 @@
 
 // MOHD.HMS ENTERPRISE — Email module router (/email) — the USER-FACING
 // email client (spec §6/§7). This module is for reading, writing, organizing
-// and searching mail ONLY; infrastructure configuration lives in the separate
-// Email Configuration module (/email-config) and is never reachable from here.
+// and searching mail ONLY; infrastructure configuration (SMTP, mailboxes,
+// templates, automations, logs) lives in SETTINGS → Email and is never
+// reachable from here (the user's direction — one configuration surface).
 //
 // NAVIGATION ARCHITECTURE (existing hash router — ui-store pages["email"]):
 //   []                    → client main (folders + list + reading pane)
