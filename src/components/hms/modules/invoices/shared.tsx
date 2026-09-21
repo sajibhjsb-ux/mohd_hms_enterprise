@@ -7,7 +7,9 @@
 
 import { customerLabel, fmtDate, money } from "@/lib/hms/format";
 import { Separator } from "@/components/ui/separator";
-import { humanize } from "@/lib/hms/constants";
+import { Badge } from "@/components/ui/badge";
+import { humanize, STATUS_TONE } from "@/lib/hms/constants";
+import { cn } from "@/lib/utils";
 import { DocumentHeader, FALLBACK_IDENTITY, loadCompanyIdentity, type CompanyIdentity } from "@/components/hms/shared/document-header";
 
 // ── Types (mirror API responses) ──
@@ -17,6 +19,16 @@ export type CustomerLite = { id: string; code: string; companyName: string; cont
 export type PaymentRow = {
   id: string; code: string; amountCents: number; method: string; reference: string;
   paidAt: string; note: string;
+  // Payment-proof workflow (spec §20-§30): RECORDED (staff) | ON_HOLD | PAID | REJECTED
+  status: string;
+  bank: string;
+  proofName: string;
+  proofMimeType?: string;
+  proofSizeBytes?: number;
+  verification?: string;
+  reviewNote: string;
+  submittedById?: string | null;
+  createdAt?: string;
 };
 
 export type InvoiceRow = {
@@ -53,8 +65,54 @@ export type IForm = {
   notes: string; terms: string; items: FormItem[];
 };
 
-export const METHODS = ["CASH", "BANK_TRANSFER", "CARD", "CHEQUE", "ONLINE"] as const;
+export const METHODS = ["CASH", "BANK_TRANSFER", "CARD", "CHEQUE", "ONLINE", "BIBD", "BAIDURI"] as const;
+/** Proof-only methods the customer portal offers (spec §21 — local Brunei banks). */
+export const PROOF_METHODS = ["BANK_TRANSFER", "BIBD", "BAIDURI"] as const;
 export const FALLBACK_COMPANY = FALLBACK_IDENTITY.name;
+
+// ── Payment status (payment-proof workflow §20-§30) ──
+
+/** Humanized payment status labels — honest wording per spec §46/§47. */
+export const PAYMENT_STATUS_LABELS: Record<string, string> = {
+  RECORDED: "Recorded",
+  ON_HOLD: "Payment received — on hold",
+  PAID: "Confirmed",
+  REJECTED: "Proof rejected",
+};
+
+export function paymentStatusLabel(status: string | null | undefined): string {
+  if (!status) return "—";
+  return PAYMENT_STATUS_LABELS[status] ?? humanize(status);
+}
+
+/** Status badge for a payment row (tone from the shared STATUS_TONE map). */
+export function PaymentStatusBadge({ status, className }: { status: string | null | undefined; className?: string }) {
+  if (!status) return <span>—</span>;
+  return (
+    <Badge
+      variant="outline"
+      className={cn("font-medium border-transparent whitespace-nowrap", STATUS_TONE[status] ?? "bg-stone-100 text-stone-700", className)}
+    >
+      {paymentStatusLabel(status)}
+    </Badge>
+  );
+}
+
+/** Parse the verification JSON stored on a proof payment (null-safe). */
+export function parseVerification(raw: string | null | undefined): { submittedCents: number | null; outstandingCents: number | null; detectedCents: number | null; result: string } | null {
+  if (!raw) return null;
+  try {
+    const v = JSON.parse(raw) as Record<string, unknown>;
+    return {
+      submittedCents: typeof v.submittedCents === "number" ? v.submittedCents : null,
+      outstandingCents: typeof v.outstandingCents === "number" ? v.outstandingCents : null,
+      detectedCents: typeof v.detectedCents === "number" ? v.detectedCents : null,
+      result: typeof v.result === "string" ? v.result : "UNVERIFIED",
+    };
+  } catch {
+    return null;
+  }
+}
 
 export const emptyItem = (): FormItem => ({ kind: "MATERIAL", itemId: "", description: "", quantity: "1", unit: "pcs", unitPrice: "", discountPercent: "0", taxPercent: "0" });
 export const emptyForm = (): IForm => ({ customerId: "", dueDate: "", discount: "0", shipping: "0", notes: "", terms: "", items: [emptyItem()] });

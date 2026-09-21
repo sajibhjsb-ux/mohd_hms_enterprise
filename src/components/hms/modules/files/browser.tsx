@@ -31,6 +31,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { navigateTo } from "@/lib/hms/router";
 import { fileIcon, folderIcon, fmtBytes, permAtLeast, when, type Crumb, type FileRow, type FolderRow } from "./shared";
+import { FilesBackButton } from "./back-button";
 import { ShareDialog } from "./share-dialog";
 
 type Mode = { kind: "my" } | { kind: "shared" };
@@ -123,6 +124,11 @@ export function FilesBrowser({ folderId, mode = { kind: "my" } as Mode }: { fold
 
   return (
     <div className="space-y-4">
+      {/* §2 — real history Back with a safe in-module fallback. */}
+      <FilesBackButton
+        label={mode.kind === "my" ? (folderId ? "Back" : "Files") : "Shared Folders"}
+        fallback={mode.kind === "my" ? (folderId ? ["my"] : []) : ["shared-folders"]}
+      />
       <PageHeader
         title={mode.kind === "my" ? "My Files" : data.breadcrumb[data.breadcrumb.length - 1]?.name ?? "Shared folder"}
         subtitle={mode.kind === "my" ? "Your private file space — only you and people you share with can see anything here." : `Shared by ${data.files[0]?.owner?.name ?? data.folders[0]?.owner?.name ?? "another user"} — your access level: ${accessLevel.toLowerCase()}.`}

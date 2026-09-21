@@ -8,6 +8,7 @@ import { handler, ok, okList, parseBody, listQuery, pagedMeta, Errors } from "@/
 import { audit, nextNumber, notify } from "@/lib/hms/services";
 import { emit } from "@/lib/hms/workflows/bus";
 import { EVENT_TYPES } from "@/lib/hms/workflows/types";
+import { dedupeSubmission } from "@/lib/hms/workflows/idempotency";
 import { PERMISSIONS, PRIORITIES } from "@/lib/hms/constants";
 import { WO_INCLUDE, WO_DETAIL_INCLUDE } from "./_lib";
 
@@ -82,6 +83,8 @@ export const GET = handler(
 export const POST = handler(
   async ({ req, user }) => {
     const body = await parseBody(req, createSchema);
+    // §45 — double-click / retry must never mint two work orders.
+    dedupeSubmission({ userId: user.id, route: "POST /api/v1/work-orders", body });
 
     const customer = await db.customer.findUnique({ where: { id: body.customerId }, select: { id: true } });
     if (!customer) throw Errors.badRequest("Customer not found.");
@@ -93,10 +96,26 @@ export const POST = handler(
     }
 
     if (body.complaintId) {
-      const complaint = await db.complaint.findUnique({ where: { id: body.complaintId }, select: { id: true, customerId: true, status: true } });
+      // §9/§45 — a complaint must end up with exactly ONE work order. If one
+      // already exists (any creation path), return it instead of duplicating.
+      const existing = await db.workOrder.findFirst({
+        where: { complaintId: body.complaintId },
+        include: WO_DETAIL_INCLUDE,
+        orderBy: { createdAt: "asc" },
+      });
+      if (existing) return ok({ alreadyLinked: true, workOrder: existing }, 200);
+    }
+
+    let complaintForLink: { id: string; customerId: string; status: string; priority: string; equipmentId: string | null; assignedTechnicianId: string | null } | null = null;
+    if (body.complaintId) {
+      const complaint = await db.complaint.findUnique({
+        where: { id: body.complaintId },
+        select: { id: true, customerId: true, status: true, priority: true, equipmentId: true, assignedTechnicianId: true },
+      });
       if (!complaint) throw Errors.badRequest("Complaint not found.");
       if (complaint.customerId !== body.customerId) throw Errors.badRequest("Complaint does not belong to the selected customer.");
-      // Link only — complaint lifecycle is driven by its own workflow.
+      if (complaint.status === "CANCELLED") throw Errors.invalidTransition("Cannot create a work order for a cancelled complaint.");
+      complaintForLink = complaint;
     }
 
     let technicianUserId: string | null = null;
@@ -113,13 +132,21 @@ export const POST = handler(
     if (scheduledDate && isNaN(scheduledDate.getTime())) throw Errors.badRequest("scheduledDate is not a valid date.");
 
     const code = await nextNumber("WO");
-    const created = await db.workOrder.create({
+    const now = new Date();
+
+    // §9/§10/§44 — the work order, the relationship and the complaint status
+    // move are ONE PostgreSQL transaction: if any step fails, nothing is
+    // written and the complaint stays in its previous valid state.
+    const created = await db.$transaction(async (tx) => {
+      const workOrder = await tx.workOrder.create({
       data: {
         code,
         title: body.title,
         description: body.description ?? "",
         priority: body.priority,
         status: "PENDING",
+        // §9 — explicit source so the source=COMPLAINT filter works.
+        sourceType: complaintForLink ? "COMPLAINT" : "GENERAL",
         customerId: body.customerId,
         equipmentId: body.equipmentId ?? null,
         complaintId: body.complaintId ?? null,
@@ -144,8 +171,34 @@ export const POST = handler(
           }),
         },
       },
-      include: WO_DETAIL_INCLUDE,
+      });
+
+      // §10 — a successful work-order creation moves the complaint to
+      // IN_PROGRESS (only when it has not progressed beyond it already).
+      if (complaintForLink && ["NEW", "ASSIGNED"].includes(complaintForLink.status)) {
+        await tx.complaint.update({
+          where: { id: complaintForLink.id },
+          data: {
+            status: "IN_PROGRESS",
+            startedAt: now,
+            assignedTechnicianId: complaintForLink.assignedTechnicianId ?? body.technicianId ?? null,
+            assignedAt: complaintForLink.assignedTechnicianId ? undefined : now,
+          },
+        });
+        await tx.complaintStatusHistory.create({
+          data: {
+            complaintId: complaintForLink.id,
+            fromStatus: complaintForLink.status,
+            toStatus: "IN_PROGRESS",
+            changedById: user.id,
+            note: `Work order ${code} created`,
+          },
+        });
+      }
+      return workOrder;
     });
+
+    const detailed = await db.workOrder.findUnique({ where: { id: created.id }, include: WO_DETAIL_INCLUDE });
 
     await audit({
       actorId: user.id, actorEmail: user.email, action: "WORK_ORDER_CREATED",
@@ -162,7 +215,7 @@ export const POST = handler(
     // Realtime (STEP 13/39): technician + staff + customer see the new WO live.
     await emit({ type: EVENT_TYPES.WORK_ORDER_CREATED, resourceType: "WORK_ORDER", resourceId: created.id, payload: { code, workOrderId: created.id, customerId: body.customerId }, actorType: "USER", actorId: user.id });
 
-    return ok(created, 201);
+    return ok(detailed ?? created, 201);
   },
   { permission: PERMISSIONS.work_orders_create }
 );

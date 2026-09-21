@@ -107,6 +107,24 @@ export function saveLastRoute(path: string): void {
   } catch { /* storage unavailable — restoration is best-effort */ }
 }
 
+/**
+ * Read the persisted route WITHOUT consuming it (spec §1 — the full-page
+ * refresh policy boots the browser at Dashboard but must not clobber the
+ * route a standalone PWA relaunch will resume).
+ */
+export function readLastRoute(): string | null {
+  try {
+    const raw = localStorage.getItem(LAST_ROUTE_KEY);
+    if (!raw) return null;
+    const saved = JSON.parse(raw) as { path?: unknown };
+    const path = typeof saved?.path === "string" ? saved.path : null;
+    if (!path || path === "/" || !path.startsWith("/") || path.startsWith("//")) return null;
+    return path;
+  } catch {
+    return null;
+  }
+}
+
 /** Forget the persisted route (explicit sign-in / sign-out). */
 export function clearLastRoute(): void {
   try {

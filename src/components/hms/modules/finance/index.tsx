@@ -30,6 +30,8 @@ import { useRealtimeEventDebounced } from "@/lib/hms/realtime/hooks";
 import { MODULE_EVENTS } from "@/lib/hms/realtime/matrix";
 import { PERMISSIONS } from "@/lib/hms/constants";
 import { cn } from "@/lib/utils";
+import { PaymentReviews } from "./payment-reviews";
+import { PettyCashTab } from "./petty-cash-tab";
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Wallet, TrendingDown, TrendingUp, Receipt, Landmark, Plus, Check, BadgeDollarSign, RefreshCcw } from "lucide-react";
 import { FinanceNewExpensePage } from "./new-expense-page";
@@ -94,8 +96,9 @@ export function FinanceModule() {
   // ["expenses", "new"] → pageFromSeg → { view: "expenses", id: "new" } → dedicated create page.
   if (page.view === "expenses" && page.id === "new") return <FinanceNewExpensePage />;
 
-  // ["expenses"] → pageFromSeg → { view: "detail", id: "expenses" } → list on the Expenses tab.
-  const initialTab = page.view === "detail" && page.id === "expenses" ? "expenses" : undefined;
+  // ["expenses"] / ["payments"] / ["petty-cash"] → deep-link to that tab.
+  const tabLink = page.view === "detail" ? page.id : null;
+  const initialTab = tabLink === "expenses" || tabLink === "payments" || tabLink === "petty-cash" ? tabLink : undefined;
   return <FinanceList key={initialTab ?? "list"} initialTab={initialTab} />;
 }
 
@@ -274,8 +277,20 @@ function FinanceList({ initialTab }: { initialTab?: string }) {
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="receivables">Receivables{summary ? ` (${summary.receivables.length})` : ""}</TabsTrigger>
           <TabsTrigger value="expenses">Expenses{summary ? ` (${summary.kpis.pendingApprovalExpenses})` : ""}</TabsTrigger>
+          <TabsTrigger value="payments">Payments</TabsTrigger>
+          <TabsTrigger value="petty-cash">Petty Cash</TabsTrigger>
           <TabsTrigger value="transactions">Transactions</TabsTrigger>
         </TabsList>
+
+        {/* ── Payment reviews (§27) — Finance confirms/rejects customer proofs ── */}
+        <TabsContent value="payments" className="space-y-5">
+          <PaymentReviews />
+        </TabsContent>
+
+        {/* ── Petty cash (§31-§41) — funds, transactions, reconciliation, reports ── */}
+        <TabsContent value="petty-cash" className="space-y-5">
+          <PettyCashTab />
+        </TabsContent>
 
         {/* ── Overview ── */}
         <TabsContent value="overview" className="space-y-5">

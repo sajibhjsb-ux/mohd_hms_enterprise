@@ -43,6 +43,13 @@ export const Errors = {
       "Please complete your mobile number and address before requesting a service.",
       { missingFields }
     ),
+  /**
+   * 413 QUOTA_EXCEEDED — a file operation would exceed the user's storage
+   * quota (spec §3). Machine-readable code lets the upload UI react
+   * specifically; `details.limited` echoes the configured limit in bytes.
+   */
+  quotaExceeded: (message: string, limitedBytes?: number) =>
+    new ApiError(413, "QUOTA_EXCEEDED", message, limitedBytes ? { limited: limitedBytes } : undefined),
 };
 
 export function ok<T>(data: T, init?: number) {

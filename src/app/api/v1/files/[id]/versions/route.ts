@@ -13,7 +13,7 @@ import { storage } from "@/lib/hms/storage";
 import {
   assertRolePermission, canAccessFile, sanitizeFileName, sniffMimeType, sha256,
   fileObjectKey, extOf, scanUpload, MAX_SINGLE_SHOT_BYTES, MAX_SESSION_BYTES,
-  emitFilesUpdated, withParams
+  emitFilesUpdated, withParams, assertQuota
 } from "@/lib/hms/files/service";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -58,6 +58,8 @@ export const POST = withParams<{ id: string }>(async ({ req, user, params }) => 
 
     const file = await db.fileEntry.findUnique({ where: { id }, select: { id: true, name: true, ownerId: true, currentVersion: true, trashedAt: true } });
     if (!file || file.trashedAt) throw Errors.notFound("File not found.");
+    // §3 — a new version adds a real object to the owner's storage.
+    await assertQuota(file.ownerId, buf.length);
     const nextVersion = file.currentVersion + 1;
 
     const created = await db.$transaction(async (tx) => {

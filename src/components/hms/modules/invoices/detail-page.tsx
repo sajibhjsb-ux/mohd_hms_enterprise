@@ -25,8 +25,8 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Ban, CircleDollarSign, Printer, Send, Trash2 } from "lucide-react";
-import { DocumentPreview, loadCompanyIdentity, type CompanyIdentity, type InvoiceDetail, type InvoiceRow } from "./shared";
+import { Ban, CircleDollarSign, FileText, Printer, Send, Trash2, UploadCloud } from "lucide-react";
+import { DocumentPreview, loadCompanyIdentity, PaymentStatusBadge, type CompanyIdentity, type InvoiceDetail, type InvoiceRow } from "./shared";
 
 function errMessage(e: unknown): string {
   return e instanceof ClientApiError ? e.message : "Something went wrong. Please try again.";
@@ -100,6 +100,11 @@ export function InvoiceDetailPage({ id }: { id: string }) {
 
   const status = detail?.status;
   const canPay = !!detail && canRecord && !["DRAFT", "CANCELLED", "PAID"].includes(detail.status) && detail.balanceCents > 0;
+  // §20-§22 — customers with an outstanding, issued invoice submit a payment
+  // proof (Bank Transfer / BIBD / Baiduri); Finance confirms it afterwards.
+  const isCustomerPortal = user?.role === "CUSTOMER" && !!user.customerId;
+  const canSubmitProof = !!detail && isCustomerPortal && detail.balanceCents > 0 && ["SENT", "PARTIALLY_PAID", "OVERDUE"].includes(detail.status);
+  const rejectedProofs = (detail?.payments ?? []).filter((p) => p.status === "REJECTED" && p.reviewNote);
 
   // ── Page chrome is shared by every state (loading / error / ready) ──
   const chrome = (children: ReactNode) => (
@@ -191,6 +196,7 @@ export function InvoiceDetailPage({ id }: { id: string }) {
                     <th className="px-2 py-2 font-medium">Date</th>
                     <th className="px-2 py-2 font-medium">Method</th>
                     <th className="px-2 py-2 font-medium hidden sm:table-cell">Reference</th>
+                    <th className="px-2 py-2 font-medium">Status</th>
                     <th className="px-2 py-2 font-medium text-right">Amount</th>
                     {canReceipt ? <th className="px-2 py-2 font-medium text-right">Receipt</th> : null}
                   </tr>
@@ -202,6 +208,22 @@ export function InvoiceDetailPage({ id }: { id: string }) {
                       <td className="px-2 py-2">{fmtDate(p.paidAt)}</td>
                       <td className="px-2 py-2">{p.method.replaceAll("_", " ")}</td>
                       <td className="px-2 py-2 hidden sm:table-cell">{p.reference || "—"}</td>
+                      <td className="px-2 py-2">
+                        <div className="flex items-center gap-1.5">
+                          <PaymentStatusBadge status={p.status} />
+                          {p.proofName ? (
+                            <a
+                              href={`/api/v1/payments/${encodeURIComponent(p.id)}/proof`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground hover:underline underline-offset-2"
+                              title={`Download proof: ${p.proofName}`}
+                            >
+                              <FileText className="h-3 w-3" aria-hidden /> Proof
+                            </a>
+                          ) : null}
+                        </div>
+                      </td>
                       <td className="px-2 py-2 text-right tabular-nums">{money(p.amountCents)}</td>
                       {canReceipt ? (
                         <td className="px-2 py-2 text-right">
@@ -214,6 +236,15 @@ export function InvoiceDetailPage({ id }: { id: string }) {
               </table>
             </div>
           )}
+          {rejectedProofs.length > 0 ? (
+            <div className="mt-3 space-y-1.5" role="list" aria-label="Rejected payment proofs">
+              {rejectedProofs.map((p) => (
+                <p key={p.id} role="listitem" className="text-xs rounded-md border border-red-200 bg-red-50 text-red-800 px-2.5 py-1.5">
+                  <span className="font-medium">{p.code} rejected:</span> {p.reviewNote}
+                </p>
+              ))}
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -235,6 +266,19 @@ export function InvoiceDetailPage({ id }: { id: string }) {
             <p className="text-xs text-muted-foreground">Outstanding balance: <strong className="text-foreground tabular-nums">{money(detail.balanceCents)}</strong></p>
             <Button className="w-full" disabled={busy} onClick={() => navigateTo("invoices", [detail.id, "payment"])}>
               <CircleDollarSign className="h-4 w-4 mr-1.5" /> Record Payment
+            </Button>
+          </div>
+        ) : null}
+
+        {canSubmitProof && detail ? (
+          <div className="rounded-xl border border-primary/30 bg-primary/[0.04] shadow-sm p-4 space-y-2">
+            <p className="text-sm font-medium">Submit payment proof</p>
+            <p className="text-xs text-muted-foreground">
+              Paid by bank transfer, BIBD or Baiduri? Upload your proof — Finance will confirm your payment.
+              Outstanding balance: <strong className="text-foreground tabular-nums">{money(detail.balanceCents)}</strong>
+            </p>
+            <Button className="w-full" onClick={() => navigateTo("invoices", [detail.id, "proof"])}>
+              <UploadCloud className="h-4 w-4 mr-1.5" /> Submit Payment Proof
             </Button>
           </div>
         ) : null}

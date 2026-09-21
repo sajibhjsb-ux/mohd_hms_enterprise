@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/hms/api-client";
 import { LoadingState, ErrorState, PageHeader, StatCard } from "@/components/hms/shared/ui-bits";
+import { FilesBackButton } from "./back-button";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
@@ -60,6 +61,9 @@ export function FilesDashboard() {
 
   return (
     <div className="space-y-4">
+      {/* §2 — Back leaves Files for the previous app page (Dashboard/…);
+          cold-open fallback is the Files module root. */}
+      <FilesBackButton label="Back" fallback={[]} />
       <PageHeader
         title="Files"
         subtitle="Your centralized private file space — upload, organize, share and track documents"

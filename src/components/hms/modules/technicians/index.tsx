@@ -23,10 +23,11 @@ import { useUi } from "@/lib/hms/ui-store";
 import { navigateTo, pageFromSeg } from "@/lib/hms/router";
 import { useToast } from "@/hooks/use-toast";
 import { hasPerm } from "@/components/hms/session";
-import { PERMISSIONS } from "@/lib/hms/constants";
+import { PERMISSIONS, humanize } from "@/lib/hms/constants";
 import { money } from "@/lib/hms/format";
 import { CircleCheck, ClipboardList, HardHat, Hourglass, Pencil, RefreshCw } from "lucide-react";
 import { TechnicianEditPage, parseSkills, type TechRow } from "./edit-page";
+import { SkillLevelBadge } from "./skills-manager";
 
 // ── Module router ──
 
@@ -47,6 +48,10 @@ function TechniciansList() {
   const { user } = useSession();
   const { toast } = useToast();
   const canUpdate = hasPerm(user, PERMISSIONS.users_update);
+  // The skills editor page serves both admins (full edit) and supervisors
+  // (technicians.manage — skills only). Both may OPEN the page; the edit page
+  // decides what is editable inside.
+  const canOpenEditor = canUpdate || hasPerm(user, PERMISSIONS.technicians_manage);
 
   const [rows, setRows] = useState<TechRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -123,7 +128,7 @@ function TechniciansList() {
             <div key={t.id} className="rounded-xl border bg-card shadow-sm p-4 flex flex-col gap-3">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  {canUpdate ? (
+                  {canOpenEditor ? (
                     <button
                       type="button"
                       onClick={() => openEdit(t)}
@@ -163,7 +168,20 @@ function TechniciansList() {
               </div>
 
               <div className="flex flex-wrap gap-1 min-h-[22px]">
-                {parseSkills(t.skills).length === 0 ? (
+                {t.skillEntries && t.skillEntries.length > 0 ? (
+                  // Structured entries (spec §6) — name + level, category on hover.
+                  t.skillEntries.map((s) => (
+                    <Badge
+                      key={s.id}
+                      variant="secondary"
+                      className="text-[11px] font-normal gap-1"
+                      title={humanize(s.category)}
+                    >
+                      <span className="max-w-[140px] truncate">{s.name}</span>
+                      <SkillLevelBadge level={s.level} className="scale-[0.85] -mx-1" />
+                    </Badge>
+                  ))
+                ) : parseSkills(t.skills).length === 0 ? (
                   <span className="text-xs text-muted-foreground">No skills listed</span>
                 ) : (
                   parseSkills(t.skills).map((s) => (
@@ -192,6 +210,10 @@ function TechniciansList() {
                         <Pencil className="h-4 w-4" />
                       </Button>
                     </>
+                  ) : canOpenEditor ? (
+                    <Button variant="outline" size="sm" className="h-8" onClick={() => openEdit(t)} aria-label={`Edit skills for ${t.user.name}`}>
+                      <Pencil className="h-4 w-4 mr-1.5" /> Skills
+                    </Button>
                   ) : null}
                 </div>
               </div>

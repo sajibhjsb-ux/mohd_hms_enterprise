@@ -1,12 +1,13 @@
 "use client";
 
 // MOHD.HMS ENTERPRISE — Invoices module (list page).
-// Billing, payments and collections. Create, detail and payment flows are
-// DEDICATED PAGES routed by the hash router (no popup CRUD):
+// Billing, payments and collections. Create, detail, payment and customer
+// payment-proof flows are DEDICATED PAGES routed by the hash router (no popup CRUD):
 //   []                     → this list page
 //   ["new"]                → InvoiceNewPage
 //   [id]                   → InvoiceDetailPage
-//   [id, "payment"]        → InvoicePaymentPage
+//   [id, "payment"]        → InvoicePaymentPage (staff records a payment)
+//   [id, "proof"]          → InvoicePaymentProofPage (customer submits proof §20-§26)
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -25,6 +26,7 @@ import { CircleDollarSign, Plus, TriangleAlert, Wallet } from "lucide-react";
 import { InvoiceNewPage } from "./new-page";
 import { InvoiceDetailPage } from "./detail-page";
 import { InvoicePaymentPage } from "./payment-page";
+import { InvoicePaymentProofPage } from "./payment-proof-page";
 import type { InvoiceRow } from "./shared";
 
 /** Status filter options — "outstanding" is the drill-down view for any
@@ -49,6 +51,9 @@ export function InvoicesModule() {
 
   if (page.view === "new") return <InvoiceNewPage />;
   if (page.view === "payment" && page.id) return <InvoicePaymentPage id={page.id} />;
+  // [id, "proof"] — customer payment-proof page. "proof" is a suffix view the
+  // shared pageFromSeg does not know about, so match the raw segments here.
+  if (seg.length === 2 && seg[1] === "proof" && seg[0]) return <InvoicePaymentProofPage id={seg[0]} />;
   if (page.view === "detail" && page.id) return <InvoiceDetailPage id={page.id} />;
   // key={query}: a new drill-down URL (KPI click / direct link) remounts the
   // list with the query applied as its initial filter state.

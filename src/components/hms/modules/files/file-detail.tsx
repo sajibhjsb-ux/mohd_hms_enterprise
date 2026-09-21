@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
-  ArrowLeft, Download, History, MoreHorizontal, Pencil, RotateCcw, Share2, Star, Trash2, Upload,
+  Download, History, MoreHorizontal, Pencil, RotateCcw, Share2, Star, Trash2, Upload,
 } from "lucide-react";
 import { api } from "@/lib/hms/api-client";
 import { LoadingState, ErrorState, PageHeader } from "@/components/hms/shared/ui-bits";
@@ -27,6 +27,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { navigateTo } from "@/lib/hms/router";
 import { fileIcon, fmtBytes, permAtLeast, when } from "./shared";
+import { FilesBackButton } from "./back-button";
 import { ShareDialog } from "./share-dialog";
 
 type VersionRow = {
@@ -130,9 +131,12 @@ export function FileDetailPage({ fileId }: { fileId: string }) {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <Button variant="ghost" size="sm" onClick={() => navigateTo("files", file.folderId ? ["my", file.folderId] : ["my"])}>
-          <ArrowLeft className="h-4 w-4 mr-1" /> Back
-        </Button>
+        {/* §2 — real history Back: returns to the exact origin view (My Files
+            folder, Shared With Me, a shared folder…) with a safe fallback. */}
+        <FilesBackButton
+          label="Back"
+          fallback={data.isOwner ? (file.folderId ? ["my", file.folderId] : ["my"]) : ["shared"]}
+        />
         {data.breadcrumb.map((c, i) => (
           <span key={c.id} className="flex items-center gap-1 text-sm text-muted-foreground">
             {i > 0 ? <span>/</span> : <span className="font-medium">My Files</span>}

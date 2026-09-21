@@ -82,6 +82,8 @@ model User {
   fileSharesReceived   FileShare[]       @relation("FileSharesReceived")
   fileStars            FileStar[]        @relation("FileStars")
   fileUploadSessions   FileUploadSession[] @relation("FileUploadSessions")
+  // Petty cash (spec §33 — funds have a custodian employee)
+  pettyCashFundsCustodian PettyCashFund[] @relation("PettyCashFundCustodian")
 
   @@index([role])
   @@index([status])
@@ -268,18 +270,49 @@ model TechnicianProfile {
   userId          String  @unique
   user            User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   employeeNo      String  @unique
-  skills          String  @default("") // comma separated
+  skills          String  @default("") // comma separated — legacy mirror of skillEntries names (kept in sync for list chips / PM matching)
   specialty       String  @default("GENERAL")
   hourlyRateCents Int     @default(0)
   status          String  @default("AVAILABLE") // AVAILABLE | ON_JOB | OFF_DUTY | RETIRED (RETIRED = user no longer holds the TECHNICIAN role — profile kept for history; hidden from roster/assignment dropdowns)
   vehicleId       String? @unique
 
-  complaints  Complaint[]        @relation("assignedComplaints")
-  workOrders  WorkOrder[]        @relation("assignedWorkOrders")
-  pmPlans     PmPlan[]           @relation("assignedPmPlans")
-  pmTasks     PmTask[]           @relation("assignedPmTasks")
-  inspections InspectionReport[] @relation("inspectorReports")
-  vehicles    Vehicle[]          @relation("vehicleAssignee")
+  complaints   Complaint[]        @relation("assignedComplaints")
+  workOrders   WorkOrder[]        @relation("assignedWorkOrders")
+  pmPlans      PmPlan[]           @relation("assignedPmPlans")
+  pmTasks      PmTask[]           @relation("assignedPmTasks")
+  inspections  InspectionReport[] @relation("inspectorReports")
+  vehicles     Vehicle[]          @relation("vehicleAssignee")
+  skillEntries TechnicianSkill[]
+}
+
+// Structured technician skills (spec §7/§8) — canonical store; the legacy
+// `TechnicianProfile.skills` CSV mirrors the names for existing views.
+model TechnicianSkill {
+  id              String            @id @default(cuid())
+  profileId       String
+  profile         TechnicianProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  name            String
+  category        String            @default("OTHER") // HVAC | ELECTRICAL | PLUMBING | FIRE_PROTECTION | GENERATOR | LIFT_ESCALATOR | MECHANICAL | CIVIL | CLEANING | PEST_CONTROL | LANDSCAPE | OTHER
+  level           String            @default("BASIC") // BASIC | INTERMEDIATE | ADVANCED | EXPERT
+  certification   String            @default("")
+  yearsExperience Float?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@unique([profileId, name])
+  @@index([profileId])
+}
+
+// Configurable skill master/library (spec §8) — reusable catalogue seeded per
+// category; administrators extend it, technicians pick from it.
+model SkillLibraryItem {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  category    String   @default("OTHER")
+  description String   @default("")
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
 // ─────────────────────────── CUSTOMERS ───────────────────────────
@@ -1472,14 +1505,34 @@ model Payment {
   customerId   String?
   customer     Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
   amountCents  Int
-  method       String    @default("BANK_TRANSFER") // CASH | BANK_TRANSFER | CARD | CHEQUE | ONLINE
+  method       String    @default("BANK_TRANSFER") // CASH | BANK_TRANSFER | CARD | CHEQUE | ONLINE | BIBD | BAIDURI
   reference    String    @default("")
   paidAt       DateTime  @default(now())
   note         String    @default("")
   recordedById String?
   createdAt    DateTime  @default(now())
 
+  // ── Customer payment-proof workflow (spec §20-§30) ──
+  // RECORDED  = staff-recorded payment (legacy path — immediately effective)
+  // ON_HOLD   = customer proof submitted, awaiting Finance confirmation
+  // REJECTED  = Finance rejected the proof (reason in reviewNote)
+  status          String   @default("RECORDED")
+  bank            String   @default("")
+  // Proof file: MinIO object + metadata snapshot (never binary in PostgreSQL)
+  proofObjectKey  String   @default("")
+  proofName       String   @default("")
+  proofMimeType   String   @default("")
+  proofSizeBytes  Int      @default(0)
+  submittedById   String?
+  // Automated amount verification result (submitted vs outstanding vs detected)
+  verification    String   @default("") // JSON: {submittedCents,outstandingCents,detectedCents|null,result:MATCHED|MISMATCH|UNVERIFIED}
+  // Finance review
+  reviewedById    String?
+  reviewedAt      DateTime?
+  reviewNote      String   @default("")
+
   @@index([invoiceId])
+  @@index([status])
 }
 
 // ─────────────────────────── FINANCE ───────────────────────────
@@ -1528,6 +1581,78 @@ model Expense {
   createdById  String?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
+}
+
+// ─────────────────────── PETTY CASH (spec §31-§41) ───────────────────────
+// Money convention: integer cents (exact integer arithmetic — never floats),
+// consistent with the whole finance schema. Balances move ONLY on approval,
+// inside the same PostgreSQL transaction as the status change.
+
+model PettyCashFund {
+  id                  String   @id @default(cuid())
+  code                String   @unique // PCF-YYYY-####
+  name                String
+  openingBalanceCents Int      @default(0)
+  currentBalanceCents Int      @default(0)
+  custodianId         String?
+  custodian           User?    @relation("PettyCashFundCustodian", fields: [custodianId], references: [id], onDelete: SetNull)
+  status              String   @default("ACTIVE") // ACTIVE | INACTIVE
+  notes               String   @default("")
+  createdById         String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  transactions   PettyCashTransaction[]
+  reconciliations PettyCashReconciliation[]
+}
+
+model PettyCashTransaction {
+  id               String         @id @default(cuid())
+  code             String         @unique // PCT-YYYY-####
+  fundId           String
+  fund             PettyCashFund  @relation(fields: [fundId], references: [id], onDelete: Cascade)
+  // CASH_IN | CASH_OUT | TOP_UP | EXPENSE | REIMBURSEMENT | ADJUSTMENT
+  type             String
+  direction        String         @default("OUT") // IN | OUT (server-derived from type; ADJUSTMENT is user-chosen)
+  amountCents      Int
+  category         String         @default("GENERAL")
+  description      String         @default("")
+  txDate           DateTime       @default(now())
+  requesterId      String?        // employee/requester user id (no FK — historical attribution like recordedById)
+  requesterName    String         @default("")
+  reference        String         @default("")
+  // Receipt/proof: MinIO object + metadata snapshot (spec §38)
+  receiptObjectKey String         @default("")
+  receiptName      String         @default("")
+  receiptMimeType  String         @default("")
+  receiptSizeBytes Int            @default(0)
+  // PENDING | APPROVED | REJECTED — balance moves only on APPROVE
+  status           String         @default("PENDING")
+  createdById      String?
+  approvedById     String?
+  approvedAt       DateTime?
+  reviewNote       String         @default("")
+  balanceAfterCents Int?          // fund balance snapshot after this transaction settled (audit)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@index([fundId, txDate])
+  @@index([status])
+}
+
+model PettyCashReconciliation {
+  id            String        @id @default(cuid())
+  fundId        String
+  fund          PettyCashFund @relation(fields: [fundId], references: [id], onDelete: Cascade)
+  expectedCents Int
+  countedCents  Int
+  differenceCents Int
+  flagged       Boolean       @default(false)
+  note          String        @default("")
+  createdById   String?
+  createdAt     DateTime      @default(now())
+
+  @@index([fundId])
 }
 
 // ─────────────────────────── VEHICLES ───────────────────────────

@@ -16,6 +16,9 @@ import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 
 type Ctx = { req: NextRequest; user: SessionUser };
 
+// §11/§14 — Work Order statuses that keep a complaint locked (active/unsettled).
+const ACTIVE_WO_STATUSES = ["PENDING", "ACCEPTED", "IN_PROGRESS", "ON_HOLD"];
+
 function withId(fn: (id: string, ctx: Ctx) => Promise<NextResponse>, opts?: Parameters<typeof handler>[1]) {
   return async (req: NextRequest, ctx: { params: Promise<{ id: string }> }) => {
     const { id } = await ctx.params;
@@ -199,6 +202,16 @@ export const POST = withId(
         if (!roleCan(user.role, PERMISSIONS.complaints_close)) throw Errors.forbidden();
         assertTransition("CLOSED", from);
 
+        // §11 — a complaint cannot be closed while its linked work order is
+        // still active. Backend enforcement is mandatory (direct API calls
+        // must be blocked too), the frontend only mirrors this guard.
+        const activeWo = complaint.workOrders.find((w) => ACTIVE_WO_STATUSES.includes(w.status));
+        if (activeWo) {
+          throw Errors.invalidTransition(
+            `Closure blocked. The linked Work Order ${activeWo.code} is still active — settle it first.`,
+          );
+        }
+
         const updated = await guardedUpdate(id, from, { status: "CLOSED", closedAt: now });
         await addHistory(id, from, "CLOSED", user.id, body.note ?? "Complaint closed");
         await audit({
@@ -212,6 +225,19 @@ export const POST = withId(
       case "cancel": {
         if (!roleCan(user.role, PERMISSIONS.complaints_assign)) throw Errors.forbidden();
         assertTransition("CANCELLED", from);
+
+        // §13 — once a work order exists for this complaint, cancellation is
+        // locked until that work order is settled (completion auto-closes the
+        // complaint instead). Only complaints whose EVERY work order was
+        // itself cancelled may still be cancelled. Enforced server-side.
+        const linkedWo = complaint.workOrders.find((w) => w.status !== "CANCELLED");
+        if (linkedWo) {
+          throw Errors.invalidTransition(
+            ACTIVE_WO_STATUSES.includes(linkedWo.status)
+              ? `Cancellation blocked. This complaint has an active linked Work Order (${linkedWo.code}).`
+              : `Cancellation blocked. This complaint is already settled by linked Work Order ${linkedWo.code}.`,
+          );
+        }
 
         const updated = await guardedUpdate(id, from, { status: "CANCELLED" });
         await addHistory(id, from, "CANCELLED", user.id, body.note ?? "Complaint cancelled");

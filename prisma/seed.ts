@@ -822,6 +822,39 @@ async function main() {
   await counter("WO-2026", 5);
   await counter("PRR", 0);
 
+  // ── Skill library (spec §8) — configurable catalogue per category ──
+  const skillLibrary: Array<{ name: string; category: string }> = [
+    { name: "HVAC Systems", category: "HVAC" }, { name: "Chiller Maintenance", category: "HVAC" },
+    { name: "Air Conditioning Repair", category: "HVAC" }, { name: "Electrical Wiring", category: "ELECTRICAL" },
+    { name: "Switchgear & Distribution", category: "ELECTRICAL" }, { name: "Lighting Systems", category: "ELECTRICAL" },
+    { name: "Plumbing", category: "PLUMBING" }, { name: "Hydraulics", category: "PLUMBING" },
+    { name: "Pipefitting", category: "PLUMBING" }, { name: "Fire Alarm Systems", category: "FIRE_PROTECTION" },
+    { name: "Fire Suppression Systems", category: "FIRE_PROTECTION" }, { name: "Generator Overhaul", category: "GENERATOR" },
+    { name: "Generator Operation", category: "GENERATOR" }, { name: "Lift Maintenance", category: "LIFT_ESCALATOR" },
+    { name: "Escalator Maintenance", category: "LIFT_ESCALATOR" }, { name: "Pump Systems", category: "MECHANICAL" },
+    { name: "Welding & Fabrication", category: "MECHANICAL" }, { name: "Civil Works", category: "CIVIL" },
+    { name: "Waterproofing", category: "CIVIL" }, { name: "Industrial Cleaning", category: "CLEANING" },
+    { name: "Pest Control", category: "PEST_CONTROL" }, { name: "Landscape Maintenance", category: "LANDSCAPE" },
+    { name: "Building Automation (BMS)", category: "OTHER" },
+  ];
+  await db.skillLibraryItem.createMany({ data: skillLibrary });
+
+  // Structured skills for the seeded technicians (mirrors their legacy CSV)
+  const techSkillSeed: Array<{ email: string; name: string; category: string; level: string; years: number }> = [
+    { email: "ahmad.tech@mohdhms.com", name: "HVAC Systems", category: "HVAC", level: "ADVANCED", years: 6 },
+    { email: "ahmad.tech@mohdhms.com", name: "Chiller Maintenance", category: "HVAC", level: "INTERMEDIATE", years: 4 },
+    { email: "ahmad.tech@mohdhms.com", name: "Electrical Wiring", category: "ELECTRICAL", level: "BASIC", years: 2 },
+  ];
+  const techProfilesWithUsers = await db.technicianProfile.findMany({ include: { user: true } });
+  for (const ts of techSkillSeed) {
+    const profile = techProfilesWithUsers.find((t) => t.user.email === ts.email);
+    if (!profile) continue;
+    await db.technicianSkill.create({
+      data: { profileId: profile.id, name: ts.name, category: ts.category, level: ts.level, yearsExperience: ts.years },
+    });
+  }
+  console.log(`Skill library: ${skillLibrary.length} items seeded.`);
+
   console.log("Seed complete.");
   console.log("Logins (password Password@123):");
   console.log("  admin@mohdhms.com (SUPER_ADMIN) / operations@mohdhms.com (ADMIN) / supervisor@mohdhms.com (SUPERVISOR)");

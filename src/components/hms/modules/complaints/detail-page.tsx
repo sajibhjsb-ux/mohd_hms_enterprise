@@ -28,7 +28,7 @@ import {
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
-  ArrowUpRight, CheckCircle2, ClipboardCheck, Hammer, Pencil, UserPlus,
+  ArrowUpRight, CheckCircle2, ClipboardCheck, Hammer, Lock, Pencil, UserPlus,
 } from "lucide-react";
 
 type HistoryRow = {
@@ -115,6 +115,15 @@ export function ComplaintDetailPage({ id }: { id: string }) {
   const isPortalOwner = !!detail && !!user && user.role === "CUSTOMER" && user.customerId === detail.customerId;
   const status = detail?.status;
 
+  // §11/§13/§14 — link lock state mirrors the BACKEND guards exactly: closure
+  // is blocked while any linked work order is active; cancellation is blocked
+  // once any (non-cancelled) work order exists. The backend enforces this for
+  // direct API calls too — the UI merely reflects it.
+  const ACTIVE_WO_STATUSES = ["PENDING", "ACCEPTED", "IN_PROGRESS", "ON_HOLD"];
+  const activeWorkOrder = detail?.workOrders.find((w) => ACTIVE_WO_STATUSES.includes(w.status)) ?? null;
+  const settledWorkOrder = detail?.workOrders.find((w) => !ACTIVE_WO_STATUSES.includes(w.status) && w.status !== "CANCELLED") ?? null;
+  const cancelLocked = !!(activeWorkOrder ?? settledWorkOrder);
+
   if (loading && !detail) {
     return (
       <PageShell backLabel="Back to Complaints" backHref="/complaints" title="Complaint details">
@@ -171,7 +180,7 @@ export function ComplaintDetailPage({ id }: { id: string }) {
               <p className="text-muted-foreground text-xs uppercase tracking-wide">
                 {detail.workOrders.length > 1 ? "Linked work orders" : "Linked work order"}
               </p>
-              <div className="grid gap-4 sm:grid-cols-3 text-sm">
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 text-sm">
                 <div className="space-y-1.5">
                   <p className="text-muted-foreground text-xs uppercase tracking-wide">Complaint status</p>
                   <StatusBadge status={detail.status} />
@@ -193,7 +202,19 @@ export function ComplaintDetailPage({ id }: { id: string }) {
                   <p className="text-muted-foreground text-xs uppercase tracking-wide">Work order status</p>
                   <StatusBadge status={detail.workOrders[0].status} />
                 </div>
+                <div className="space-y-1.5">
+                  <p className="text-muted-foreground text-xs uppercase tracking-wide">Technician</p>
+                  <p>{detail.workOrders[0].technician?.user?.name ?? "Unassigned"}</p>
+                </div>
               </div>
+              {/* §13/§18 — cancellation lock reason, shown while the linked WO
+                  is unsettled; not applicable once it is final. */}
+              {activeWorkOrder ? (
+                <p className="flex items-center gap-1.5 text-xs text-muted-foreground border-t pt-3">
+                  <Lock className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                  Cancellation: LOCKED — the complaint cannot be cancelled while the linked work order is active.
+                </p>
+              ) : null}
               {detail.workOrders.length > 1 ? (
                 <div className="space-y-2 border-t pt-3">
                   {detail.workOrders.slice(1).map((w) => (
@@ -316,21 +337,43 @@ export function ComplaintDetailPage({ id }: { id: string }) {
           ) : null}
 
           {status === "CONFIRMED" && canClose ? (
-            <div className="rounded-xl border bg-card shadow-sm p-4 space-y-2">
-              <p className="text-sm">Customer confirmed. Close this complaint to archive it?</p>
-              <Button variant="outline" disabled={busy} onClick={() => runTransition("close")} className="w-full">
-                <ClipboardCheck className="h-4 w-4 mr-1.5" /> Close Complaint
-              </Button>
-            </div>
+            activeWorkOrder ? (
+              // §11 — the backend rejects closure while the linked WO is active;
+              // the UI shows the honest BLOCKED state instead of a dead button.
+              <div className="rounded-xl border border-amber-300/60 bg-amber-50/60 shadow-sm p-4 space-y-1.5">
+                <p className="text-sm font-medium flex items-center gap-1.5"><Lock className="h-4 w-4" aria-hidden /> Close blocked</p>
+                <p className="text-xs text-muted-foreground">
+                  Closure blocked. The linked Work Order {activeWorkOrder.code} is still active.
+                </p>
+              </div>
+            ) : (
+              <div className="rounded-xl border bg-card shadow-sm p-4 space-y-2">
+                <p className="text-sm">Customer confirmed. Close this complaint to archive it?</p>
+                <Button variant="outline" disabled={busy} onClick={() => runTransition("close")} className="w-full">
+                  <ClipboardCheck className="h-4 w-4 mr-1.5" /> Close Complaint
+                </Button>
+              </div>
+            )
           ) : null}
 
           {status && ["NEW", "ASSIGNED", "IN_PROGRESS"].includes(status) && isStaffUser ? (
-            <div className="rounded-xl border border-destructive/30 bg-card shadow-sm p-4 space-y-2">
-              <p className="text-sm text-muted-foreground">Cancelling stops the workflow permanently.</p>
-              <Button variant="destructive" disabled={busy} onClick={() => setConfirmCancel(true)} className="w-full">
-                Cancel Complaint
-              </Button>
-            </div>
+            cancelLocked ? (
+              // §13 — cancellation is locked once a work order exists; the
+              // backend rejects it for direct API calls as well.
+              <div className="rounded-xl border border-amber-300/60 bg-amber-50/60 shadow-sm p-4 space-y-1.5">
+                <p className="text-sm font-medium flex items-center gap-1.5"><Lock className="h-4 w-4" aria-hidden /> Cancellation LOCKED</p>
+                <p className="text-xs text-muted-foreground">
+                  The complaint cannot be cancelled while the linked work order is active.
+                </p>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-destructive/30 bg-card shadow-sm p-4 space-y-2">
+                <p className="text-sm text-muted-foreground">Cancelling stops the workflow permanently.</p>
+                <Button variant="destructive" disabled={busy} onClick={() => setConfirmCancel(true)} className="w-full">
+                  Cancel Complaint
+                </Button>
+              </div>
+            )
           ) : null}
         </div>
       </div>

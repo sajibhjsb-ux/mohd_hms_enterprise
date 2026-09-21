@@ -15,6 +15,18 @@ import type { SessionUser } from "@/lib/hms/auth";
 
 const customerSelect = { id: true, code: true, companyName: true, contactPerson: true, email: true, phone: true, address: true, city: true } as const;
 
+// Payment fields surfaced on the invoice detail (staff AND customer portal).
+// The proof binary itself never rides along — it is streamed only through the
+// object-level authorized GET /api/v1/payments/{id}/proof download route (§23).
+const paymentSelect = {
+  id: true, code: true, amountCents: true, method: true, reference: true,
+  paidAt: true, note: true,
+  // Payment-proof workflow (§20-§30): status/bank/proof metadata/verification/review.
+  status: true, bank: true, proofName: true, proofMimeType: true, proofSizeBytes: true,
+  verification: true, reviewNote: true, submittedById: true, createdAt: true,
+} as const;
+const paymentsInclude = { orderBy: { paidAt: "desc" as const }, select: paymentSelect };
+
 const itemSchema = z.object({
   kind: z.enum(["MATERIAL", "LABOUR", "SERVICE", "CUSTOM"]),
   itemId: z.string().min(1).nullish(),
@@ -49,7 +61,7 @@ async function loadScoped(id: string, user: SessionUser) {
     where: { id },
     include: {
       items: { orderBy: { id: "asc" } },
-      payments: { orderBy: { paidAt: "desc" } },
+      payments: paymentsInclude,
       customer: { select: customerSelect },
       quotation: { select: { id: true, code: true } },
       workOrders: { select: { id: true, code: true, title: true } },
@@ -127,7 +139,7 @@ export const PATCH = withId(PERMISSIONS.invoices_manage, async (id, { req, user 
       data,
       include: {
         items: { orderBy: { id: "asc" } },
-        payments: { orderBy: { paidAt: "desc" } },
+        payments: paymentsInclude,
         customer: { select: customerSelect },
       },
     });

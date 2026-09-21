@@ -122,7 +122,7 @@ export const POST = withId(
         assertWoTransition("COMPLETED", from, WO_TRANSITIONS);
         // Holder object — TS control-flow can't track assignments made inside the
         // transaction callback, so the completed instance rides out in a ref.
-        const ref: { completedInstance: { id: string; code: string } | null } = { completedInstance: null };
+        const ref: { completedInstance: { id: string; code: string } | null; autoClosedComplaint: { id: string; code: string; fromStatus: string } | null } = { completedInstance: null, autoClosedComplaint: null };
         const { updated, lowStockItems } = await db.$transaction(async (tx) => {
           // Re-read inside the transaction — guards idempotency (a concurrent
           // completion flips the status and this update throws via the guard below).
@@ -246,10 +246,50 @@ export const POST = withId(
             await tx.checklistInstance.update({ where: { id: inst.id }, data: { status: "COMPLETED", completedAt: now } });
             ref.completedInstance = { id: inst.id, code: inst.code };
           }
+
+          // §15 — a COMPLETED work order auto-closes its source complaint
+          // (backend business rule, same transaction — no partial states). Any
+          // non-terminal complaint state collapses to CLOSED: the linked work
+          // is settled, so the complaint lifecycle is over. No INCOMPLETE final
+          // status exists in this work-order machine (§16 n/a).
+          if (current.complaintId) {
+            const complaint = await tx.complaint.findUnique({
+              where: { id: current.complaintId },
+              select: { id: true, code: true, status: true, completedAt: true },
+            });
+            if (complaint && !["CLOSED", "CANCELLED"].includes(complaint.status)) {
+              await tx.complaint.update({
+                where: { id: complaint.id },
+                data: { status: "CLOSED", closedAt: now, completedAt: complaint.completedAt ?? now },
+              });
+              await tx.complaintStatusHistory.create({
+                data: {
+                  complaintId: complaint.id,
+                  fromStatus: complaint.status,
+                  toStatus: "CLOSED",
+                  changedById: user.id,
+                  note: `Complaint automatically closed after linked Work Order ${current.code} was completed.`,
+                },
+              });
+              await tx.domainEvent.create({
+                data: {
+                  type: EVENT_TYPES.COMPLAINT_CLOSED, resourceType: "COMPLAINT", resourceId: complaint.id,
+                  payload: JSON.stringify({ code: complaint.code, reason: "WORK_ORDER_COMPLETED", workOrderCode: current.code }),
+                  actorType: "USER", actorId: user.id,
+                },
+              });
+              ref.autoClosedComplaint = { id: complaint.id, code: complaint.code, fromStatus: complaint.status };
+            }
+          }
           return { updated: row, lowStockItems: lowStock };
         });
 
         await audit({ actorId: user.id, actorEmail: user.email, action: "WORK_ORDER_COMPLETED", resourceType: "WORK_ORDER", resourceId: id, metadata: { code, totalCents: updated.totalCents } });
+        if (ref.autoClosedComplaint) {
+          // §15 — audit trail on the COMPLAINT so the auto-close shows on its
+          // timeline (WorkflowTimeline reads COMPLAINT audit rows).
+          await audit({ actorId: user.id, actorEmail: user.email, action: "COMPLAINT_AUTO_CLOSED", resourceType: "COMPLAINT", resourceId: ref.autoClosedComplaint.id, metadata: { code: ref.autoClosedComplaint.code, reason: "Linked work order completed", workOrderCode: code, fromStatus: ref.autoClosedComplaint.fromStatus } });
+        }
         if (ref.completedInstance) {
           await audit({ actorId: user.id, actorEmail: user.email, action: "CHECKLIST_COMPLETED", resourceType: "CHECKLIST_INSTANCE", resourceId: ref.completedInstance.id, metadata: { code: ref.completedInstance.code, workOrderCode: code } });
           await emit({ type: EVENT_TYPES.CHECKLIST_COMPLETED, resourceType: "CHECKLIST_INSTANCE", resourceId: ref.completedInstance.id, payload: { code: ref.completedInstance.code, workOrderCode: code }, actorType: "USER", actorId: user.id });

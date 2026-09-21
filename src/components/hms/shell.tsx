@@ -20,7 +20,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { ClientApiError, api } from "@/lib/hms/api-client";
-import { saveLastRoute, restoreLaunchRoute } from "@/lib/hms/pwa";
+import { saveLastRoute, readLastRoute, restoreLaunchRoute } from "@/lib/hms/pwa";
 import { saveScrollForRoute, restoreScrollForRoute } from "@/lib/hms/scroll-restore";
 import { hasPerm, useSession } from "./session";
 import { useUi } from "@/lib/hms/ui-store";
@@ -140,22 +140,43 @@ export function AppShell() {
   // Path ⇄ store sync. Mounted once the user is authenticated so role-based
   // fallbacks resolve; also handles direct URLs (/complaints/{id}) after login.
   //
-  // ROUTE PRESERVATION (refresh / PWA relaunch): the URL is authoritative.
-  // A browser refresh re-requests the exact URL, so applyRoute(currentPath())
-  // keeps the user on /hr, /irms/{id}, /complaints/{id}… — never Dashboard.
-  // A standalone PWA relaunch always boots at start_url "/"; restoreLaunchRoute
-  // swaps that for the last visited route (same-origin, history replace) so
-  // reopening the installed app resumes where the user left off. Post-login
-  // role-dashboard redirects are unaffected (the key is cleared on sign-in/out).
+  // FULL-PAGE-REFRESH POLICY (spec §1): a genuine browser reload (F5 / Ctrl-R)
+  // always starts from the Dashboard top — the previously active module is NOT
+  // reopened and no scroll position is restored. Everything else is untouched:
+  //   - a standalone PWA relaunch (restoreLaunchRoute) still resumes the last
+  //     real module (and the reload itself must not overwrite that memory),
+  //   - deep links, shared links, QR codes and PageShell anchors load with
+  //     navigation type "navigate" and honor the exact URL,
+  //   - browser back/forward loads are type "back_forward" and honor the URL,
+  //   - in-app navigation (pushState/popstate) never re-runs this effect.
+  // Authentication still completes first: Gate renders nothing until
+  // /api/v1/auth/session resolves, so the Dashboard can never flash pre-auth.
   useEffect(() => {
     if (!user) return;
     const currentPath = () => window.location.pathname + window.location.search;
     const restored = restoreLaunchRoute();
-    const bootPath = restored || currentPath() || `/${visibleRef.current[0]?.key ?? "dashboard"}`;
+    // Reload detection: Navigation Timing (all modern browsers), with the
+    // legacy performance.navigation fallback for older Safari.
+    const navEntry = performance.getEntriesByType?.("navigation")?.[0] as PerformanceNavigationTiming | undefined;
+    const legacyNav = (performance as unknown as { navigation?: { type?: number } }).navigation;
+    const isReload = navEntry ? navEntry.type === "reload" : legacyNav?.type === 1;
+    // Preserve the standalone-resume memory across a synthetic dashboard boot.
+    const preservedRoute = isReload && !restored ? readLastRoute() : null;
+    const bootPath = restored
+      || (isReload ? hrefFor("dashboard") : (currentPath() || `/${visibleRef.current[0]?.key ?? "dashboard"}`));
     applyRoute(bootPath);
-    // Restore the previous scroll position for THIS route (refresh/relaunch
-    // only — in-app navigation intentionally starts at the top).
-    restoreScrollForRoute(bootPath);
+    if (isReload && !restored) {
+      // Keep the PWA-resume route pointing at the last REAL module, not the
+      // synthetic dashboard this reload booted into.
+      if (preservedRoute) saveLastRoute(preservedRoute);
+      // The URL bar must agree with the module actually rendered.
+      replacePath(appliedHashRef.current);
+    } else {
+      // Restore the previous scroll position for THIS route (PWA relaunch /
+      // deep link only — reloads start at the top, in-app navigation always
+      // scrolls to the top inside applyRoute).
+      restoreScrollForRoute(bootPath);
+    }
     const onRouteChange = () => {
       const next = currentPath();
       if (useUi.getState().pageDirty && next !== appliedHashRef.current) {
@@ -167,7 +188,7 @@ export function AppShell() {
     };
     window.addEventListener("popstate", onRouteChange);
     window.addEventListener(ROUTE_EVENT, onRouteChange);
-    if (window.location.pathname === "/") replacePath(appliedHashRef.current);
+    if (window.location.pathname === "/" && appliedHashRef.current !== "/dashboard") replacePath(appliedHashRef.current);
     return () => {
       window.removeEventListener("popstate", onRouteChange);
       window.removeEventListener(ROUTE_EVENT, onRouteChange);

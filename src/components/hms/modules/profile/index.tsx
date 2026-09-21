@@ -51,6 +51,7 @@ import {
   ScrollText, ShieldCheck, Smartphone, Trash2, User, Wrench,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { SkillsManager, type SkillEntry } from "@/components/hms/modules/technicians/skills-manager";
 
 type ProfilePayload = {
   user: {
@@ -150,6 +151,32 @@ export function ProfileModule() {
   if (view === "edit") return <ProfileEditPage onboarding={false} />;
   if (view === "complete") return <ProfileEditPage onboarding />;
   return <ProfileViewPage />;
+}
+
+/**
+ * "My Skills" (spec §6/§7) — structured, self-managed technician skills.
+ * Loaded from the self-service endpoint (own profile only, IDOR-safe) and
+ * edited through the shared SkillsManager. Falls back to the legacy CSV text
+ * if the endpoint ever fails, so the field never shows a false "no skills".
+ */
+function MySkillsSection({ profileId, fallbackCsv }: { profileId: string; fallbackCsv: string | null }) {
+  const [skills, setSkills] = useState<SkillEntry[] | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .get<{ profile: { id: string }; skills: SkillEntry[] }>("/api/v1/profile/technician-skills")
+      .then((r) => { if (alive) setSkills(r.data.skills); })
+      .catch(() => { if (alive) setFailed(true); });
+    return () => { alive = false; };
+  }, []);
+
+  if (failed) return <div className="font-medium">{fallbackCsv?.trim() || "—"}</div>;
+  if (!skills) {
+    return <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-label="Loading skills" />;
+  }
+  return <SkillsManager profileId={profileId} skills={skills} canEdit selfService onChange={setSkills} />;
 }
 
 function useProfile(loadKey: string) {
@@ -542,9 +569,12 @@ function ProfileViewPage() {
                 <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Specialty</div>
                 <div className="font-medium">{humanize(data.technicianProfile.specialty)}</div>
               </div>
-              <div>
-                <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Skills</div>
-                <div className="font-medium">{data.technicianProfile.skills?.trim() || "—"}</div>
+              <div className="sm:col-span-2">
+                <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">My Skills</div>
+                <MySkillsSection
+                  profileId={data.technicianProfile.id}
+                  fallbackCsv={data.technicianProfile.skills}
+                />
               </div>
               <div>
                 <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Availability</div>

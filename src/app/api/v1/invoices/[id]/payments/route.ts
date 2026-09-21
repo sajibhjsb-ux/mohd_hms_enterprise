@@ -13,10 +13,13 @@ import { emit } from "@/lib/hms/workflows/bus";
 import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 import { dedupeSubmission } from "@/lib/hms/workflows/idempotency";
 import { formatCurrency, toCents } from "@/lib/hms/format";
+import { applyPaymentToInvoice } from "@/lib/hms/finance/payments";
 
 const bodySchema = z.object({
   amount: z.coerce.number().positive("Payment amount must be greater than 0"),
-  method: z.enum(["CASH", "BANK_TRANSFER", "CARD", "CHEQUE", "ONLINE"]),
+  // BIBD | BAIDURI (Brunei local banks) are proof-only customer methods but are
+  // also selectable by staff when recording a payment directly (spec §21).
+  method: z.enum(["CASH", "BANK_TRANSFER", "CARD", "CHEQUE", "ONLINE", "BIBD", "BAIDURI"]),
   reference: z.string().trim().optional(),
   paidAt: z.string().optional(),
   note: z.string().optional(),
@@ -53,6 +56,10 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     const trxCode = await nextNumber("TRX");
     const paidAt = body.paidAt ? new Date(body.paidAt) : new Date();
 
+    // Single atomic transaction: Payment row (status RECORDED — immediately
+    // effective) + invoice paid/balance/status + bank credit + ledger entry.
+    // The settlement math is the SHARED helper also used when Finance confirms
+    // a customer payment proof (src/lib/hms/finance/payments.ts).
     const updated = await db.$transaction(async (tx) => {
       const payment = await tx.payment.create({
         data: {
@@ -68,39 +75,19 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         },
       });
 
-      const paidCents = invoice.paidCents + amountCents;
-      const balanceCents = Math.max(0, invoice.totalCents - paidCents);
-      const status = balanceCents === 0 ? "PAID" : paidCents > 0 ? "PARTIALLY_PAID" : invoice.status;
-
-      const saved = await tx.invoice.update({
-        where: { id: invoice.id },
-        data: { paidCents, balanceCents, status },
-        include: {
-          items: { orderBy: { id: "asc" } },
-          payments: { orderBy: { paidAt: "desc" } },
-          customer: { select: { id: true, code: true, companyName: true, contactPerson: true, email: true, phone: true, address: true, city: true } },
-        },
+      const { invoice: saved } = await applyPaymentToInvoice(tx, {
+        invoiceId: invoice.id,
+        invoiceCode: invoice.code,
+        totalCents: invoice.totalCents,
+        paidCentsBefore: invoice.paidCents,
+        statusBefore: invoice.status,
+        amountCents,
+        paymentId: payment.id,
+        paymentCode: payment.code,
+        paidAt,
+        actorId: user.id,
+        trxCode,
       });
-
-      // Credit the bank account + ledger entry (best-effort inside the same tx).
-      const bank = await tx.account.findUnique({ where: { code: "ACC-BANK" } });
-      if (bank) {
-        await tx.account.update({ where: { id: bank.id }, data: { balanceCents: { increment: amountCents } } });
-        await tx.transaction.create({
-          data: {
-            code: trxCode,
-            type: "INCOME",
-            category: "SERVICE_INCOME",
-            description: `Payment ${invoice.code}`,
-            amountCents,
-            accountId: bank.id,
-            date: paidAt,
-            referenceType: "PAYMENT",
-            referenceId: payment.id,
-            createdById: user.id,
-          },
-        });
-      }
 
       return saved;
     });

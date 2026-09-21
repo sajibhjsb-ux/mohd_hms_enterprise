@@ -186,6 +186,8 @@ async function autoCreateWorkOrder(ctx: { resourceId: string; eventType: string 
       description: complaint.description,
       priority: complaint.priority,
       status: "PENDING",
+      // §9 — explicit source so the source=COMPLAINT filter works.
+      sourceType: "COMPLAINT",
     },
     select: { id: true, code: true },
   });

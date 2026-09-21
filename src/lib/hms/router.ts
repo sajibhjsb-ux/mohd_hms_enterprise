@@ -85,6 +85,23 @@ export function parsePath(input: string): { module: string; seg: string[]; query
 
 const currentPath = () => window.location.pathname + window.location.search;
 
+/**
+ * Session flag set on every in-app push. Consumers that offer a real
+ * history-based Back button (spec §2 — My Files) use it to distinguish
+ * "there is an in-app page to go back to" from a cold deep link whose only
+ * history entry(s) belong to the browser/other tabs.
+ */
+const SPA_NAV_FLAG = "hms:spaNav";
+export function hasInAppHistory(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    if (window.history.length <= 1) return false;
+    return window.sessionStorage.getItem(SPA_NAV_FLAG) === "1";
+  } catch {
+    return false;
+  }
+}
+
 /** Navigate by pushing a history entry (Back works); re-runs route handlers. */
 export function navigateTo(module: string, seg: string[] = [], query?: Record<string, string>): void {
   if (typeof window === "undefined") return;
@@ -97,6 +114,7 @@ export function navigateTo(module: string, seg: string[] = [], query?: Record<st
   }
   try {
     window.history.pushState(null, "", next);
+    window.sessionStorage.setItem(SPA_NAV_FLAG, "1");
   } catch {
     // sandboxed iframes / unusual contexts — fall back to direct assignment.
     window.location.pathname = next.split("?")[0];

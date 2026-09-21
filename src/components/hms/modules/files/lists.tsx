@@ -24,6 +24,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { navigateTo } from "@/lib/hms/router";
 import { fileIcon, folderIcon, fmtBytes, permAtLeast, when, type FileRow, type FolderRow } from "./shared";
+import { FilesBackButton } from "./back-button";
 
 function useList<T>(url: string) {
   const [data, setData] = useState<T | null>(null);
@@ -69,7 +70,11 @@ function ListShell({ title, subtitle, url, empty, children }: {
       : false;
   return (
     <div className="space-y-4">
-      <PageHeader title={title} subtitle={subtitle} />
+      <div className="flex items-center gap-2">
+        {/* §2 — real history Back with a safe in-module fallback. */}
+        <FilesBackButton label="Back" fallback={[]} />
+        <PageHeader title={title} subtitle={subtitle} />
+      </div>
       {isEmpty ? empty : children(data)}
     </div>
   );
@@ -211,6 +216,14 @@ function FilesBrowserShared({ folderId }: { folderId: string }) {
 
   const level = data.accessLevel ?? "VIEW";
 
+  const header = (
+    <div className="flex items-center gap-2">
+      {/* §2 — Back to the Shared Folders list (real history, safe fallback). */}
+      <FilesBackButton label="Back" fallback={["shared-folders"]} />
+      <PageHeader title="Shared folder" />
+    </div>
+  );
+
   const act = async (fn: () => Promise<unknown>, success: string) => {
     try {
       await fn();
@@ -223,10 +236,7 @@ function FilesBrowserShared({ folderId }: { folderId: string }) {
 
   return (
     <div className="space-y-4">
-      <PageHeader
-        title={data.breadcrumb[data.breadcrumb.length - 1]?.name ?? "Shared folder"}
-        subtitle={`Shared folder — your access level: ${level.toLowerCase()}.`}
-      />
+      {header}
       <nav aria-label="Folder path" className="flex flex-wrap items-center gap-1 text-sm">
         <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => navigateTo("files", ["shared-folders"])}>
           <Home className="h-3.5 w-3.5" aria-hidden /> Shared Folders
@@ -428,7 +438,10 @@ export function TrashList() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Trash" subtitle="Deleted items stay here until you restore them or delete them permanently." />
+      <div className="flex items-center gap-2">
+        <FilesBackButton label="Back" fallback={[]} />
+        <PageHeader title="Trash" subtitle="Deleted items stay here until you restore them or delete them permanently." />
+      </div>
       {empty ? (
         <EmptyState title="Trash is empty" description="Deleted files and folders appear here." />
       ) : (
@@ -575,7 +588,10 @@ export function ActivityList() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Activity" subtitle="Everything you did in Files — recorded by the existing audit system." />
+      <div className="flex items-center gap-2">
+        <FilesBackButton label="Back" fallback={[]} />
+        <PageHeader title="Activity" subtitle="Everything you did in Files — recorded by the existing audit system." />
+      </div>
       {loading ? (
         <LoadingState label="Loading activity…" />
       ) : error ? (

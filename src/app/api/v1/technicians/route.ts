@@ -18,6 +18,12 @@ const TECH_SELECT = {
   specialty: true,
   hourlyRateCents: true,
   status: true,
+  // Structured skills (spec §6) — canonical entries for the roster chips.
+  // The legacy `skills` CSV is still returned for backwards compatibility.
+  skillEntries: {
+    select: { id: true, name: true, category: true, level: true },
+    orderBy: [{ category: "asc" }, { name: "asc" }],
+  },
   user: {
     select: {
       id: true, name: true, email: true, phone: true, status: true,

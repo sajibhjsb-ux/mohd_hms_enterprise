@@ -102,6 +102,8 @@ export const PERMISSIONS = {
   payments_record: "payments.record",
   finance_read: "finance.read",
   finance_manage: "finance.manage",
+  // technician skills (spec §6-§8) — supervisors/admins manage technician skills
+  technicians_manage: "technicians.manage",
   // IRMS
   irms_read: "irms.read",
   irms_create: "irms.create",
@@ -170,6 +172,8 @@ const SUPERVISOR_PERMS: Permission[] = [
   PERMISSIONS.customers_read,
   PERMISSIONS.employees_read,
   PERMISSIONS.equipment_read, PERMISSIONS.equipment_create, PERMISSIONS.equipment_update,
+  // Technician skills (spec §6-§8) — supervisors manage their team's skills
+  PERMISSIONS.technicians_manage,
   // WhatsApp inbox access (conversation view + replies; no gateway config)
   PERMISSIONS.whatsapp_view, PERMISSIONS.whatsapp_send,
   // Email client — mailbox members only (assignment enforced per-user)
@@ -444,6 +448,22 @@ export const STATUS_TONE: Record<string, string> = {
   UNDER_REVIEW: "bg-amber-100 text-amber-800",
   FINALIZED: "bg-emerald-100 text-emerald-800",
   ARCHIVED: "bg-stone-200 text-stone-600",
+  // payment-proof workflow (spec §20-§30)
+  RECORDED: "bg-teal-100 text-teal-800",
+  PAYMENT_ON_HOLD: "bg-orange-100 text-orange-800",
+  MATCHED: "bg-emerald-100 text-emerald-800",
+  MISMATCH: "bg-red-100 text-red-700",
+  UNVERIFIED: "bg-stone-200 text-stone-700",
+  // petty cash (spec §31-§41)
+  CASH_IN: "bg-emerald-100 text-emerald-800",
+  CASH_OUT: "bg-orange-100 text-orange-800",
+  TOP_UP: "bg-teal-100 text-teal-800",
+  EXPENSE: "bg-amber-100 text-amber-800",
+  REIMBURSEMENT: "bg-violet-100 text-violet-800",
+  ADJUSTMENT: "bg-stone-200 text-stone-700",
+  FLAGGED: "bg-red-100 text-red-700",
+  RECONCILED: "bg-emerald-100 text-emerald-800",
+  LOCKED: "bg-red-100 text-red-700",
 };
 
 export function humanize(s: string | null | undefined): string {

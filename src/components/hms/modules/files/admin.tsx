@@ -25,9 +25,13 @@ import { fmtBytes, when } from "./shared";
 type AdminStorage = {
   totals: {
     activeFiles: number; activeBytes: number; trashedFiles: number; trashedBytes: number;
-    versions: number; versionBytes: number; folders: number; quotaMb: number;
+    versions: number; oldVersionBytes: number; physicalBytes: number; folders: number; quotaMb: number;
   };
-  perUser: { userId: string; name: string; email: string; role: string; files: number; usedBytes: number }[];
+  perUser: {
+    userId: string; name: string; email: string; role: string; status: string;
+    usedBytes: number; limitBytes: number; availableBytes: number; percentUsed: number;
+    warning: "OK" | "HIGH" | "VERY_HIGH" | "REACHED"; trashedBytes: number;
+  }[];
   largest: { id: string; name: string; sizeBytes: number; mimeType: string; updatedAt: string; owner: { name: string; email: string } }[];
   meta: { page: number; totalPages: number };
 };
@@ -135,7 +139,17 @@ export function FilesAdmin() {
   );
 
   const t = storage.totals;
-  const grandTotal = t.activeBytes + t.trashedBytes + t.versionBytes;
+  // §4 — parts always add up: physical = active + trashed + old versions.
+  const grandTotal = t.physicalBytes;
+
+  const warningBadge = (w: AdminStorage["perUser"][number]["warning"]) => {
+    if (w === "REACHED") return <Badge className="bg-red-100 text-red-700 border-red-200">Storage limit reached</Badge>;
+    if (w === "VERY_HIGH") return <Badge className="bg-orange-100 text-orange-800 border-orange-200">Usage very high</Badge>;
+    if (w === "HIGH") return <Badge className="bg-amber-100 text-amber-800 border-amber-200">Usage high</Badge>;
+    return null;
+  };
+  const usageBarClass = (w: AdminStorage["perUser"][number]["warning"]) =>
+    w === "REACHED" ? "[&>div]:bg-red-500" : w === "VERY_HIGH" ? "[&>div]:bg-orange-500" : w === "HIGH" ? "[&>div]:bg-amber-500" : "";
 
   return (
     <div className="space-y-4">
@@ -155,7 +169,11 @@ export function FilesAdmin() {
               { label: "Files (active)", value: String(t.activeFiles) },
               { label: "Active storage", value: fmtBytes(t.activeBytes) },
               { label: "Trash storage", value: `${fmtBytes(t.trashedBytes)} (${t.trashedFiles})` },
-              { label: "Version storage", value: `${fmtBytes(t.versionBytes)} (${t.versions})` },
+              { label: "Old versions", value: fmtBytes(t.oldVersionBytes) },
+              { label: "Physical total", value: fmtBytes(grandTotal) },
+              { label: "Quota per staff", value: `${(t.quotaMb / 1024).toFixed(0)} GB` },
+              { label: "Folders", value: String(t.folders) },
+              { label: "Objects (all versions)", value: String(t.versions) },
             ].map((c) => (
               <div key={c.label} className="rounded-lg border bg-muted/30 px-3 py-2">
                 <p className="text-xs text-muted-foreground">{c.label}</p>
@@ -165,25 +183,42 @@ export function FilesAdmin() {
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <Card>
+            <Card className="lg:col-span-2">
               <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-2 text-base"><HardDrive className="h-4 w-4 text-primary" /> Per-user usage</CardTitle>
-                <CardDescription>Total {fmtBytes(grandTotal)} across all users.</CardDescription>
+                <CardTitle className="flex items-center gap-2 text-base"><HardDrive className="h-4 w-4 text-primary" /> Staff storage (§5)</CardTitle>
+                <CardDescription>
+                  Per-staff usage against the {fmtBytes(storage.perUser[0]?.limitBytes ?? 0)} limit · total {fmtBytes(grandTotal)} physical. Warnings at 80 % (high), 90 % (very high) and 100 % (reached).
+                </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-2">
+              <CardContent className="space-y-3 max-h-[28rem] overflow-y-auto pr-1">
                 {storage.perUser.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No files stored yet.</p>
+                  <p className="text-sm text-muted-foreground">No staff storage to show.</p>
                 ) : (
                   storage.perUser.map((u) => (
                     <div key={u.userId} className="space-y-1">
-                      <div className="flex justify-between text-sm">
-                        <span className="font-medium truncate">{u.name} <span className="text-muted-foreground">({u.email})</span></span>
-                        <span className="tabular-nums shrink-0">{fmtBytes(u.usedBytes)} · {u.files} file{u.files === 1 ? "" : "s"}</span>
+                      <div className="flex items-center justify-between gap-2 text-sm">
+                        <span className="font-medium truncate">{u.name} <span className="text-muted-foreground font-normal">({u.email})</span></span>
+                        <span className="flex items-center gap-2 shrink-0">
+                          {warningBadge(u.warning)}
+                          <span className="tabular-nums text-xs text-muted-foreground">
+                            {fmtBytes(u.usedBytes)} / {fmtBytes(u.limitBytes)} · {fmtBytes(u.availableBytes)} free · {u.percentUsed}%
+                          </span>
+                        </span>
                       </div>
-                      <Progress value={grandTotal > 0 ? Math.min(100, (u.usedBytes / grandTotal) * 100) : 0} aria-label={`${u.name} storage`} />
+                      <Progress value={u.percentUsed} aria-label={`${u.name} storage ${u.percentUsed}%`} className={usageBarClass(u.warning)} />
+                      {u.trashedBytes > 0 ? (
+                        <p className="text-[11px] text-muted-foreground">Includes {fmtBytes(u.trashedBytes)} in trash — purging frees space.</p>
+                      ) : null}
                     </div>
                   ))
                 )}
+                {storage.meta.totalPages > 1 ? (
+                  <div className="flex items-center justify-end gap-2 pt-1">
+                    <Button variant="outline" size="sm" disabled={page <= 1 || loading} onClick={() => void load(page - 1)}>Previous</Button>
+                    <span className="text-xs text-muted-foreground">Page {page} of {storage.meta.totalPages}</span>
+                    <Button variant="outline" size="sm" disabled={page >= storage.meta.totalPages || loading} onClick={() => void load(page + 1)}>Next</Button>
+                  </div>
+                ) : null}
               </CardContent>
             </Card>
 
@@ -212,8 +247,9 @@ export function FilesAdmin() {
               </CardHeader>
               <CardContent className="space-y-2">
                 <div className="space-y-1.5">
-                  <Label htmlFor="quota-mb">Quota per user (MB)</Label>
+                  <Label htmlFor="quota-mb">Quota per staff user (MB)</Label>
                   <Input id="quota-mb" type="number" min={1} value={quotaInput} onChange={(e) => setQuotaInput(e.target.value)} />
+                  <p className="text-xs text-muted-foreground">Default 15,360 MB (15 GB) — spec §3 hard maximum per staff user.</p>
                 </div>
                 <Button size="sm" disabled={savingQuota} onClick={() => void saveQuota()}>{savingQuota ? "Saving…" : "Save quota"}</Button>
                 <p className="text-xs text-muted-foreground">Changes are audited (FILE_QUOTA_UPDATED) and take effect immediately.</p>

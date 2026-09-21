@@ -298,10 +298,24 @@ export function chunkObjectKey(sessionId: string, index: number): string {
   return `uploads-tmp/${sessionId}/${String(index).padStart(6, "0")}`;
 }
 
-// ─── Quotas (§29 — server-authoritative, never browser-computed) ────────────
+// ─── Quotas (§3/§4 — server-authoritative, never browser-computed) ──────────
+//
+// POLICY (one consistent rule, zero double counting): a user's storage usage is
+// the sum of EVERY physical MinIO object they own — all versions of all files,
+// including files currently in Trash. `FileVersion` is the single size ledger
+// (FileEntry.sizeBytes always mirrors the CURRENT version, so summing both
+// would double count — we never do). Trash and old versions therefore keep
+// occupying quota exactly as they occupy real storage; Purge / version delete
+// are the release valves. Temporary chunk uploads are NOT counted: they are
+// transient (24 h zombie sweep), bounded by MAX_SESSION_BYTES, and do not
+// belong to the user until the session completes.
+//
+// DEFAULT LIMIT (spec §3): 15 GB per staff user. The global Setting
+// `files_user_quota_mb` can adjust the org-wide limit (Files → Admin →
+// Storage); administrators see per-staff usage against it.
 
 export const QUOTA_SETTING_KEY = "files_user_quota_mb";
-const DEFAULT_QUOTA_MB = 512;
+export const DEFAULT_QUOTA_MB = 15 * 1024; // 15 GB — hard maximum per staff user (spec §3)
 const MB = 1024 * 1024;
 
 export async function userQuotaMb(): Promise<number> {
@@ -314,20 +328,55 @@ export async function userQuotaBytes(): Promise<number> {
   return (await userQuotaMb()) * MB;
 }
 
+/** Physical bytes owned by the user: every version of every file (active + trashed). */
 export async function usedBytes(ownerId: string): Promise<number> {
-  const agg = await db.fileEntry.aggregate({
-    where: { ownerId, trashedAt: null },
+  const agg = await db.fileVersion.aggregate({
+    where: { file: { ownerId } },
     _sum: { sizeBytes: true },
   });
   return agg._sum.sizeBytes ?? 0;
 }
 
+export type StorageSummary = {
+  usedBytes: number;
+  quotaBytes: number;
+  availableBytes: number;
+  percentUsed: number;
+  activeBytes: number;
+  trashedBytes: number;
+  versionBytes: number; // old (superseded) versions only
+};
+
+/** Full per-user storage breakdown (dashboard + admin Staff Storage view, §5). */
+export async function storageSummary(ownerId: string): Promise<StorageSummary> {
+  const [quotaBytes, allVersions, activeCurrent, trashedCurrent] = await Promise.all([
+    userQuotaBytes(),
+    db.fileVersion.aggregate({ where: { file: { ownerId } }, _sum: { sizeBytes: true } }),
+    db.fileEntry.aggregate({ where: { ownerId, trashedAt: null }, _sum: { sizeBytes: true } }),
+    db.fileEntry.aggregate({ where: { ownerId, trashedAt: { not: null } }, _sum: { sizeBytes: true } }),
+  ]);
+  const used = allVersions._sum.sizeBytes ?? 0;
+  const activeBytes = activeCurrent._sum.sizeBytes ?? 0;
+  const trashedBytes = trashedCurrent._sum.sizeBytes ?? 0;
+  return {
+    usedBytes: used,
+    quotaBytes,
+    availableBytes: Math.max(0, quotaBytes - used),
+    percentUsed: quotaBytes > 0 ? Math.min(100, (used / quotaBytes) * 100) : 0,
+    activeBytes,
+    trashedBytes,
+    versionBytes: Math.max(0, used - activeBytes - trashedBytes),
+  };
+}
+
 export async function assertQuota(ownerId: string, incomingBytes: number): Promise<void> {
   const [quota, used] = await Promise.all([userQuotaBytes(), usedBytes(ownerId)]);
   if (used + incomingBytes > quota) {
-    throw Errors.badRequest(
-      `Storage quota exceeded — used ${(used / MB).toFixed(1)} MB of ${(quota / MB).toFixed(0)} MB; this upload needs ${(incomingBytes / MB).toFixed(1)} MB. Remove files or ask an administrator to raise the quota.`,
-    );
+    const remaining = Math.max(0, quota - used);
+    const message = remaining <= 0
+      ? `Your ${(quota / (1024 * MB)).toFixed(0)} GB storage limit has been reached. Remove files (or purge trash) to free space.`
+      : `This upload exceeds your remaining storage capacity — ${(remaining / MB).toFixed(1)} MB available of ${(quota / MB).toFixed(0)} MB; this item needs ${(incomingBytes / MB).toFixed(1)} MB.`;
+    throw Errors.quotaExceeded(message, quota);
   }
 }
 

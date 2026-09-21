@@ -11,7 +11,7 @@ import { db } from "@/lib/db";
 import { audit } from "@/lib/hms/services";
 import { storage } from "@/lib/hms/storage";
 import {
-  assertRolePermission, canAccessFile, dispositionFor, fileObjectKey, extOf, emitFilesUpdated, withParams
+  assertRolePermission, canAccessFile, dispositionFor, fileObjectKey, extOf, emitFilesUpdated, withParams, assertQuota
 } from "@/lib/hms/files/service";
 
 type Ctx = { params: Promise<{ id: string; version: string }> };
@@ -65,6 +65,9 @@ export const POST = withParams<{ id: string; version: string }>(async ({ user, p
 
     const v = await db.fileVersion.findUnique({ where: { fileId_version: { fileId: id, version } }, select: { id: true, objectKey: true, sizeBytes: true, mimeType: true, checksum: true } });
     if (!v) throw Errors.notFound("Version not found.");
+
+    // §3 — a restore writes a fresh copy as v(n+1), growing the owner's storage.
+    await assertQuota(file.ownerId, v.sizeBytes);
 
     // Read the historical object, write it as a NEW version object (history intact).
     const obj = await storage.get(v.objectKey);

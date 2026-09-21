@@ -13,6 +13,7 @@ import { PriorityBadge, StatusBadge, LoadingState, EmptyState, ErrorState } from
 import { WorkflowTimeline } from "@/components/hms/shared/workflow-timeline";
 import { PdfButtons } from "@/components/hms/shared/pdf-buttons";
 import { PERMISSIONS, humanize } from "@/lib/hms/constants";
+import { navigateTo } from "@/lib/hms/router";
 import { customerLabel, money, fmtDate, fmtDateTime, toCents } from "@/lib/hms/format";
 import { useRealtimeEvent } from "@/lib/hms/realtime/hooks";
 import { WO_DETAIL_EVENTS } from "@/lib/hms/realtime/matrix";
@@ -29,7 +30,7 @@ import {
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
-  CircleDollarSign, Hammer, PauseCircle, PlayCircle, Plus, Trash2, Wrench,
+  ArrowUpRight, CircleDollarSign, Hammer, PauseCircle, PlayCircle, Plus, Trash2, Wrench,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -279,17 +280,36 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
       <div className="grid gap-4 lg:grid-cols-3">
         {/* ── Main column ── */}
         <div className="lg:col-span-2 space-y-4">
+          {/* §19 — the originating complaint (real PostgreSQL relationship,
+              never a fake linked value) with an in-router View Complaint. */}
+          {detail.complaint ? (
+            <div className="rounded-xl border bg-card shadow-sm p-4 sm:p-5 flex flex-wrap items-center justify-between gap-3">
+              <div className="space-y-1">
+                <p className="text-muted-foreground text-xs uppercase tracking-wide">Source complaint</p>
+                <p className="font-mono text-sm">{detail.complaint.code}</p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => navigateTo("complaints", [detail.complaint!.id])}
+                aria-label={`View complaint ${detail.complaint.code}`}
+              >
+                View Complaint <ArrowUpRight className="h-4 w-4 ml-1.5" aria-hidden />
+              </Button>
+            </div>
+          ) : null}
           {/* Main info */}
           <div className="rounded-xl border bg-card shadow-sm p-4 sm:p-5 space-y-4">
             <div className="flex items-center justify-between gap-2 text-sm">
               <span className="font-mono text-muted-foreground">{detail.code}</span>
               {detail.complaint ? (
-                <a
-                  href={`/complaints/${encodeURIComponent(detail.complaint.id)}`}
+                <button
+                  type="button"
+                  onClick={() => navigateTo("complaints", [detail.complaint!.id])}
                   className="text-xs text-muted-foreground hover:text-foreground hover:underline underline-offset-2"
                 >
                   Complaint {detail.complaint.code}
-                </a>
+                </button>
               ) : null}
             </div>
             <div className="grid gap-4 sm:grid-cols-3 text-sm">
