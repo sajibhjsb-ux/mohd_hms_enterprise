@@ -1,98 +1,124 @@
 "use client";
 
-// MOHD.HMS ENTERPRISE — Email client shared types (Email module).
+// MOHD.HMS ENTERPRISE — shared Email client types (client-side vocabulary).
+// Mirrors the API payloads of /api/v1/email/client/*.
 
-export type Folder = "INBOX" | "SENT" | "DRAFT" | "OUTBOX" | "ARCHIVE" | "SPAM" | "TRASH";
-export type FolderView = Folder | "STARRED";
-
-export type MailListItem = {
+export type MailboxInfo = {
   id: string;
+  email: string;
+  displayName: string;
+  kind: string;
+  canSend: boolean;
+  unread: number;
+};
+
+export type Bootstrap = {
+  mailboxes: MailboxInfo[];
+  counts: Record<string, number>;
+  smtp: { configured: boolean };
+  inbound: { supported: boolean; detail: string };
+};
+
+export type MessageListItem = {
+  id: string;
+  mailboxId: string;
   folder: string;
-  direction: "IN" | "OUT";
-  status: string;
+  status: string; // DRAFT | QUEUED | RETRYING | SENDING | SENT | FAILED | CANCELED
+  direction: string;
+  threadId: string;
+  subject: string;
   fromName: string;
   fromEmail: string;
   toEmail: string;
   ccEmail: string;
-  subject: string;
-  excerpt: string;
+  preview: string;
   readAt: string | null;
-  starredAt: string | null;
-  threadId: string;
-  emailLogId: string;
+  starred: boolean;
+  important: boolean;
   sentAt: string | null;
-  failedReason: string;
-  attachmentRefs: string;
-  originFolder: string;
+  hasAttachments: boolean;
   createdAt: string;
-  updatedAt: string;
+  lastError: string;
+  attempts: number;
 };
 
-export type MailAttachment = {
-  id: string;
-  key: string;
-  filename: string;
-  size: number;
-  contentType: string;
-};
-
-export type MailDetail = Omit<MailListItem, "attachmentRefs"> & {
-  bodyHtml: string;
-  attachments: MailAttachment[];
-  inReplyToId: string;
-  bccEmail: string;
-};
-
-export type ContactGroup = {
-  id: string;
-  name: string;
-  color: string;
-  members: { name: string; email: string }[];
-};
-
-export type Contact = {
-  id: string;
-  name: string;
-  email: string;
-  role: string;
-  avatarUrl: string | null;
-};
-
-export type MailMeta = {
-  identity: { name: string; email: string };
-  sendingAs: { fromEmail: string; fromName: string; replyTo: string };
-  smtpConfigured: boolean;
-  counts: Record<Folder, number>;
-  inboxUnread: number;
+export type MessageListResult = {
+  messages: MessageListItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+  unreadByFolder: Record<string, number>;
   starred: number;
-  groups: ContactGroup[];
+  important: number;
 };
 
-export type ComposeMode = "new" | "reply" | "replyAll" | "forward" | "draft";
+export type AttachmentInfo = {
+  id: string;
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+};
 
-export type ComposeInit = {
-  mode: ComposeMode;
-  draftId?: string;
-  inReplyToId?: string;
+export type ThreadEntry = {
+  id: string;
+  subject: string;
+  fromName: string;
+  fromEmail: string;
+  createdAt: string;
+  preview: string;
+  isCurrent: boolean;
+};
+
+export type MessageDetail = {
+  id: string;
+  mailboxId: string;
+  folder: string;
+  status: string;
+  direction: string;
+  threadId: string;
+  subject: string;
+  fromName: string;
+  fromEmail: string;
+  toEmail: string;
+  ccEmail: string;
+  bccEmail: string;
+  bodyHtml: string;
+  bodyText: string;
+  readAt: string | null;
+  starred: boolean;
+  important: boolean;
+  sentAt: string | null;
+  lastError: string;
+  messageId: string;
+  createdAt: string;
+  attachments: AttachmentInfo[];
+  thread: ThreadEntry[];
+};
+
+export type ComposePrefill = {
+  mode: "reply" | "replyAll" | "forward";
+  mailboxId: string;
   to: string[];
   cc: string[];
-  bcc: string[];
   subject: string;
-  bodyHtml: string;
-  attachments: MailAttachment[];
+  body: string;
+  originalId: string;
 };
 
-export function parseRefs(raw: string | null | undefined): MailAttachment[] {
-  try {
-    const arr = JSON.parse(raw || "[]") as unknown;
-    if (!Array.isArray(arr)) return [];
-    return arr.filter(
-      (a): a is MailAttachment =>
-        Boolean(a) && typeof a === "object" &&
-        typeof (a as MailAttachment).id === "string" &&
-        typeof (a as MailAttachment).key === "string"
-    );
-  } catch {
-    return [];
-  }
-}
+export type Suggestions = {
+  users: { id: string; name: string; email: string; role: string }[];
+  mailboxes: { id: string; name: string; email: string }[];
+  customers: { id: string; name: string; email: string }[];
+};
+
+export const MAIL_FOLDER_LABELS: Record<string, string> = {
+  INBOX: "Inbox",
+  SENT: "Sent",
+  DRAFTS: "Drafts",
+  OUTBOX: "Outbox",
+  STARRED: "Starred",
+  IMPORTANT: "Important",
+  ARCHIVE: "Archive",
+  SPAM: "Spam",
+  TRASH: "Trash",
+};

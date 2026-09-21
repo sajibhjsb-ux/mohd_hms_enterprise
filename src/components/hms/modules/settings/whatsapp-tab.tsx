@@ -8,8 +8,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Activity, ArrowDownLeft, ArrowUpRight, Ban, KeyRound, Link2, MessageSquare,
-  Plus, QrCode, RefreshCw, Save, Send, ShieldAlert, ShieldCheck, Trash2, Unlink, Zap,
+  Activity, ArrowDownLeft, ArrowUpRight, Ban, KeyRound, Link2, Loader2, MessageSquare,
+  Plus, QrCode, RefreshCw, Save, Send, ShieldAlert, ShieldCheck, Smartphone, Trash2, Unlink, Zap,
 } from "lucide-react";
 import { api, qs } from "@/lib/hms/api-client";
 import { PERMISSIONS } from "@/lib/hms/constants";
@@ -372,11 +372,17 @@ function ConnectionPanel() {
   const [clearingSecret, setClearingSecret] = useState(false);
   const [busyAction, setBusyAction] = useState<"connect" | "reconnect" | "disconnect" | null>(null);
 
-  // QR dialog state
+  // QR dialog state — `qrWaiting` is the honest "pairing socket re-establishing"
+  // state (engine between QR rotations / during reconnect backoff); it is NOT
+  // an error. `qrError` is a real failure (gateway down, not configured, …).
   const [qrOpen, setQrOpen] = useState(false);
   const [qr, setQr] = useState<string | null>(null);
   const [qrError, setQrError] = useState<string | null>(null);
+  const [qrWaiting, setQrWaiting] = useState<string | null>(null);
   const [qrLoading, setQrLoading] = useState(false);
+  const [qrFetchedAt, setQrFetchedAt] = useState<number | null>(null);
+  const [qrAge, setQrAge] = useState(0);
+  const [refreshingPairing, setRefreshingPairing] = useState(false);
 
   // Pairing code dialog state
   const [pairOpen, setPairOpen] = useState(false);
@@ -478,27 +484,68 @@ function ConnectionPanel() {
   const fetchQr = useCallback(async () => {
     setQrLoading(true);
     try {
-      const res = await api.get<{ qr: string }>("/api/v1/whatsapp/session/qr");
-      setQr(res.data.qr);
-      setQrError(null);
+      const res = await api.get<{ qr: string | null; state?: "READY" | "WAITING"; detail?: string }>("/api/v1/whatsapp/session/qr");
+      if (res.data?.qr) {
+        // Fresh, engine-verified QR (the server only returns one while the
+        // session is truly qr_ready — never a stale code from a closed socket).
+        setQr(res.data.qr);
+        setQrWaiting(null);
+        setQrError(null);
+        setQrFetchedAt(Date.now());
+      } else if (res.data?.state === "WAITING") {
+        // The engine is between QR rotations / reconnecting — honest waiting
+        // state, not an error. The poll picks up the fresh QR automatically.
+        setQr(null);
+        setQrWaiting(res.data.detail || "Waiting for a fresh QR…");
+        setQrError(null);
+      } else {
+        setQr(null);
+        setQrWaiting(null);
+        setQrError(res.data?.detail || "No QR available.");
+      }
     } catch (e) {
       setQr(null);
+      setQrWaiting(null);
       setQrError(e instanceof Error ? e.message : "No QR available.");
     } finally {
       setQrLoading(false);
     }
   }, []);
 
-  // While the QR dialog is open: refresh the QR every 20s and watch the
-  // session state — the dialog closes itself once the link succeeds.
+  // §15 recovery: stop + start the session through the existing reconnect
+  // endpoint — forces a fresh socket and a fresh QR immediately instead of
+  // waiting out the engine's reconnect backoff with a dead cached code.
+  const refreshPairing = useCallback(async () => {
+    setRefreshingPairing(true);
+    try {
+      await api.post("/api/v1/whatsapp/session/reconnect", {});
+      toast({ title: "Pairing refreshed", description: "A fresh QR is being generated." });
+    } catch (e) {
+      toast({ title: "Refresh failed", description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+    } finally {
+      setRefreshingPairing(false);
+    }
+    void fetchQr();
+  }, [fetchQr, toast]);
+
+  // While the QR dialog is open: refresh the QR every 10s (Baileys rotates its
+  // QR every ~20s — a 20s poll could display a one-generation-dead code) and
+  // watch the session state — the dialog closes itself once the link succeeds.
   useEffect(() => {
-    if (!qrOpen) { setQr(null); setQrError(null); return; }
+    if (!qrOpen) { setQr(null); setQrError(null); setQrWaiting(null); setQrFetchedAt(null); return; }
     let alive = true;
     void fetchQr();
-    const qrTimer = setInterval(() => { if (alive) void fetchQr(); }, 20_000);
+    const qrTimer = setInterval(() => { if (alive) void fetchQr(); }, 10_000);
     const statusTimer = setInterval(() => { if (alive) void refreshSession(); }, 5_000);
     return () => { alive = false; clearInterval(qrTimer); clearInterval(statusTimer); };
   }, [qrOpen, fetchQr, refreshSession]);
+
+  // Live age of the displayed QR so the user can trust it is fresh.
+  useEffect(() => {
+    if (!qrOpen || !qrFetchedAt) { setQrAge(0); return; }
+    const t = setInterval(() => setQrAge(Math.floor((Date.now() - qrFetchedAt) / 1000)), 1000);
+    return () => clearInterval(t);
+  }, [qrOpen, qrFetchedAt]);
 
   useEffect(() => {
     if (qrOpen && session?.uiState === "CONNECTED") {
@@ -893,33 +940,68 @@ function ConnectionPanel() {
           <DialogHeader>
             <DialogTitle>Link a device</DialogTitle>
             <DialogDescription>
-              Scan with WhatsApp → Linked devices. The QR refreshes automatically every 20 seconds and the dialog closes on success.
+              Scan with WhatsApp → Linked devices. Only a live QR is shown — the image refreshes automatically every 10 seconds and the dialog closes on success.
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col items-center gap-3">
             {qr ? (
-              <img
-                src={qr}
-                alt="WhatsApp session QR code"
-                width={280}
-                height={280}
-                className="rounded-lg border bg-white p-2"
-                style={{ width: 280, height: 280 }}
-              />
-            ) : qrLoading ? (
-              <div className="h-[280px] w-[280px] rounded-lg border bg-muted/30 animate-pulse" aria-hidden />
-            ) : (
-              <div className="h-[280px] w-[280px] rounded-lg border bg-muted/30 flex flex-col items-center justify-center gap-2 p-4 text-center">
-                <p className="text-sm text-red-700 break-words">{qrError ?? "No QR available."}</p>
+              <>
+                <img
+                  src={qr}
+                  alt="WhatsApp session QR code"
+                  width={280}
+                  height={280}
+                  className="rounded-lg border bg-white p-2"
+                  style={{ width: 280, height: 280 }}
+                  data-testid="whatsapp-qr-image"
+                />
+                <p className="text-xs text-muted-foreground text-center" aria-live="polite" data-testid="whatsapp-qr-age">
+                  {qrAge < 15
+                    ? "QR is fresh — scan it now"
+                    : "QR may have rotated — a fresh one loads automatically"}
+                  {" "}· fetched {qrAge}s ago
+                </p>
+              </>
+            ) : qrWaiting ? (
+              <div
+                className="h-[280px] w-[280px] rounded-lg border border-amber-300 bg-amber-50 flex flex-col items-center justify-center gap-3 p-6 text-center"
+                data-testid="whatsapp-qr-waiting"
+              >
+                <Loader2 className="h-8 w-8 text-amber-600 animate-spin" aria-hidden />
+                <p className="text-sm font-medium text-amber-800">Waiting for a fresh QR</p>
+                <p className="text-xs text-amber-700 break-words">{qrWaiting}</p>
+              </div>
+            ) : qrError ? (
+              <div
+                className="h-[280px] w-[280px] rounded-lg border bg-muted/30 flex flex-col items-center justify-center gap-2 p-4 text-center"
+                data-testid="whatsapp-qr-error"
+              >
+                <p className="text-sm text-red-700 break-words">{qrError}</p>
                 <p className="text-xs text-muted-foreground">A QR exists only while the gateway session waits for a scan (status qr_ready).</p>
               </div>
+            ) : (
+              <div className="h-[280px] w-[280px] rounded-lg border bg-muted/30 animate-pulse" aria-hidden />
             )}
             <p className="text-xs text-muted-foreground text-center">WhatsApp → Settings → Linked devices → Link a device</p>
-            {qr && !qrLoading ? (
-              <Button size="sm" variant="outline" onClick={() => void fetchQr()}>
-                <RefreshCw className="h-3.5 w-3.5 mr-1.5" /> Refresh now
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              {qr && !qrLoading ? (
+                <Button size="sm" variant="outline" onClick={() => void fetchQr()}>
+                  <RefreshCw className="h-3.5 w-3.5 mr-1.5" /> Refresh QR
+                </Button>
+              ) : null}
+              <Button size="sm" variant="outline" onClick={() => void refreshPairing()} disabled={refreshingPairing} data-testid="whatsapp-qr-refresh-pairing">
+                {refreshingPairing
+                  ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" aria-hidden />
+                  : <RefreshCw className="h-3.5 w-3.5 mr-1.5" aria-hidden />}
+                {refreshingPairing ? "Refreshing…" : "Refresh pairing"}
               </Button>
-            ) : null}
+              <Button size="sm" variant="outline" onClick={() => { setQrOpen(false); setPairOpen(true); }} data-testid="whatsapp-qr-use-pairing-code">
+                <Smartphone className="h-3.5 w-3.5 mr-1.5" aria-hidden /> Use pairing code
+              </Button>
+            </div>
+            <p className="text-[11px] leading-relaxed text-muted-foreground text-center max-w-[340px]">
+              If your phone says “No device found”, the code you scanned had already expired — scan only the QR currently displayed, or switch to the pairing code, which does not rely on scanning.
+            </p>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setQrOpen(false)}>Close</Button>

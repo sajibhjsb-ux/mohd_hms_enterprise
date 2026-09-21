@@ -112,6 +112,16 @@ async function inspectionCtx(reportId: string): Promise<IrmsCtx> {
     : null;
 }
 
+/** Payroll: owning employee's linked account (self-service payslip room). */
+async function payslipUserRoom(itemId: string | null | undefined): Promise<string | null> {
+  if (!itemId) return null;
+  const item = await db.payrollItem.findUnique({
+    where: { id: itemId },
+    select: { employee: { select: { userId: true } } },
+  });
+  return item?.employee.userId ?? null;
+}
+
 /**
  * Map an outbox event to the rooms that should receive it.
  * Unknown event types default to `staff` (fail-closed: never broadcast business
@@ -241,6 +251,19 @@ export async function resolveRooms(event: RealtimeEventRow): Promise<Room[]> {
     case EVENT_TYPES.HR_LEAVE_UPDATED:
     case EVENT_TYPES.EMPLOYEE_UPDATED:
       return [...hrAud(), ...mgmt()].filter((r, i, a) => a.indexOf(r) === i);
+    // ── Payroll: run lifecycle → HR + Finance + management (salary data is
+    //    sensitive — never broadcast to plain staff/customers, spec §30).
+    case EVENT_TYPES.PAYROLL_RUN_UPDATED:
+      return [...hrAud(), ...financeAud()].filter((r, i, a) => a.indexOf(r) === i);
+    // Payslip published → the owning employee's user room + payroll audiences.
+    case EVENT_TYPES.PAYSLIP_PUBLISHED: {
+      const payUserId = await payslipUserRoom(event.resourceId);
+      return [...hrAud(), ...financeAud(), ...user(payUserId)].filter(
+        (r, i, a) => a.indexOf(r) === i,
+      );
+    }
+    case EVENT_TYPES.HR_OVERTIME_UPDATED:
+      return [...hrAud(), ...mgmt()].filter((r, i, a) => a.indexOf(r) === i);
     case EVENT_TYPES.VEHICLE_UPDATED:
       return mgmt();
     case EVENT_TYPES.USER_UPDATED:
@@ -281,6 +304,15 @@ export async function resolveRooms(event: RealtimeEventRow): Promise<Room[]> {
     // ── Customers (STEP 11): staff + that customer's own users.
     case EVENT_TYPES.CUSTOMER_UPDATED:
       return [...staffAll(), ...customer(event.resourceId)];
+
+    // ── Files: content/share changes reach the exact affected users —
+    //    payload.userIds (owner + share recipients) when present, otherwise
+    //    the owner's user room. Never broadcast file activity to bystanders.
+    case EVENT_TYPES.FILES_UPDATED: {
+      const ids = Array.isArray(payload.userIds) ? (payload.userIds as unknown[]) : [];
+      const rooms = ids.filter((v): v is string => typeof v === "string").flatMap((id) => user(id));
+      return rooms.length > 0 ? rooms : user(event.resourceId ?? undefined);
+    }
 
     default:
       // Fail closed: unknown/new event types reach management only —

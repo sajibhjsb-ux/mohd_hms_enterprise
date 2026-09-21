@@ -20,9 +20,12 @@
  *
  * Push: validated payloads only; notification click routes into the
  * existing application route supplied by the server (RBAC applied server-side).
+ * Both transports land here: legacy VAPID web-push AND Firebase Cloud
+ * Messaging (FCM data-only messages carry the same {title, body, url, tag}
+ * shape nested under `data` — unwrapped below, spec §4 ONE service worker).
  */
 
-const VERSION = "v2";
+const VERSION = "v3";
 const STATIC_CACHE = `hms-static-${VERSION}`;
 const SHELL_CACHE = `hms-shell-${VERSION}`;
 const OFFLINE_URL = "/offline.html";
@@ -197,6 +200,16 @@ function safePayload(raw) {
     } catch {
       data = { body: raw.text() || "" };
     }
+  }
+  // FCM envelope: the Admin SDK sends data-only messages whose useful fields
+  // live under `data`. Legacy VAPID sends them at the top level. Merge both.
+  if (data && typeof data === "object" && data.data && typeof data.data === "object") {
+    data = { ...data.data, ...data };
+  }
+  // FCM `notification` display messages (defensive): prefer their title/body
+  // when our data fields are absent.
+  if (data && typeof data === "object" && data.notification && typeof data.notification === "object") {
+    data = { ...data.notification, ...data };
   }
   const title =
     typeof data.title === "string" && data.title.trim()

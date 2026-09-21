@@ -44,6 +44,8 @@ type UserRow = {
   lastLoginAt: string | null; createdAt: string;
   customer: { id: string; companyName: string; code: string; contactPerson?: string } | null;
   technicianProfile: { id: string; employeeNo: string; specialty: string; status: string } | null;
+  positionId: string | null;
+  position: { id: string; name: string } | null;
 };
 
 const ROLES = ["SUPER_ADMIN", "ADMIN", "SUPERVISOR", "TECHNICIAN", "CUSTOMER", "FINANCE", "HR"] as const;
@@ -164,6 +166,13 @@ function UsersList() {
         </div>
       ),
     },
+    {
+      // POSITION column — its OWN column, never merged with the role badge
+      // (role/position spec §7: the distinction must be obvious).
+      key: "position", header: "Position", value: (r) => r.position?.name ?? "",
+      render: (r) => (r.position?.name ? <span className="text-sm">{r.position.name}</span> : <span className="text-muted-foreground">—</span>),
+      hideOnMobile: true,
+    },
     { key: "phone", header: "Phone", value: (r) => r.phone ?? "", render: (r) => r.phone || "—", hideOnMobile: true },
     {
       key: "customer", header: "Linked customer", value: (r) => customerLabel(r.customer),
@@ -255,6 +264,13 @@ function UsersList() {
               key: "role", label: "Role",
               options: ROLES.filter((r) => r !== "CUSTOMER" || includeCustomers).map((r) => ({ value: r, label: humanize(r) })),
               match: (r, v) => r.role === v,
+            },
+            {
+              // Position filter (role/position spec §19) — job-title axis,
+              // independent of the role filter.
+              key: "position", label: "Position",
+              options: [...new Set(rows.map((r) => r.position?.name).filter((n): n is string => !!n))].sort().map((n) => ({ value: n, label: n })),
+              match: (r, v) => r.position?.name === v,
             },
             {
               key: "status", label: "Status",

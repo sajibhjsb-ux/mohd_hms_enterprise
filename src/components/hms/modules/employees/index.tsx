@@ -25,7 +25,7 @@ import { hasPerm, useSession } from "@/components/hms/session";
 import { useUi } from "@/lib/hms/ui-store";
 import { navigateTo, pageFromSeg } from "@/lib/hms/router";
 import { useToast } from "@/hooks/use-toast";
-import { PERMISSIONS } from "@/lib/hms/constants";
+import { PERMISSIONS, humanize } from "@/lib/hms/constants";
 import { fmtDate, money } from "@/lib/hms/format";
 import { useRealtimeEvent } from "@/lib/hms/realtime/hooks";
 import { MODULE_EVENTS } from "@/lib/hms/realtime/matrix";
@@ -203,6 +203,24 @@ function EmployeesList() {
                 { value: "TERMINATED", label: "Terminated" },
               ],
               match: (r, v) => r.status === v,
+            },
+            {
+              // Role filter (role/position spec §19) — the linked account's
+              // application role, NOT the job title.
+              key: "role", label: "Role",
+              options: ["SUPER_ADMIN", "ADMIN", "SUPERVISOR", "TECHNICIAN", "FINANCE", "HR"].map((r) => ({ value: r, label: humanize(r) })),
+              match: (r, v) => r.user?.role === v,
+            },
+            {
+              // Position filter — managed job titles actually in use.
+              key: "position", label: "Position",
+              options: [...new Set(rows.map((r) => r.positionRef?.name ?? r.position).filter((n): n is string => !!n))].sort().map((n) => ({ value: n, label: n })),
+              match: (r, v) => (r.positionRef?.name ?? r.position) === v,
+            },
+            {
+              key: "department", label: "Department",
+              options: [...new Set(rows.map((r) => r.department?.name).filter((n): n is string => !!n))].sort().map((n) => ({ value: n, label: n })),
+              match: (r, v) => r.department?.name === v,
             },
           ]}
           emptyTitle="No employees match"

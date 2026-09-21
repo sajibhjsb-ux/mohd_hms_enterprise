@@ -34,6 +34,13 @@ model User {
   avatarUrl     String?
   customerId    String?   @unique
   customer      Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  // JOB POSITION (organizational job title) — SEPARATE from `role`.
+  // `role` is the RBAC access level (authorization); positionId is the
+  // person's job title from the HR position catalog and NEVER affects
+  // permissions. Canonical for the account; mirrored onto the linked
+  // Employee record when one exists (same person, one job title).
+  positionId    String?
+  position      JobPosition? @relation(fields: [positionId], references: [id], onDelete: SetNull)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
   createdBy     String?
@@ -42,6 +49,9 @@ model User {
   passwordResets    PasswordResetToken[]
   emailOtps         EmailOtp[]
   pushSubscriptions PushSubscription[]
+  pushDevices       PushDevice[]
+  pushLogs          PushLog[]
+  notificationPreference NotificationPreference?
   technicianProfile TechnicianProfile?
   employee          Employee?
   notifications     Notification[]
@@ -50,9 +60,32 @@ model User {
   legalAcceptances  LegalAcceptance[]
   whatsappContacts  WhatsAppContact[]    @relation("WhatsAppContactUser")
   profileChangeRequests ProfileChangeRequest[]
+  // Email client mailboxes (§28 — user↔mailbox mapping is configurable;
+  // not every user has a corporate mailbox).
+  ownedMailboxes     Mailbox[]       @relation("MailboxOwner")
+  mailboxMemberships MailboxMember[] @relation("MailboxMemberships")
+  // Payroll actors (spec §9 — every workflow step is attributable)
+  payrollRunsCreated   PayrollRun[] @relation("PayrollRunCreator")
+  payrollRunsSubmitted PayrollRun[] @relation("PayrollRunSubmitter")
+  payrollRunsApproved  PayrollRun[] @relation("PayrollRunApprover")
+  payrollRunsFinalized PayrollRun[] @relation("PayrollRunFinalizer")
+  payrollRunsPaid      PayrollRun[] @relation("PayrollRunPayer")
+  payrollRunsLocked    PayrollRun[] @relation("PayrollRunLocker")
+  overtimeApproved     OvertimeRequest[] @relation("OvertimeApprover")
+  // Files module (§11) — ownership + attribution across file entities
+  fileFolders          FileFolder[]      @relation("FileFolders")
+  fileFoldersTrashed   FileFolder[]      @relation("FileFoldersTrashed")
+  fileEntries          FileEntry[]       @relation("FileEntries")
+  fileEntriesTrashed   FileEntry[]       @relation("FileEntriesTrashed")
+  fileVersionsUploaded FileVersion[]     @relation("FileVersions")
+  fileSharesGiven      FileShare[]       @relation("FileSharesGiven")
+  fileSharesReceived   FileShare[]       @relation("FileSharesReceived")
+  fileStars            FileStar[]        @relation("FileStars")
+  fileUploadSessions   FileUploadSession[] @relation("FileUploadSessions")
 
   @@index([role])
   @@index([status])
+  @@index([positionId])
 }
 
 model Session {
@@ -129,6 +162,107 @@ model PushSubscription {
   @@index([userId, revokedAt])
 }
 
+// FCM device registry (spec §6 "notification_devices"). One row per Firebase
+// Installation/registration token — a browser/PWA install may register once and
+// refresh its token in place (upsert by token). Multiple devices per user are
+// supported and expected. The token is a provider-generated opaque identifier
+// (NOT a secret); server credentials never touch this table.
+model PushDevice {
+  id               String    @id @default(cuid())
+  userId           String
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // FCM registration token — provider-unique key for this browser install.
+  token            String    @unique
+  // Firebase Installation ID (current Firebase-recommended device identifier).
+  installationId   String    @default("")
+  platform         String    @default("WEB") // WEB | ANDROID | IOS
+  deviceName       String?
+  browser          String?
+  operatingSystem  String?
+  appVersion       String?
+  // GRANTED | DENIED — permission state reported at registration time.
+  permissionStatus String    @default("GRANTED")
+  active           Boolean   @default(true)
+  // Login-session binding (logout policy §34): the last session that
+  // registered/refreshed this device. Cleared on self-unregister.
+  lastSessionId    String    @default("")
+  // Consecutive permanent/transient failure bookkeeping (worker prunes at >=5).
+  failureCount     Int       @default(0)
+  lastError        String    @default("")
+  lastSeenAt       DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([userId, active])
+  @@index([active, updatedAt])
+}
+
+// Push delivery log — the authoritative history for the push channel
+// (EmailLog pattern): QUEUED → SENDING → SENT / FAILED (retry w/ backoff)
+// → DEAD_LETTER, or SKIPPED when the channel cannot attempt delivery.
+// One row per recipient per business notification (fan-out counts inside).
+model PushLog {
+  id             String    @id @default(cuid())
+  status         String    @default("QUEUED")
+  // Idempotency: the in-app Notification id this push belongs to ("" for
+  // direct/admin/test sends). The enqueue path never creates a second QUEUED
+  // row for the same notificationId+user.
+  dedupeKey      String    @default("")
+  // DomainEvent id that produced this push ("" for direct/admin sends).
+  eventId        String    @default("")
+  userId         String
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  notificationId String    @default("") // in-app Notification id (soft reference, not an FK — "" for direct sends)
+  type           String    @default("INFO") // INFO | SUCCESS | WARNING | ERROR
+  title          String
+  body           String
+  resourceType   String    @default("")
+  resourceId     String    @default("")
+  // Server-computed application route (RBAC applied per module — §15).
+  route          String    @default("/dashboard")
+  priority       String    @default("NORMAL") // NORMAL | HIGH | CRITICAL
+  // Transport actually used: FCM | VAPID (legacy web-push fallback).
+  channel        String    @default("FCM")
+  deviceCount    Int       @default(0)
+  sentCount      Int       @default(0)
+  failedCount    Int       @default(0)
+  skippedCount   Int       @default(0)
+  attemptCount   Int       @default(0)
+  maxAttempts    Int       @default(3)
+  scheduledAt    DateTime  @default(now())
+  sentAt         DateTime?
+  lastError      String    @default("")
+  // Transient | Permanent | Unconfigured | ChannelDisabled | Throttled
+  errorCode      String    @default("")
+  // First FCM message id on partial success (per-message ids are per token).
+  fcmMessageId   String    @default("")
+  // Admin/test targeting: restrict delivery to ONE device id ("" = all of the
+  // user's active devices).
+  targetDeviceId String    @default("")
+  // Admin test sends are always clearly marked.
+  isTest         Boolean   @default(false)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([status, scheduledAt])
+  @@index([userId, createdAt])
+  @@index([dedupeKey])
+  @@index([channel, status, createdAt])
+}
+
+// Per-user notification preferences (spec §19). One row per user; `channels`
+// is a JSON map category → { push: boolean } (absent category = default on).
+// Categories mirror the business domains (COMPLAINTS, WORK_ORDERS, PM,
+// INVOICES, QUOTATIONS, PAYMENTS, EQUIPMENT, IRMS, HR, SYSTEM_ALERTS).
+// In-app/Email/WhatsApp remain governed by the existing business rules and
+// automation toggles — preferences only gate the user-facing push channel.
+model NotificationPreference {
+  userId    String   @id
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channels  String   @default("{}")
+  updatedAt DateTime @updatedAt
+}
+
 model TechnicianProfile {
   id              String  @id @default(cuid())
   userId          String  @unique
@@ -188,7 +322,29 @@ model Department {
   name        String @unique
   description String @default("")
 
+  employees   Employee[]
+  jobPositions JobPosition[]
+}
+
+// ── Position catalog (HR master data, spec §9/§24) ──
+// Managed job titles, SEPARATE from application roles: a position describes
+// WHAT a person's job is ("Finance Director"), a role describes what they may
+// DO in the application (ADMIN). Positions are deactivated — never deleted —
+// so historical employee records stay valid.
+model JobPosition {
+  id           String      @id @default(cuid())
+  name         String      @unique
+  departmentId String?
+  department   Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  description  String      @default("")
+  status       String      @default("ACTIVE") // ACTIVE | INACTIVE
+  createdBy    String?
+  updatedBy    String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
   employees Employee[]
+  users     User[]
 }
 
 model Employee {
@@ -200,7 +356,13 @@ model Employee {
   lastName     String
   departmentId String?
   department   Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  // Free-text job title kept for display/history (letters, attendance,
+  // profile). The managed source is positionRef (catalog FK) — the string is
+  // snapshotted from the catalog name on every catalog-linked write so
+  // legacy readers stay untouched.
   position     String      @default("")
+  positionId   String?
+  positionRef  JobPosition? @relation(fields: [positionId], references: [id], onDelete: SetNull)
   email        String      @default("")
   phone        String      @default("")
   address      String      @default("")
@@ -211,9 +373,14 @@ model Employee {
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 
-  leaveRequests LeaveRequest[]
-  letters       Letter[]
-  attendance    Attendance[]
+  leaveRequests     LeaveRequest[]
+  letters           Letter[]
+  attendance        Attendance[]
+  // Payroll (spec: PAYROLL SYSTEM UNDER HR) — money is Int cents (house convention)
+  salaryStructures  SalaryStructure[]
+  payrollItems      PayrollItem[]
+  payrollAdjustments PayrollAdjustment[]
+  overtimeRequests  OvertimeRequest[]
 }
 
 model Attendance {
@@ -247,6 +414,226 @@ model LeaveRequest {
   createdAt    DateTime  @default(now())
 
   @@index([status])
+}
+
+// ─────────────────────────── PAYROLL (UNDER HR) ───────────────────────────
+// PAYROLL SYSTEM (spec §58 — smallest clean model, reuses canonical Employee).
+// All money is stored as Int cents (BND). ROLE / POSITION / SALARY stay
+// separate axes: role = User.role (RBAC), position = Employee.positionRef
+// (job title snapshot on items), salary = the structures below.
+
+// Configurable salary components catalog (spec §6). Engine-managed "system"
+// components (BASIC / OVERTIME / UNPAID_LEAVE) cannot be deleted.
+model SalaryComponent {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  type        String   @default("EARNING")  // EARNING | DEDUCTION
+  category    String   @default("ALLOWANCE") // BASIC | ALLOWANCE | OVERTIME | BONUS | COMMISSION | REIMBURSEMENT | STATUTORY | UNPAID_LEAVE | ABSENCE | LOAN | OTHER
+  description String   @default("")
+  taxable     Boolean  @default(false)
+  system      Boolean  @default(false)      // engine-managed — hidden from delete
+  active      Boolean  @default(true)
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  structures SalaryStructure[]
+}
+
+// Effective-dated employee salary structure (spec §6/§7 — salary history with
+// effective dates; history rows are never overwritten, only ended).
+model SalaryStructure {
+  id            String    @id @default(cuid())
+  employeeId    String
+  employee      Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  componentId   String
+  component     SalaryComponent @relation(fields: [componentId], references: [id])
+  amountCents   Int       @default(0)   // fixed monthly amount
+  percentBps    Int?      // optional % of basic (basis points, 500 = 5%)
+  effectiveFrom DateTime
+  effectiveTo   DateTime? // null = current
+  note          String    @default("")
+  createdById   String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([employeeId, effectiveFrom])
+  @@index([componentId])
+}
+
+// A payroll run for one period (spec §8/§9). periodKey unique → duplicate
+// prevention (§55). Status machine: DRAFT → CALCULATING → REVIEW → APPROVED →
+// FINALIZED → PAID → LOCKED (+ FAILED, CANCELLED).
+model PayrollRun {
+  id                String    @id @default(cuid())
+  code              String    @unique // PRR-YYYY-NNNN via Counter
+  periodKey         String    @unique // "2026-09" — one run per period
+  name              String
+  periodStart       DateTime
+  periodEnd         DateTime
+  frequency         String    @default("MONTHLY")
+  status            String    @default("DRAFT") // DRAFT | CALCULATING | REVIEW | APPROVED | FINALIZED | PAID | LOCKED | FAILED | CANCELLED
+  employeeCount     Int       @default(0)
+  grossCents        Int       @default(0)
+  deductionsCents   Int       @default(0)
+  employerCostCents Int       @default(0)
+  netCents          Int       @default(0)
+  exceptionCount    Int       @default(0)
+  payDate           DateTime?
+  paymentRef        String    @default("")
+  errorNote         String    @default("") // safe failure reason (§63)
+  configJson        String    @default("") // engine config snapshot used (§46)
+  createdById       String?
+  submittedById     String?
+  submittedAt       DateTime?
+  approvedById      String?
+  approvedAt        DateTime?
+  finalizedById     String?
+  finalizedAt       DateTime?
+  paidById          String?
+  paidAt            DateTime?
+  lockedById        String?
+  lockedAt          DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  creator   User? @relation("PayrollRunCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  submitter User? @relation("PayrollRunSubmitter", fields: [submittedById], references: [id], onDelete: SetNull)
+  approver  User? @relation("PayrollRunApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  finalizer User? @relation("PayrollRunFinalizer", fields: [finalizedById], references: [id], onDelete: SetNull)
+  payer     User? @relation("PayrollRunPayer", fields: [paidById], references: [id], onDelete: SetNull)
+  lockUser  User? @relation("PayrollRunLocker", fields: [lockedById], references: [id], onDelete: SetNull)
+
+  items       PayrollItem[]
+  adjustments PayrollAdjustment[]
+
+  @@index([status])
+}
+
+// Per-employee payroll calculation snapshot (spec §34/§46/§48 — fully
+// traceable lines; immutable once the run is FINALIZED).
+model PayrollItem {
+  id                         String    @id @default(cuid())
+  runId                      String
+  run                        PayrollRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  employeeId                 String
+  employee                   Employee  @relation(fields: [employeeId], references: [id])
+  // snapshots (§46 — do not recalculate history with today's config)
+  employeeNo                 String    @default("")
+  employeeName               String    @default("")
+  departmentName             String    @default("")
+  positionName               String    @default("") // POSITION snapshot — never the RBAC role (§33)
+  status                     String    @default("CALCULATED") // CALCULATED | EXCLUDED
+  excludedReason             String    @default("")
+  // attendance / leave inputs actually used
+  workingDays                Int       @default(0)
+  workedDays                 Int       @default(0)
+  paidLeaveDays              Int       @default(0)
+  unpaidLeaveDays            Int       @default(0)
+  absentDays                 Int       @default(0)
+  otMinutes                  Int       @default(0)
+  // money (Int cents)
+  basicCents                 Int       @default(0)
+  allowancesCents            Int       @default(0)
+  overtimeCents              Int       @default(0)
+  bonusCents                 Int       @default(0)
+  adjustmentsEarningsCents   Int       @default(0)
+  grossCents                 Int       @default(0)
+  statutoryCents             Int       @default(0) // employee statutory subtotal
+  otherDeductionsCents       Int       @default(0)
+  adjustmentsDeductionsCents Int       @default(0)
+  deductionsCents            Int       @default(0)
+  netCents                   Int       @default(0)
+  employerCostCents          Int       @default(0)
+  linesJson                  String    @default("[]") // traceable component lines (§48)
+  // variance review (§44)
+  varianceBps                Int?      // net change vs previous run (basis points)
+  exceptionFlags             String    @default("") // JSON array of flag codes
+  // stored payslip (§36 — PDF in MinIO, metadata here)
+  payslipObjectKey           String?
+  payslipSizeBytes           Int?
+  payslipGeneratedAt         DateTime?
+  createdAt                  DateTime  @default(now())
+  updatedAt                  DateTime  @updatedAt
+
+  @@unique([runId, employeeId]) // idempotency (§55)
+  @@index([employeeId])
+}
+
+// Authorized payroll adjustment (spec §24) — never edit finalized values
+// directly; adjustments are approved then included by recalculation.
+model PayrollAdjustment {
+  id           String    @id @default(cuid())
+  runId        String
+  run          PayrollRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  employeeId   String
+  employee     Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  direction    String    @default("EARNING") // EARNING | DEDUCTION
+  category     String    @default("CORRECTION") // ARREAR | CORRECTION | RETROACTIVE | BONUS | REIMBURSEMENT | OTHER
+  amountCents  Int
+  reason       String
+  status       String    @default("PENDING") // PENDING | APPROVED | REJECTED | APPLIED
+  appliedAt    DateTime?
+  createdById  String?
+  approvedById String?
+  approvedAt   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([runId])
+  @@index([employeeId])
+}
+
+// Configurable + versioned statutory rules (spec §18/§19 — no hard-coded legal
+// rates; EMPLOYEE rows deduct from net, EMPLOYER rows are cost-only).
+model StatutoryRule {
+  id               String    @id @default(cuid())
+  name             String
+  jurisdiction     String    @default("BN")
+  category         String    @default("SOCIAL") // SOCIAL | TAX | OTHER
+  payer            String    @default("EMPLOYEE") // EMPLOYEE (deducted) | EMPLOYER (employer cost)
+  employeeCategory String    @default("ALL") // ALL | CITIZEN_PR | FOREIGN
+  calcType         String    @default("PERCENTAGE") // PERCENTAGE | FIXED
+  rateBps          Int       @default(0)  // 500 = 5.00%
+  amountCents      Int       @default(0)  // for FIXED
+  appliesTo        String    @default("GROSS") // GROSS | BASIC
+  thresholdCents   Int       @default(0)  // base below this → not applicable
+  effectiveFrom    DateTime
+  effectiveTo      DateTime? // null = no expiry (versioned by dated rows)
+  calcOrder        Int       @default(100)
+  active           Boolean   @default(true)
+  reference        String    @default("") // legal/company source reference
+  notes            String    @default("")
+  createdById      String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([active, effectiveFrom])
+}
+
+// Overtime request with the existing HR approval pattern (spec §15 — only
+// APPROVED overtime enters payroll; amount snapshotted at approval).
+model OvertimeRequest {
+  id            String    @id @default(cuid())
+  employeeId    String
+  employee      Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  date          DateTime
+  minutes       Int       @default(0) // stored in minutes for exactness
+  multiplier    Float     @default(1.5)
+  reason        String    @default("")
+  status        String    @default("PENDING") // PENDING | APPROVED | REJECTED
+  amountCents   Int       @default(0) // computed at approval (rate snapshot)
+  rateBasisCents Int      @default(0) // hourly rate used at approval
+  approvedById  String?
+  approvedAt    DateTime?
+  createdById   String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  approver User? @relation("OvertimeApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([employeeId, date])
 }
 
 // ─────────────────────────── LOCATIONS / EQUIPMENT ───────────────────────────
@@ -1699,70 +2086,111 @@ model EmailLog {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// EMAIL CLIENT — professional per-user mailbox (Email module).
-// One MailMessage row per mailbox COPY (a sent mail has one row in the
-// sender's SENT/OUTBOX folder and one row per internal recipient's INBOX).
-// Outbound delivery state mirrors the authoritative EmailLog through
-// emailLogId (synced by the existing EmailService worker — no second queue).
-// Attachment bytes live in MinIO; this model stores references only.
+// EMAIL CLIENT (user-facing mailboxes)
+// The user-facing email client (module /email). SMTP delivery is delegated
+// to the ONE centralized EmailService: a client send creates a MailMessage
+// plus ONE EmailLog (relatedType="MAIL_MESSAGE") whose existing worker does
+// the real SMTP send, retries and honest status. Attachments live in MinIO
+// (mail-owned keys after send; user FileEntry keys while attached to a
+// draft); this section stores mailbox identity, messages, folders, flags,
+// drafts and attachment METADATA only — never binary blobs, never secrets.
 // ═══════════════════════════════════════════════════════════════════
 
-model MailMessage {
-  id           String    @id @default(cuid())
-  // Mailbox owner (User.id) — every query is scoped by this, backend-enforced.
-  ownerId      String
-  // INBOX | SENT | DRAFT | OUTBOX | ARCHIVE | SPAM | TRASH
-  folder       String    @default("INBOX")
-  // IN (received copy) | OUT (composed by the owner)
-  direction    String    @default("IN")
-  // Outbound delivery state: "" | QUEUED | SENDING | SENT | FAILED | CANCELED
-  status       String    @default("")
-  // Folder before a TRASH move — exact restore target.
-  originFolder String    @default("")
-  fromName     String    @default("")
-  fromEmail    String    @default("")
-  toEmail      String    @default("")
-  ccEmail      String    @default("")
-  bccEmail     String    @default("")
-  subject      String    @default("")
-  bodyHtml     String    @default("")
-  // First ~160 chars of plain text for fast list rendering.
-  excerpt      String    @default("")
-  readAt       DateTime?
-  starredAt    DateTime?
-  // Conversation threading (replies/forwards share the thread id).
-  threadId     String    @default("")
-  inReplyToId  String    @default("")
-  // Authoritative outbound delivery record (EmailLog). "" for internal-only
-  // deliveries and received mail.
-  emailLogId   String    @default("")
-  sentAt       DateTime?
-  failedReason String    @default("")
-  // JSON [{id,key,filename,size,contentType}] — MinIO references ONLY.
-  attachmentRefs String  @default("[]")
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+model Mailbox {
+  id          String   @id @default(cuid())
+  // The full mailbox address (e.g. info@mohdhms.com) — unique, server-validated.
+  email       String   @unique
+  displayName String   @default("")
+  description String   @default("")
+  // PERSONAL — owned by exactly one user · SHARED — team mailbox with members.
+  kind        String   @default("PERSONAL")
+  ownerUserId String?
+  owner       User?    @relation("MailboxOwner", fields: [ownerUserId], references: [id], onDelete: Cascade)
+  // Inactive mailboxes are hidden from every member and cannot send.
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-  @@index([ownerId, folder, updatedAt])
-  @@index([ownerId, starredAt])
-  @@index([threadId])
-  @@index([emailLogId])
+  members  MailboxMember[]
+  messages MailMessage[]
+
+  @@index([ownerUserId])
 }
 
-// Shared contact group (distribution list) for the compose UI. Org-wide,
-// managed by staff — members are stored as display references, never keys.
-model MailContactGroup {
+model MailboxMember {
   id        String   @id @default(cuid())
-  name      String
-  // Tailwind-ish tone token for the sidebar chip ("emerald", "amber", …).
-  color     String   @default("")
-  // JSON [{name,email}] — validated server-side on every write.
-  members   String   @default("[]")
-  createdBy String   @default("")
+  mailboxId String
+  mailbox   Mailbox  @relation(fields: [mailboxId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation("MailboxMemberships", fields: [userId], references: [id], onDelete: Cascade)
+  // Members always read; canSend governs composing/sending FROM the mailbox
+  // (sender identity §45 — never a browser-supplied arbitrary address).
+  canSend   Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@unique([mailboxId, userId])
+  @@index([userId])
+}
+
+model MailMessage {
+  id        String   @id @default(cuid())
+  mailboxId String
+  mailbox   Mailbox  @relation(fields: [mailboxId], references: [id], onDelete: Cascade)
+  // INBOX | SENT | DRAFTS | OUTBOX | ARCHIVE | SPAM | TRASH
+  folder    String   @default("INBOX")
+  // DRAFT | QUEUED | SENDING | SENT | FAILED
+  status    String   @default("DRAFT")
+  // OUT — composed by a mailbox member · IN — received (inbound retrieval is
+  // NOT yet supported by the mail architecture; no fake inbox is created).
+  direction String   @default("OUT")
+  // Conversation grouping: the thread ROOT message id (replies inherit it).
+  threadId  String   @default("")
+  subject   String   @default("")
+  fromName  String   @default("")
+  fromEmail String   @default("")
+  toEmail   String   @default("") // comma-separated list
+  ccEmail   String   @default("")
+  // BCC is stored only on the SENDER's own message and never shown to anyone else.
+  bccEmail  String   @default("")
+  bodyHtml  String   @default("")
+  bodyText  String   @default("")
+  readAt    DateTime?
+  starredAt DateTime?
+  important Boolean  @default(false)
+  // Authoritative delivery linkage → EmailLog(relatedType="MAIL_MESSAGE").
+  // Status is mirrored by the EmailService worker (single source of truth:
+  // EmailLog; this is the user-facing projection).
+  sentAt    DateTime?
+  lastError String   @default("")
+  // SMTP Message-ID once the server accepted the message (§54 evidence).
+  messageId String   @default("")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([name])
+  attachments MailAttachment[]
+
+  @@index([mailboxId, folder, createdAt])
+  @@index([mailboxId, folder, readAt])
+  @@index([threadId])
+  @@index([mailboxId, starredAt])
+}
+
+model MailAttachment {
+  id          String      @id @default(cuid())
+  messageId   String
+  message     MailMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  filename    String
+  contentType String      @default("application/octet-stream")
+  sizeBytes   Int         @default(0)
+  // MinIO object key — the user's FileEntry key while attached to a draft;
+  // copied to a mail-owned key (mail/messages/{id}/…) when the email is sent,
+  // so the sent message stays immutable even if the source file changes.
+  objectKey   String
+  // FileEntry id when the attachment is (or came from) the user's Files.
+  fileId      String      @default("")
+  createdAt   DateTime    @default(now())
+
+  @@index([messageId])
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1988,4 +2416,141 @@ model WhatsAppWebhookEvent {
 
   @@index([event, receivedAt])
   @@index([status])
+}
+
+// ── Files module (§3–§23) — centralized private file management ─────────────
+// MinIO (S3) stores file content under server-generated keys; PostgreSQL
+// (SQLite in dev) stores metadata. Buckets stay private — every download is
+// served through authorized API routes (no presigned URLs, no public objects).
+
+model FileFolder {
+  id          String       @id @default(cuid())
+  ownerId     String
+  owner       User         @relation("FileFolders", fields: [ownerId], references: [id], onDelete: Cascade)
+  parentId    String?
+  parent      FileFolder?  @relation("FileFolderTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children    FileFolder[] @relation("FileFolderTree")
+  name        String
+  // Trash (soft deletion §17) — batch timestamp lets a folder restore exactly
+  // the descendants trashed together with it (not items deleted separately).
+  trashedAt   DateTime?
+  trashedById String?
+  trashedBy   User?        @relation("FileFoldersTrashed", fields: [trashedById], references: [id], onDelete: SetNull)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  files       FileEntry[]
+
+  @@index([ownerId, parentId])
+  @@index([trashedAt])
+}
+
+model FileEntry {
+  id             String        @id @default(cuid())
+  ownerId        String
+  owner          User          @relation("FileEntries", fields: [ownerId], references: [id], onDelete: Cascade)
+  folderId       String?
+  folder         FileFolder?   @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  name           String
+  mimeType       String
+  sizeBytes      Int
+  checksum       String        @default("") // sha256 hex of the CURRENT version (server-computed)
+  objectKey      String        // MinIO key of the CURRENT version (server-generated)
+  currentVersion Int           @default(1)
+  // Trash (§17) — originalFolderId survives a trash/restore cycle.
+  trashedAt      DateTime?
+  trashedById    String?
+  trashedBy      User?         @relation("FileEntriesTrashed", fields: [trashedById], references: [id], onDelete: SetNull)
+  originalFolderId String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  versions       FileVersion[]
+
+  @@index([ownerId, folderId])
+  @@index([ownerId, trashedAt])
+  @@index([name])
+}
+
+model FileVersion {
+  id           String    @id @default(cuid())
+  fileId       String
+  file         FileEntry @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  version      Int
+  objectKey    String
+  sizeBytes    Int
+  mimeType     String
+  checksum     String
+  uploadedById String?
+  uploadedBy   User?     @relation("FileVersions", fields: [uploadedById], references: [id], onDelete: SetNull)
+  note         String    @default("")
+  createdAt    DateTime  @default(now())
+
+  @@unique([fileId, version])
+  @@index([fileId])
+}
+
+// §13 — object-level grants. EDIT ⊇ DOWNLOAD ⊇ VIEW; MANAGE ⊇ EDIT.
+// Folder grants apply to the folder tree (inherited permissions §13/§15);
+// file grants are direct (§13). Revocation is immediate (no cached access).
+model FileShare {
+  id          String    @id @default(cuid())
+  targetType  String // FILE | FOLDER
+  targetId    String
+  sharedById  String
+  sharedBy    User      @relation("FileSharesGiven", fields: [sharedById], references: [id], onDelete: Cascade)
+  sharedWithId String
+  sharedWith  User      @relation("FileSharesReceived", fields: [sharedWithId], references: [id], onDelete: Cascade)
+  // VIEW | DOWNLOAD | EDIT | MANAGE
+  permission  String    @default("VIEW")
+  expiresAt   DateTime?
+  revokedAt   DateTime?
+  revokedById String?
+  createdAt   DateTime  @default(now())
+
+  // Polymorphic target — targetId references FileEntry or FileFolder by
+  // targetType. Prisma has no polymorphic FKs, so integrity is enforced in
+  // the service layer (existence checks inside transactions + cascade in code).
+
+  @@unique([targetType, targetId, sharedWithId])
+  @@index([sharedWithId, targetType])
+  @@index([targetId])
+}
+
+// §23 — per-user favorites for files AND folders.
+model FileStar {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation("FileStars", fields: [userId], references: [id], onDelete: Cascade)
+  targetType String // FILE | FOLDER
+  targetId   String
+  createdAt  DateTime @default(now())
+
+  @@unique([userId, targetType, targetId])
+  @@index([userId])
+}
+
+// §8/§11 — chunked/resumable upload sessions. Chunks are staged as MinIO
+// objects under uploads-tmp/{sessionId}/{index}; complete = assemble + verify
+// checksum + move to the permanent key, all server-side.
+model FileUploadSession {
+  id           String    @id @default(cuid())
+  userId       String
+  user         User      @relation("FileUploadSessions", fields: [userId], references: [id], onDelete: Cascade)
+  name         String
+  mimeType     String    @default("")
+  sizeBytes    Int
+  totalChunks  Int
+  receivedChunks String  @default("") // comma-separated indexes of stored chunks
+  receivedBytes Int      @default(0)
+  // PENDING | COMPLETED | ABORTED
+  status       String    @default("PENDING")
+  folderId     String?
+  checksum     String    @default("")
+  fileId       String?   // set on completion (resulting FileEntry)
+  error        String    @default("")
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([userId, status])
 }

@@ -1,15 +1,30 @@
 "use client";
 
-// MOHD.HMS ENTERPRISE — Email module page (/email).
+// MOHD.HMS ENTERPRISE — Email module router (/email) — the USER-FACING
+// email client (spec §6/§7). This module is for reading, writing, organizing
+// and searching mail ONLY; infrastructure configuration lives in the separate
+// Email Configuration module (/email-config) and is never reachable from here.
 //
-// The professional EMAIL CLIENT for every staff role: inbox, compose, drafts,
-// outbox, archive, starred, spam, trash, search and contact groups — powered
-// by the ONE centralized EmailService (external delivery) plus real internal
-// mailbox delivery. SMTP/templates/automations/logs ADMINISTRATION lives
-// exclusively in Settings → Email; this module contains no configuration.
+// NAVIGATION ARCHITECTURE (existing hash router — ui-store pages["email"]):
+//   []                    → client main (folders + list + reading pane)
+//   ["f", folder]         → open a specific folder (inbox/sent/drafts/…)
+//   ["m", messageId]      → dedicated message detail (deep links, mobile)
+//   ["compose"]           → dedicated Compose page (§11 — never a tiny popup)
+//       ?draft=<id>                   resume a draft (§10)
+//       ?reply=<id> | ?replyAll=<id>  reply / reply-all prefill (§16/§17)
+//       ?forward=<id>                 forward prefill + attachments (§18)
 
-import { EmailClient } from "./email-client";
+import { useUi } from "@/lib/hms/ui-store";
+import { MailClient } from "./client-main";
+import { ComposePage } from "./compose";
+import { MessageDetailPage } from "./message-detail";
 
-export function EmailModule() {
-  return <EmailClient />;
+export function MailClientModule() {
+  const seg = useUi((s) => s.pages["email"]) ?? [];
+  const [head, second] = seg;
+
+  if (head === "compose") return <ComposePage />;
+  if (head === "m" && second) return <MessageDetailPage messageId={second} />;
+  if (head === "f" && second) return <MailClient initialFolder={second.toUpperCase()} />;
+  return <MailClient />;
 }

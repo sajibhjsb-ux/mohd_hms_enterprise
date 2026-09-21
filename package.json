@@ -55,6 +55,8 @@
     "cookie": "^2.0.1",
     "date-fns": "^4.1.0",
     "embla-carousel-react": "^8.6.0",
+    "firebase": "^12.19.0",
+    "firebase-admin": "^14.4.0",
     "framer-motion": "^12.23.2",
     "input-otp": "^1.4.2",
     "jsqr": "^1.4.0",

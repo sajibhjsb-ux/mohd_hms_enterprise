@@ -18,7 +18,14 @@ const TECH_SELECT = {
   specialty: true,
   hourlyRateCents: true,
   status: true,
-  user: { select: { id: true, name: true, email: true, phone: true, status: true } },
+  user: {
+    select: {
+      id: true, name: true, email: true, phone: true, status: true,
+      // Job position (role/position spec §18) — display/specialization only;
+      // authorization stays with User.role.
+      position: { select: { id: true, name: true } },
+    },
+  },
   _count: {
     select: {
       workOrders: { where: { status: { in: ["PENDING", "ACCEPTED", "IN_PROGRESS", "ON_HOLD"] } } },

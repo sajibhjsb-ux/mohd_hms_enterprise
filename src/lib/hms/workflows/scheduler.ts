@@ -21,6 +21,7 @@ import { bootstrapEmailSystem } from "@/lib/hms/email/bootstrap";
 import { tickEmailWorker } from "@/lib/hms/email/service";
 import { bootstrapWhatsAppSystem } from "@/lib/hms/whatsapp/bootstrap";
 import { tickWhatsAppWorker } from "@/lib/hms/whatsapp/service";
+import { tickPushWorker } from "@/lib/hms/push/worker";
 
 const g = globalThis as unknown as { __hmsSchedulerBooted?: boolean; __hmsSchedulerScanRunning?: boolean };
 
@@ -238,6 +239,10 @@ export function startScheduler(): void {
   // (OpenWA gateway transport). Same scheduler, same cadence.
   setTimeout(() => { void tickWhatsAppWorker(); }, 9_000);
   setInterval(() => { void tickWhatsAppWorker(); }, 10_000);
+  // Push worker — the ONE delivery loop for queued push notifications
+  // (FCM + legacy VAPID transports). Same scheduler, same cadence.
+  setTimeout(() => { void tickPushWorker(); }, 11_000);
+  setInterval(() => { void tickPushWorker(); }, 10_000);
   // Realtime dispatch safety net (STEP 7/22): pushes committed outbox events to
   // the realtime service. emit() also kicks this directly for low latency.
   setInterval(() => { void dispatchPendingEvents(); }, 2_000);

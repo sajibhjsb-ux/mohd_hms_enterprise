@@ -18,8 +18,8 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { AutomationTab } from "./automation-tab";
-import { EmailTab } from "./email-tab";
 import { LegalTab } from "./legal-tab";
+import { NotificationsTab } from "./notifications-tab";
 import { WhatsAppTab } from "./whatsapp-tab";
 
 // Keep in sync with package.json version.
@@ -53,10 +53,10 @@ export function SettingsModule() {
   const { toast } = useToast();
 
   const canManage = hasPerm(user, PERMISSIONS.settings_manage);
-  // Email admin area (§30) — only visible to roles holding the email view permission.
-  const canViewEmail = hasPerm(user, PERMISSIONS.email_view);
   // WhatsApp admin area (§8) — only visible to roles holding the WhatsApp view permission.
   const canViewWhatsApp = hasPerm(user, PERMISSIONS.whatsapp_view);
+  // Push notification center (spec §30) — push.view permission (ADMIN roles).
+  const canViewPush = hasPerm(user, PERMISSIONS.push_view);
 
   const [values, setValues] = useState<Record<string, string>>({});
   const [saved, setSaved] = useState<Record<string, string>>({});
@@ -152,8 +152,8 @@ export function SettingsModule() {
           <TabsTrigger value="company">Company</TabsTrigger>
           <TabsTrigger value="localization">Localization</TabsTrigger>
           <TabsTrigger value="automation">Automation</TabsTrigger>
-          {canViewEmail ? <TabsTrigger value="email">Email</TabsTrigger> : null}
           {canViewWhatsApp ? <TabsTrigger value="whatsapp">WhatsApp</TabsTrigger> : null}
+          {canViewPush ? <TabsTrigger value="notifications">Notifications</TabsTrigger> : null}
           <TabsTrigger value="legal">Legal</TabsTrigger>
           <TabsTrigger value="system">System</TabsTrigger>
         </TabsList>
@@ -256,17 +256,21 @@ export function SettingsModule() {
           <AutomationTab />
         </TabsContent>
 
-        {/* ── Email (§30 — centralized EmailService administration) ── */}
-        {canViewEmail ? (
-          <TabsContent value="email">
-            <EmailTab />
-          </TabsContent>
-        ) : null}
+        {/* Email administration is NOT part of Settings — it lives in the
+            dedicated Email Configuration module (/email, registry key "email").
+            One email configuration UI, managed only from that module. */}
 
         {/* ── WhatsApp (§8 — centralized WhatsApp/OpenWA administration) ── */}
         {canViewWhatsApp ? (
           <TabsContent value="whatsapp">
             <WhatsAppTab />
+          </TabsContent>
+        ) : null}
+
+        {/* ── Push notification center (spec §30/§31 — ADMIN roles) ── */}
+        {canViewPush ? (
+          <TabsContent value="notifications">
+            <NotificationsTab />
           </TabsContent>
         ) : null}
 

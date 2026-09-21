@@ -44,21 +44,19 @@ export async function resolveAttachments(specs: AttachmentSpec[], ctx: { resourc
 }
 
 async function resolveOne(spec: AttachmentSpec, ctx: { resourceType: string; resourceId: string }): Promise<ResolvedAttachment | null> {
-  // ── Email client attachments: validated MinIO refs under mail/{userId}/ ──
-  // The key is generated SERVER-SIDE at upload time and can only enter a
-  // message through the send endpoint, which re-verifies the uploader prefix.
-  if (spec.kind === "MAIL_FILE") {
-    const mailSpec = spec as import("./types").MailFileSpec;
-    const key = typeof mailSpec.key === "string" ? mailSpec.key : "";
-    if (!key.startsWith("mail/") || key.includes("..")) return null;
-    const obj = await storage.get(key);
+  // ── User-composed mail attachments (Email client) — the key was stored
+  // server-side at queue time after authorization (MailAttachment rows);
+  // bytes are streamed straight from MinIO (never a browser-supplied key).
+  if (spec.kind === "MAIL_OBJECT") {
+    if (!spec.key) return null;
+    const obj = await storage.get(spec.key);
     if (!obj) return null;
     return {
       kind: spec.kind,
-      filename: mailSpec.filename || "attachment",
+      filename: spec.filename || "attachment",
       buffer: obj.buffer,
-      contentType: mailSpec.contentType || obj.contentType,
-      ref: `mail:${key}`,
+      contentType: spec.contentType || obj.contentType,
+      ref: `mail-object:${spec.key}`,
     };
   }
 

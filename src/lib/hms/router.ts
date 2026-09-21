@@ -136,4 +136,11 @@ export const RESOURCE_ROUTES: Record<string, { module: string; seg: (id: string)
   PURCHASE_ORDER: { module: "purchases", seg: (id) => [id] },
   INVENTORY_ITEM: { module: "inventory", seg: (id) => [id] },
   INSPECTION_REPORT: { module: "irms", seg: (id) => ["reports", id] },
+  // Files module — notification deep links (§27: clicks open the relevant
+  // file/folder page). FOLDER routes into the owner's browser; share
+  // notifications carry the same resource types (target resolved on arrival).
+  FILE: { module: "files", seg: (id) => ["file", id] },
+  FILE_FOLDER: { module: "files", seg: (id) => ["my", id] },
+  // Email client — delivery-failure notifications deep-link into the message.
+  MAIL_MESSAGE: { module: "email", seg: (id) => ["m", id] },
 };

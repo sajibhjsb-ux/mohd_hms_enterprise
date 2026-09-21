@@ -1,9 +1,10 @@
 "use client";
 
-// MOHD.HMS ENTERPRISE — Email administration (Settings → Email).
-// Container tab: Overview (health, SMTP status, test tools, configuration),
-// plus Templates / Automations / Logs panels gated by their own permissions.
-// Lives inside the existing Settings module — no separate application.
+// MOHD.HMS ENTERPRISE — Email administration (Email Configuration module).
+// Canonical location for ALL email configuration: Overview (health, SMTP
+// status, test tools, configuration), plus Templates / Automations / Logs
+// panels gated by their own permissions. Owned by the dedicated Email
+// Configuration module — the general Settings page has no email controls.
 
 import { useCallback, useEffect, useState } from "react";
 import { Activity, Building2, KeyRound, Mail, Plug, RefreshCw, Save, Send } from "lucide-react";
@@ -22,6 +23,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EmailAutomations } from "./email-automations";
 import { EmailLogs } from "./email-logs";
 import { EmailTemplates } from "./email-templates";
+import { MailboxesAdmin } from "./email-mailboxes";
 
 type EmailHealth = {
   sentToday: number;
@@ -111,6 +113,7 @@ export function EmailTab() {
       </div>
       <TabsList className="mb-4 flex-wrap">
         <TabsTrigger value="overview">Overview</TabsTrigger>
+        {canConfig ? <TabsTrigger value="mailboxes">Mailboxes</TabsTrigger> : null}
         {canTemplates ? <TabsTrigger value="templates">Templates</TabsTrigger> : null}
         {canAutomations ? <TabsTrigger value="automations">Automations</TabsTrigger> : null}
         {canView ? <TabsTrigger value="logs">Logs</TabsTrigger> : null}
@@ -119,6 +122,11 @@ export function EmailTab() {
       <TabsContent value="overview">
         <OverviewPanel />
       </TabsContent>
+      {canConfig ? (
+        <TabsContent value="mailboxes">
+          <MailboxesAdmin />
+        </TabsContent>
+      ) : null}
       {canTemplates ? (
         <TabsContent value="templates">
           <EmailTemplates />

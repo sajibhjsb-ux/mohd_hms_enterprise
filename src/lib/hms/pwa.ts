@@ -296,39 +296,41 @@ export type PushStatus = {
   publicKey?: string;
   subscribed: boolean;         // this browser has an active subscription
   permission: NotificationPermission | "unsupported";
+  /** FCM block — configured=true when Firebase is ready (client config included). */
+  fcm: { configured: boolean; projectId?: string; clientConfig?: import("@/lib/hms/push-client").FcmClientConfig };
+  /** Active FCM devices registered for this user (all browsers). */
+  devices: number;
 };
 
 export async function fetchPushStatus(): Promise<PushStatus> {
-  const permission: NotificationPermission | "unsupported" =
-    typeof Notification === "undefined" ? "unsupported" : Notification.permission;
-  let endpoint: string | undefined;
-  try {
-    if ("serviceWorker" in navigator) {
-      const reg = store.registration ?? (await navigator.serviceWorker.ready);
-      endpoint = (await reg.pushManager.getSubscription())?.endpoint;
-    }
-  } catch { /* SW not ready */ }
-  try {
-    const { api } = await import("@/lib/hms/api-client");
-    const res = await api.get<{ enabled: boolean; publicKey?: string; subscribed: boolean }>(
-      "/api/v1/push/status" + (endpoint ? `?endpoint=${encodeURIComponent(endpoint)}` : "")
-    );
-    return { pushEnabled: res.data.enabled, publicKey: res.data.publicKey, subscribed: res.data.subscribed, permission };
-  } catch {
-    return { pushEnabled: false, subscribed: false, permission };
-  }
+  const { fetchExtendedPushStatus } = await import("@/lib/hms/push-client");
+  return fetchExtendedPushStatus();
 }
 
-/** Ask the user, subscribe this browser, and register the device server-side. */
-export async function enablePush(): Promise<{ ok: boolean; error?: string }> {
+/**
+ * Ask the user, then register this browser on the best available transport:
+ * FCM (Firebase) when the server provides client config, else legacy VAPID
+ * web-push. ONE permission prompt, ONE registration flow (spec §3/§18).
+ */
+export async function enablePush(): Promise<{ ok: boolean; error?: string; transport?: "FCM" | "VAPID" }> {
   try {
     if (typeof Notification === "undefined") return { ok: false, error: "This browser does not support notifications." };
     const permission = await Notification.requestPermission();
     if (permission !== "granted") return { ok: false, error: "Notification permission was not granted." };
 
     const status = await fetchPushStatus();
-    if (!status.pushEnabled || !status.publicKey) return { ok: false, error: "Push is not configured on the server yet." };
     if (!("serviceWorker" in navigator)) return { ok: false, error: "Service worker is not available." };
+
+    // Preferred transport: Firebase Cloud Messaging (spec §2).
+    if (status.fcm.configured && status.fcm.clientConfig) {
+      const { enableFcm } = await import("@/lib/hms/push-client");
+      const res = await enableFcm(status.fcm.clientConfig);
+      if (res.ok) return { ok: true, transport: "FCM" };
+      return res;
+    }
+
+    // Fallback transport: legacy VAPID web-push (unchanged behavior).
+    if (!status.pushEnabled || !status.publicKey) return { ok: false, error: "Push is not configured on the server yet." };
 
     const registration = store.registration ?? (await navigator.serviceWorker.ready);
     const existing = await registration.pushManager.getSubscription();
@@ -351,15 +353,21 @@ export async function enablePush(): Promise<{ ok: boolean; error?: string }> {
         (/Android/i.test(navigator.userAgent) ? "Android" : /iPhone|iPad/i.test(navigator.userAgent) ? "iOS" : undefined),
       browser: /Edg\//.test(navigator.userAgent) ? "Edge" : /Chrome\//.test(navigator.userAgent) ? "Chrome" : /Firefox\//.test(navigator.userAgent) ? "Firefox" : /Safari\//.test(navigator.userAgent) ? "Safari" : undefined,
     });
-    return { ok: true };
+    return { ok: true, transport: "VAPID" };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : "Could not enable notifications." };
   }
 }
 
-/** Remove this browser's subscription locally and on the server. */
+/** Remove this browser's registration locally and on the server (both transports). */
 export async function disablePush(): Promise<void> {
   try {
+    // FCM path — delete token + unregister the device row.
+    const { disableFcm } = await import("@/lib/hms/push-client");
+    await disableFcm();
+  } catch { /* best-effort */ }
+  try {
+    // Legacy VAPID path — unsubscribe + revoke server-side.
     if ("serviceWorker" in navigator) {
       const registration = store.registration ?? (await navigator.serviceWorker.ready);
       const sub = await registration.pushManager.getSubscription();

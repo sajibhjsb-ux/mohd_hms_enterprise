@@ -26,6 +26,7 @@
 import { Suspense, useEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "../session";
+import { markWelcomePending } from "@/lib/hms/welcome";
 import { AuthShell } from "./auth-ui";
 import { AuthWelcomeScreen } from "./welcome-screen";
 import { AuthLoginScreen } from "./login-screen";
@@ -155,6 +156,10 @@ function AuthFlow() {
    *  context; the existing Gate then routes to the app (customers with an
    *  incomplete profile continue through the existing profile-completion flow). */
   async function onAuthenticated() {
+    // Real-login signal for the post-login welcome popup (spec §6/§8): this
+    // function is the single funnel of every in-app real login (password AND
+    // OTP-verified). Refresh/session restore never passes here.
+    markWelcomePending();
     // Session is open — any recovery context is now irrelevant. Safe to drop:
     // this transition leaves the (ungated) login screen or the verify screen
     // whose gate (pendingEmail) is untouched here.

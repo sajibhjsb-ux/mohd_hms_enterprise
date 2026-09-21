@@ -8,6 +8,12 @@ import { getSessionQrDataUrl } from "@/lib/hms/whatsapp/service";
 
 export const GET = handler(async (): Promise<NextResponse> => {
   const res = await getSessionQrDataUrl();
-  if (!res.ok) throw Errors.badRequest(res.detail);
-  return ok({ qr: res.qr });
+  if (!res.ok) {
+    // "Re-establishing" is the honest live state, not a failure — return it
+    // typed so the dialog shows a waiting panel instead of a red error while
+    // the engine's reconnect backoff produces the next fresh QR.
+    if (res.state === "WAITING") return ok({ qr: null, state: "WAITING", detail: res.detail });
+    throw Errors.badRequest(res.detail);
+  }
+  return ok({ qr: res.qr, state: "READY", detail: "ok" });
 }, { permission: PERMISSIONS.whatsapp_connect });
