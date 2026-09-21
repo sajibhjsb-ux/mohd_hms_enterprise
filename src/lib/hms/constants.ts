@@ -120,6 +120,11 @@ export const PERMISSIONS = {
   email_templates: "email.templates", // template create/edit/publish/duplicate/test
   email_automations: "email.automations", // automation create/edit/enable/disable
   email_actions: "email.actions", // retry/cancel queued or failed emails
+  // Email CLIENT (user-facing mailboxes) — the /email client for mailbox
+  // members. Separate from email.view/email.config: seeing the client never
+  // grants any infrastructure configuration rights (§36/§37). Actual use
+  // additionally requires an ASSIGNED mailbox (MailboxMember/owner).
+  email_client: "email.client",
   // WhatsApp automation + configuration (OpenWA gateway admin area)
   whatsapp_view: "whatsapp.view", // access the WhatsApp admin area + inbox
   whatsapp_config: "whatsapp.config", // gateway connection configuration edit
@@ -167,6 +172,8 @@ const SUPERVISOR_PERMS: Permission[] = [
   PERMISSIONS.equipment_read, PERMISSIONS.equipment_create, PERMISSIONS.equipment_update,
   // WhatsApp inbox access (conversation view + replies; no gateway config)
   PERMISSIONS.whatsapp_view, PERMISSIONS.whatsapp_send,
+  // Email client — mailbox members only (assignment enforced per-user)
+  PERMISSIONS.email_client,
   PERMISSIONS.complaints_read, PERMISSIONS.complaints_create, PERMISSIONS.complaints_assign, PERMISSIONS.complaints_update, PERMISSIONS.complaints_close,
   PERMISSIONS.work_orders_read, PERMISSIONS.work_orders_create, PERMISSIONS.work_orders_assign, PERMISSIONS.work_orders_update, PERMISSIONS.work_orders_complete,
   PERMISSIONS.pm_read, PERMISSIONS.pm_manage, PERMISSIONS.pm_approve, PERMISSIONS.pm_report,
@@ -194,6 +201,8 @@ const TECHNICIAN_PERMS: Permission[] = [
   PERMISSIONS.checklist_view,
   PERMISSIONS.inventory_read,
   PERMISSIONS.irms_read, PERMISSIONS.irms_create,
+  // Email client — mailbox members only (assignment enforced per-user)
+  PERMISSIONS.email_client,
   PERMISSIONS.files_read, PERMISSIONS.files_create, PERMISSIONS.files_update,
   PERMISSIONS.files_delete, PERMISSIONS.files_share,
 ];
@@ -228,6 +237,8 @@ const FINANCE_PERMS: Permission[] = [
   // Payroll (spec §29) — Finance reviews, approves and marks payment;
   // preparation stays with HR (segregation of duties).
   PERMISSIONS.payroll_read, PERMISSIONS.payroll_approve,
+  // Email client — mailbox members only (assignment enforced per-user)
+  PERMISSIONS.email_client,
   PERMISSIONS.files_read, PERMISSIONS.files_create, PERMISSIONS.files_update,
   PERMISSIONS.files_delete, PERMISSIONS.files_share,
 ];
@@ -245,6 +256,8 @@ const HR_PERMS: Permission[] = [
   // Payroll (spec §28/§29) — HR prepares, calculates and adjusts payroll;
   // approval stays with FINANCE/ADMIN (segregation of duties, spec §28).
   PERMISSIONS.payroll_read, PERMISSIONS.payroll_manage,
+  // Email client — mailbox members only (assignment enforced per-user)
+  PERMISSIONS.email_client,
   PERMISSIONS.files_read, PERMISSIONS.files_create, PERMISSIONS.files_update,
   PERMISSIONS.files_delete, PERMISSIONS.files_share,
 ];

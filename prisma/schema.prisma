@@ -60,6 +60,10 @@ model User {
   legalAcceptances  LegalAcceptance[]
   whatsappContacts  WhatsAppContact[]    @relation("WhatsAppContactUser")
   profileChangeRequests ProfileChangeRequest[]
+  // Email client mailboxes (§28 — user↔mailbox mapping is configurable;
+  // not every user has a corporate mailbox).
+  ownedMailboxes     Mailbox[]       @relation("MailboxOwner")
+  mailboxMemberships MailboxMember[] @relation("MailboxMemberships")
   // Payroll actors (spec §9 — every workflow step is attributable)
   payrollRunsCreated   PayrollRun[] @relation("PayrollRunCreator")
   payrollRunsSubmitted PayrollRun[] @relation("PayrollRunSubmitter")
@@ -2079,6 +2083,114 @@ model EmailLog {
   @@index([toEmail, createdAt])
   @@index([relatedType, relatedId])
   @@index([automationId, createdAt])
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// EMAIL CLIENT (user-facing mailboxes)
+// The user-facing email client (module /email). SMTP delivery is delegated
+// to the ONE centralized EmailService: a client send creates a MailMessage
+// plus ONE EmailLog (relatedType="MAIL_MESSAGE") whose existing worker does
+// the real SMTP send, retries and honest status. Attachments live in MinIO
+// (mail-owned keys after send; user FileEntry keys while attached to a
+// draft); this section stores mailbox identity, messages, folders, flags,
+// drafts and attachment METADATA only — never binary blobs, never secrets.
+// ═══════════════════════════════════════════════════════════════════
+
+model Mailbox {
+  id          String   @id @default(cuid())
+  // The full mailbox address (e.g. info@mohdhms.com) — unique, server-validated.
+  email       String   @unique
+  displayName String   @default("")
+  description String   @default("")
+  // PERSONAL — owned by exactly one user · SHARED — team mailbox with members.
+  kind        String   @default("PERSONAL")
+  ownerUserId String?
+  owner       User?    @relation("MailboxOwner", fields: [ownerUserId], references: [id], onDelete: Cascade)
+  // Inactive mailboxes are hidden from every member and cannot send.
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  members  MailboxMember[]
+  messages MailMessage[]
+
+  @@index([ownerUserId])
+}
+
+model MailboxMember {
+  id        String   @id @default(cuid())
+  mailboxId String
+  mailbox   Mailbox  @relation(fields: [mailboxId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation("MailboxMemberships", fields: [userId], references: [id], onDelete: Cascade)
+  // Members always read; canSend governs composing/sending FROM the mailbox
+  // (sender identity §45 — never a browser-supplied arbitrary address).
+  canSend   Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@unique([mailboxId, userId])
+  @@index([userId])
+}
+
+model MailMessage {
+  id        String   @id @default(cuid())
+  mailboxId String
+  mailbox   Mailbox  @relation(fields: [mailboxId], references: [id], onDelete: Cascade)
+  // INBOX | SENT | DRAFTS | OUTBOX | ARCHIVE | SPAM | TRASH
+  folder    String   @default("INBOX")
+  // DRAFT | QUEUED | SENDING | SENT | FAILED
+  status    String   @default("DRAFT")
+  // OUT — composed by a mailbox member · IN — received (inbound retrieval is
+  // NOT yet supported by the mail architecture; no fake inbox is created).
+  direction String   @default("OUT")
+  // Conversation grouping: the thread ROOT message id (replies inherit it).
+  threadId  String   @default("")
+  subject   String   @default("")
+  fromName  String   @default("")
+  fromEmail String   @default("")
+  toEmail   String   @default("") // comma-separated list
+  ccEmail   String   @default("")
+  // BCC is stored only on the SENDER's own message and never shown to anyone else.
+  bccEmail  String   @default("")
+  bodyHtml  String   @default("")
+  bodyText  String   @default("")
+  readAt    DateTime?
+  starredAt DateTime?
+  important Boolean  @default(false)
+  // Authoritative delivery linkage → EmailLog(relatedType="MAIL_MESSAGE").
+  // Status is mirrored by the EmailService worker (single source of truth:
+  // EmailLog; this is the user-facing projection).
+  sentAt    DateTime?
+  lastError String   @default("")
+  // SMTP Message-ID once the server accepted the message (§54 evidence).
+  messageId String   @default("")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  attachments MailAttachment[]
+
+  @@index([mailboxId, folder, createdAt])
+  @@index([mailboxId, folder, readAt])
+  @@index([threadId])
+  @@index([mailboxId, starredAt])
+}
+
+model MailAttachment {
+  id          String      @id @default(cuid())
+  messageId   String
+  message     MailMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  filename    String
+  contentType String      @default("application/octet-stream")
+  sizeBytes   Int         @default(0)
+  // MinIO object key — the user's FileEntry key while attached to a draft;
+  // copied to a mail-owned key (mail/messages/{id}/…) when the email is sent,
+  // so the sent message stays immutable even if the source file changes.
+  objectKey   String
+  // FileEntry id when the attachment is (or came from) the user's Files.
+  fileId      String      @default("")
+  createdAt   DateTime    @default(now())
+
+  @@index([messageId])
 }
 
 // ═══════════════════════════════════════════════════════════════════

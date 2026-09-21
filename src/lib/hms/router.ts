@@ -141,4 +141,6 @@ export const RESOURCE_ROUTES: Record<string, { module: string; seg: (id: string)
   // notifications carry the same resource types (target resolved on arrival).
   FILE: { module: "files", seg: (id) => ["file", id] },
   FILE_FOLDER: { module: "files", seg: (id) => ["my", id] },
+  // Email client — delivery-failure notifications deep-link into the message.
+  MAIL_MESSAGE: { module: "email", seg: (id) => ["m", id] },
 };

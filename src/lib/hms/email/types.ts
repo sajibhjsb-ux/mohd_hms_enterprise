@@ -82,8 +82,18 @@ export type AttachmentKind =
   | "WO_PDF"
   | "INSPECTION_PDF"
   | "LETTER_PDF"
-  | "PAYMENT_RECEIPT_PDF";
-export type AttachmentSpec = { kind: AttachmentKind };
+  | "PAYMENT_RECEIPT_PDF"
+  // User-composed email attachment: resolved from a MinIO object key that the
+  // client service materialized AFTER authorization (MailAttachment rows) —
+  // never a raw browser-supplied key.
+  | "MAIL_OBJECT";
+export type AttachmentSpec = {
+  kind: AttachmentKind;
+  // MAIL_OBJECT only — metadata stored server-side at queue time.
+  filename?: string;
+  contentType?: string;
+  key?: string;
+};
 
 export type ResolvedAttachment = {
   kind: AttachmentKind;

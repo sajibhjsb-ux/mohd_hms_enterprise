@@ -14,7 +14,7 @@ import fs from "fs";
 import path from "path";
 import { db } from "@/lib/db";
 import { Prisma } from "@prisma/client";
-import { audit } from "@/lib/hms/services";
+import { audit, notify } from "@/lib/hms/services";
 import { getAutomationSetting } from "@/lib/hms/workflows/settings";
 import { emailOtpResendCooldownSec } from "@/lib/hms/email-otp";
 import { EMAIL_OTP_TTL_SEC } from "@/lib/hms/email-otp";
@@ -119,6 +119,109 @@ export async function queueDirect(input: QueueDirectInput): Promise<QueueResult>
 
 async function userBrief(userId: string): Promise<{ id: string; email: string; name: string } | null> {
   return db.user.findUnique({ where: { id: userId }, select: { id: true, email: true, name: true } });
+}
+
+// ─── 1b. Client queue (user-composed email from the /email client) ─────────
+
+export type QueueClientEmailInput = {
+  /** MailMessage id (the user-facing record this delivery belongs to). */
+  mailMessageId: string;
+  to: string[];
+  cc: string[];
+  bcc: string[];
+  subject: string;
+  html: string;
+  text: string;
+  /** Sender identity resolved from the APPROVED mailbox (never browser-supplied). */
+  sender: SenderIdentity;
+  /** Mail-owned MinIO object keys (materialized after authorization). */
+  attachments: { filename: string; contentType: string; key: string }[];
+};
+
+/**
+ * Queue ONE user-composed email through the SAME worker/provider used by
+ * automations (one EmailLog row; relatedType="MAIL_MESSAGE"). Category
+ * COMPOSE is NOT gated by the automation "email_notifications" toggle — a
+ * user explicitly clicking Send is a direct action, not a notification.
+ */
+export async function queueClientEmail(input: QueueClientEmailInput): Promise<QueueResult> {
+  if (input.to.length === 0) return { ok: false, reason: "no recipient" };
+  if (input.to.some((a) => !isValidAddr(a))) return { ok: false, reason: "invalid recipient" };
+  if ([...input.cc, ...input.bcc].some((a) => !isValidAddr(a))) return { ok: false, reason: "invalid cc/bcc recipient" };
+  if (!input.sender.fromEmail || !isValidAddr(input.sender.fromEmail)) return { ok: false, reason: "invalid sender" };
+
+  const row = await db.emailLog.create({
+    data: {
+      status: "QUEUED",
+      eventId: "",
+      automationId: null,
+      templateKey: "",
+      templateVersion: 0,
+      category: "COMPOSE",
+      toEmail: input.to.map((a) => a.trim()).join(", "),
+      cc: input.cc.map((a) => a.trim()).join(", "),
+      bcc: input.bcc.map((a) => a.trim()).join(", "),
+      replyTo: input.sender.replyTo,
+      fromName: input.sender.fromName,
+      fromEmail: input.sender.fromEmail,
+      subject: headerSafe(input.subject).slice(0, 500) || "(no subject)",
+      bodyHtml: input.html,
+      relatedType: "MAIL_MESSAGE",
+      relatedId: input.mailMessageId,
+      maxAttempts: 3,
+      attachmentRefs: JSON.stringify(
+        input.attachments.map((a) => ({ kind: "MAIL_OBJECT", label: a.filename, filename: a.filename, contentType: a.contentType, key: a.key })),
+      ),
+    },
+  });
+  return { ok: true, id: row.id };
+}
+
+/**
+ * Mirror the authoritative EmailLog delivery state onto the user-facing
+ * MailMessage (§13/§49 — the UI only ever shows honest statuses). Called by
+ * the worker after each delivery attempt on a MAIL_MESSAGE-related log.
+ */
+export async function syncMailMessageDelivery(mailMessageId: string): Promise<void> {
+  try {
+    const logs = await db.emailLog.findMany({
+      where: { relatedType: "MAIL_MESSAGE", relatedId: mailMessageId },
+      select: { status: true, sentAt: true, lastError: true },
+    });
+    if (logs.length === 0) return;
+    const statuses = logs.map((l) => l.status);
+    const allSent = statuses.every((s) => s === "SENT");
+    const anyPending = statuses.some((s) => ["QUEUED", "PROCESSING"].includes(s));
+    let status = "QUEUED";
+    if (allSent) status = "SENT";
+    else if (!anyPending && statuses.every((s) => ["FAILED", "DEAD_LETTER", "CANCELED"].includes(s))) status = "FAILED";
+    const message = await db.mailMessage.findUnique({ where: { id: mailMessageId }, select: { id: true, status: true, folder: true, subject: true, mailboxId: true } });
+    if (!message) return;
+    // Mirror the authoritative error text too (§49 — the Outbox/detail shows
+    // the REAL state, e.g. "SMTP is not configured — email stays queued.").
+    const lastError = logs.map((l) => l.lastError).find((e) => e) ?? "";
+    await db.mailMessage.updateMany({
+      where: { id: mailMessageId, folder: { in: ["OUTBOX", "SENT"] } },
+      data: status === "SENT" ? { status: "SENT", folder: "SENT", sentAt: new Date(), lastError: "" } : { status, lastError: lastError.slice(0, 500) },
+    });
+    // Real failure → notify the mailbox members through the ONE
+    // NotificationService (§35 — no second push architecture).
+    if (status === "FAILED" && message.status !== "FAILED") {
+      const members = await db.mailboxMember.findMany({ where: { mailboxId: message.mailboxId }, select: { userId: true } });
+      for (const m of members) {
+        await notify({
+          userId: m.userId,
+          type: "ERROR",
+          title: "Email delivery failed",
+          message: `The email "${message.subject.slice(0, 80) || "(no subject)"}" could not be delivered. Open the Outbox to retry or review the error.`,
+          resourceType: "MAIL_MESSAGE",
+          resourceId: mailMessageId,
+        }).catch(() => undefined);
+      }
+    }
+  } catch (e) {
+    console.error("mail-message-sync-failed", e);
+  }
 }
 
 // ─── 2. OTP email (§45 — auth calls EmailService, never SMTP directly) ──────
@@ -514,6 +617,8 @@ export async function tickEmailWorker(): Promise<number> {
         sent += (await processOne(log.id, smtpReady)) ? 1 : 0;
       } catch (e) {
         await failOrRetry(log.id, log.attemptCount, log.maxAttempts, "PROVIDER", e instanceof Error ? e.message : String(e), "");
+        const related = await db.emailLog.findUnique({ where: { id: log.id }, select: { relatedType: true, relatedId: true } });
+        if (related?.relatedType === "MAIL_MESSAGE" && related.relatedId) void syncMailMessageDelivery(related.relatedId);
       }
     }
 
@@ -541,9 +646,13 @@ async function processOne(id: string, smtpReady: boolean): Promise<boolean> {
   if (!smtpReady) {
     // CONFIG state: stays queued without burning attempts — honest error shown (§70).
     await db.emailLog.update({ where: { id }, data: { status: "QUEUED", attemptCount: { decrement: 1 }, lastError: "SMTP is not configured — email stays queued.", errorClass: "CONFIG" } });
+    if (log.relatedType === "MAIL_MESSAGE") void syncMailMessageDelivery(log.relatedId);
     return false;
   }
-  if (!(await emailChannelEnabled()) && !log.isTest) {
+  // The "email_notifications" toggle gates AUTOMATION mail only — a user
+  // explicitly sending from the /email client (category COMPOSE) is a direct
+  // action, not a notification (§31 — the two systems share ONE provider).
+  if (!(await emailChannelEnabled()) && !log.isTest && log.category !== "COMPOSE") {
     await db.emailLog.update({ where: { id }, data: { status: "QUEUED", attemptCount: { decrement: 1 }, lastError: "Email channel disabled in settings.", errorClass: "CONFIG" } });
     return false;
   }
@@ -597,11 +706,17 @@ async function processOne(id: string, smtpReady: boolean): Promise<boolean> {
         failedAt: null,
       },
     });
+    // Mirror the honest delivery state onto the user-facing mail message.
+    if (log.relatedType === "MAIL_MESSAGE") {
+      await db.mailMessage.updateMany({ where: { id: log.relatedId }, data: { messageId: result.messageId } }).catch(() => undefined);
+      await syncMailMessageDelivery(log.relatedId);
+    }
     return true;
   }
 
   const permanent = result.errorClass === "PERMANENT" || result.errorClass === "AUTHENTICATION" || result.errorClass === "RECIPIENT";
   await failOrRetry(id, log.attemptCount, log.maxAttempts, result.errorClass ?? "PROVIDER", result.error ?? "SMTP send failed", result.response, permanent);
+  if (log.relatedType === "MAIL_MESSAGE") await syncMailMessageDelivery(log.relatedId);
   return false;
 }
 

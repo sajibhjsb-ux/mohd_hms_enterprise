@@ -9,7 +9,7 @@ import {
   LayoutDashboard, Users, Building2, UserCog, HardHat, AlertTriangle, ClipboardList,
   Wrench, CalendarClock, Boxes, ShoppingCart, FileText, Receipt, Wallet, IdCard,
   SearchCheck, BarChart3, Settings, History, Truck, QrCode, CircleUserRound,
-  ScrollText, ShieldCheck, MessageCircle, ScanLine, Mail, FolderClosed,
+  ScrollText, ShieldCheck, MessageCircle, ScanLine, Mail, Mailbox, FolderClosed,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -41,7 +41,8 @@ import { QuotationsModule } from "./modules/quotations";
 import { InvoicesModule } from "./modules/invoices";
 import { FinanceModule } from "./modules/finance";
 import { HrModule } from "./modules/hr";
-import { EmailModule } from "./modules/email";
+import { MailClientModule } from "./modules/email";
+import { EmailConfigModule } from "./modules/email-config";
 import { WhatsAppModule } from "./modules/whatsapp";
 import { FilesModule } from "./modules/files";
 import { IrmsModule } from "./modules/irms";
@@ -75,13 +76,15 @@ export const MODULES: ModuleDef[] = [
   // enter this module for payroll review/approval only — non-payroll tabs and
   // the overview stay gated behind hr.read inside the module.
   { key: "hr", label: "HR", icon: UserCog, permissions: ["hr.read", "employees.read", "payroll.read"], component: HrModule },
-  // Communication pair — Email + WhatsApp sit adjacent in the desktop floating
-  // navigation and under the "Communication" group of the mobile More menu.
-  // /email is the SINGLE canonical location for email administration (SMTP
-  // configuration, sender, test tools, templates, automations, logs — one
-  // EmailService, one admin UI); the general Settings page has no email tab.
-  // /whatsapp is the existing OpenWA-backed Inbox module.
-  { key: "email", label: "Email Configuration", shortLabel: "Email", icon: Mail, permissions: ["email.view"], component: EmailModule },
+  // Communication trio — the user-facing Email CLIENT (/email, a real mailbox
+  // client: Inbox/Sent/Drafts/Outbox/Compose/…) sits next to the Email
+  // CONFIGURATION administration area (/email-config — SMTP, mailboxes,
+  // templates, automations, logs) and the WhatsApp module. The two email
+  // entries are SEPARATE modules with separate RBAC: email.client (mailbox
+  // members — reading/writing mail) vs email.view/email.config (administrators
+  // — infrastructure only). Settings has no email controls (spec §3).
+  { key: "email", label: "Email", shortLabel: "Email", icon: Mailbox, permissions: ["email.client"], component: MailClientModule },
+  { key: "email-config", label: "Email Configuration", shortLabel: "Email Config", icon: Mail, permissions: ["email.view"], component: EmailConfigModule },
   { key: "whatsapp", label: "WhatsApp", shortLabel: "Chat", icon: MessageCircle, permissions: ["whatsapp.view"], component: WhatsAppModule },
   { key: "irms", label: "IRMS Inspections", shortLabel: "IRMS", icon: SearchCheck, permissions: ["irms.read", "irms.portal"], component: IrmsModule },
   // Files — centralized private file management (MinIO-backed, spec §2/§31):

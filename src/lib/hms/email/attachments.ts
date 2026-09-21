@@ -44,6 +44,22 @@ export async function resolveAttachments(specs: AttachmentSpec[], ctx: { resourc
 }
 
 async function resolveOne(spec: AttachmentSpec, ctx: { resourceType: string; resourceId: string }): Promise<ResolvedAttachment | null> {
+  // ── User-composed mail attachments (Email client) — the key was stored
+  // server-side at queue time after authorization (MailAttachment rows);
+  // bytes are streamed straight from MinIO (never a browser-supplied key).
+  if (spec.kind === "MAIL_OBJECT") {
+    if (!spec.key) return null;
+    const obj = await storage.get(spec.key);
+    if (!obj) return null;
+    return {
+      kind: spec.kind,
+      filename: spec.filename || "attachment",
+      buffer: obj.buffer,
+      contentType: spec.contentType || obj.contentType,
+      ref: `mail-object:${spec.key}`,
+    };
+  }
+
   // ── HR letters: the finalized PDF lives in MinIO (immutable, §49) ──
   if (spec.kind === "LETTER_PDF") {
     const letterId = ctx.resourceType === "LETTER" ? ctx.resourceId : null;

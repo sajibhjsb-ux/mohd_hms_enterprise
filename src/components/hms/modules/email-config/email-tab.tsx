@@ -23,6 +23,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EmailAutomations } from "./email-automations";
 import { EmailLogs } from "./email-logs";
 import { EmailTemplates } from "./email-templates";
+import { MailboxesAdmin } from "./email-mailboxes";
 
 type EmailHealth = {
   sentToday: number;
@@ -103,6 +104,7 @@ export function EmailTab() {
     <Tabs defaultValue="overview">
       <TabsList className="mb-4 flex-wrap">
         <TabsTrigger value="overview">Overview</TabsTrigger>
+        {canConfig ? <TabsTrigger value="mailboxes">Mailboxes</TabsTrigger> : null}
         {canTemplates ? <TabsTrigger value="templates">Templates</TabsTrigger> : null}
         {canAutomations ? <TabsTrigger value="automations">Automations</TabsTrigger> : null}
         {canView ? <TabsTrigger value="logs">Logs</TabsTrigger> : null}
@@ -111,6 +113,11 @@ export function EmailTab() {
       <TabsContent value="overview">
         <OverviewPanel />
       </TabsContent>
+      {canConfig ? (
+        <TabsContent value="mailboxes">
+          <MailboxesAdmin />
+        </TabsContent>
+      ) : null}
       {canTemplates ? (
         <TabsContent value="templates">
           <EmailTemplates />
