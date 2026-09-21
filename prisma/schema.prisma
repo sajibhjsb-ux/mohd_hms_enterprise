@@ -1699,6 +1699,73 @@ model EmailLog {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// EMAIL CLIENT — professional per-user mailbox (Email module).
+// One MailMessage row per mailbox COPY (a sent mail has one row in the
+// sender's SENT/OUTBOX folder and one row per internal recipient's INBOX).
+// Outbound delivery state mirrors the authoritative EmailLog through
+// emailLogId (synced by the existing EmailService worker — no second queue).
+// Attachment bytes live in MinIO; this model stores references only.
+// ═══════════════════════════════════════════════════════════════════
+
+model MailMessage {
+  id           String    @id @default(cuid())
+  // Mailbox owner (User.id) — every query is scoped by this, backend-enforced.
+  ownerId      String
+  // INBOX | SENT | DRAFT | OUTBOX | ARCHIVE | SPAM | TRASH
+  folder       String    @default("INBOX")
+  // IN (received copy) | OUT (composed by the owner)
+  direction    String    @default("IN")
+  // Outbound delivery state: "" | QUEUED | SENDING | SENT | FAILED | CANCELED
+  status       String    @default("")
+  // Folder before a TRASH move — exact restore target.
+  originFolder String    @default("")
+  fromName     String    @default("")
+  fromEmail    String    @default("")
+  toEmail      String    @default("")
+  ccEmail      String    @default("")
+  bccEmail     String    @default("")
+  subject      String    @default("")
+  bodyHtml     String    @default("")
+  // First ~160 chars of plain text for fast list rendering.
+  excerpt      String    @default("")
+  readAt       DateTime?
+  starredAt    DateTime?
+  // Conversation threading (replies/forwards share the thread id).
+  threadId     String    @default("")
+  inReplyToId  String    @default("")
+  // Authoritative outbound delivery record (EmailLog). "" for internal-only
+  // deliveries and received mail.
+  emailLogId   String    @default("")
+  sentAt       DateTime?
+  failedReason String    @default("")
+  // JSON [{id,key,filename,size,contentType}] — MinIO references ONLY.
+  attachmentRefs String  @default("[]")
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([ownerId, folder, updatedAt])
+  @@index([ownerId, starredAt])
+  @@index([threadId])
+  @@index([emailLogId])
+}
+
+// Shared contact group (distribution list) for the compose UI. Org-wide,
+// managed by staff — members are stored as display references, never keys.
+model MailContactGroup {
+  id        String   @id @default(cuid())
+  name      String
+  // Tailwind-ish tone token for the sidebar chip ("emerald", "amber", …).
+  color     String   @default("")
+  // JSON [{name,email}] — validated server-side on every write.
+  members   String   @default("[]")
+  createdBy String   @default("")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([name])
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // WHATSAPP AUTOMATION (OpenWA gateway integration)
 // OpenWA = transport ONLY. MOHD.HMS remains the system of record:
 // business data lives in the existing models; media bytes live in MinIO;

@@ -82,8 +82,15 @@ export type AttachmentKind =
   | "WO_PDF"
   | "INSPECTION_PDF"
   | "LETTER_PDF"
-  | "PAYMENT_RECEIPT_PDF";
+  | "PAYMENT_RECEIPT_PDF"
+  // Email client attachment — uploaded through the authenticated
+  // /api/v1/email/client/attachments endpoint, which generates the MinIO key
+  // server-side under the uploader's own `mail/{userId}/` prefix. The spec
+  // carries that validated reference; arbitrary client keys are never accepted.
+  | "MAIL_FILE";
 export type AttachmentSpec = { kind: AttachmentKind };
+// Mail-file specs additionally carry the validated MinIO reference details.
+export type MailFileSpec = AttachmentSpec & { kind: "MAIL_FILE"; key: string; filename: string; contentType?: string };
 
 export type ResolvedAttachment = {
   kind: AttachmentKind;

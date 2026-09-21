@@ -120,6 +120,8 @@ export const PERMISSIONS = {
   email_templates: "email.templates", // template create/edit/publish/duplicate/test
   email_automations: "email.automations", // automation create/edit/enable/disable
   email_actions: "email.actions", // retry/cancel queued or failed emails
+  // Email CLIENT (Email module mailbox — send/receive/draft/groups)
+  email_client: "email.client", // professional mailbox: inbox, compose, drafts, groups
   // WhatsApp automation + configuration (OpenWA gateway admin area)
   whatsapp_view: "whatsapp.view", // access the WhatsApp admin area + inbox
   whatsapp_config: "whatsapp.config", // gateway connection configuration edit
@@ -142,6 +144,8 @@ const SUPERVISOR_PERMS: Permission[] = [
   PERMISSIONS.customers_read,
   PERMISSIONS.employees_read,
   PERMISSIONS.equipment_read, PERMISSIONS.equipment_create, PERMISSIONS.equipment_update,
+  // Email client mailbox (professional email features — no admin configuration)
+  PERMISSIONS.email_client,
   // WhatsApp inbox access (conversation view + replies; no gateway config)
   PERMISSIONS.whatsapp_view, PERMISSIONS.whatsapp_send,
   PERMISSIONS.complaints_read, PERMISSIONS.complaints_create, PERMISSIONS.complaints_assign, PERMISSIONS.complaints_update, PERMISSIONS.complaints_close,
@@ -161,6 +165,8 @@ const SUPERVISOR_PERMS: Permission[] = [
 
 const TECHNICIAN_PERMS: Permission[] = [
   PERMISSIONS.equipment_read,
+  // Email client mailbox (professional email features — no admin configuration)
+  PERMISSIONS.email_client,
   PERMISSIONS.complaints_read, PERMISSIONS.complaints_update,
   PERMISSIONS.work_orders_read, PERMISSIONS.work_orders_update, PERMISSIONS.work_orders_complete,
   PERMISSIONS.pm_read, PERMISSIONS.pm_execute, PERMISSIONS.pm_report,
@@ -187,6 +193,8 @@ const CUSTOMER_PERMS: Permission[] = [
 
 const FINANCE_PERMS: Permission[] = [
   PERMISSIONS.customers_read,
+  // Email client mailbox (professional email features — no admin configuration)
+  PERMISSIONS.email_client,
   PERMISSIONS.quotations_read,
   PERMISSIONS.invoices_read, PERMISSIONS.invoices_manage,
   PERMISSIONS.payments_read, PERMISSIONS.payments_record,
@@ -197,6 +205,8 @@ const FINANCE_PERMS: Permission[] = [
 
 const HR_PERMS: Permission[] = [
   PERMISSIONS.users_read,
+  // Email client mailbox (professional email features — no admin configuration)
+  PERMISSIONS.email_client,
   PERMISSIONS.employees_read, PERMISSIONS.employees_create, PERMISSIONS.employees_update,
   PERMISSIONS.hr_read, PERMISSIONS.hr_manage,
   PERMISSIONS.reports_read, PERMISSIONS.reports_export,

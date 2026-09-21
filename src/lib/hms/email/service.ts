@@ -117,6 +117,51 @@ export async function queueDirect(input: QueueDirectInput): Promise<QueueResult>
   return { ok: true, id: row.id };
 }
 
+// ─── 1b. Email client queue (professional mailbox — free-form subject/body) ──
+
+/**
+ * Queue a composed client email. Unlike queueDirect this takes the FINAL
+ * subject/HTML (no template, no variable resolution) — the compose UI owns the
+ * content. Sender identity must come from the approved configuration; the
+ * route layer resolves it, never the client payload. Attachments are
+ * MAIL_FILE specs whose MinIO keys were generated server-side at upload time.
+ */
+export async function queueClientEmail(params: {
+  to: string[];
+  cc: string[];
+  bcc: string[];
+  subject: string;
+  html: string;
+  fromName: string;
+  fromEmail: string;
+  replyTo: string;
+  attachments: { filename: string; key: string; contentType: string }[];
+}): Promise<QueueResult> {
+  if (params.to.length === 0) return { ok: false, reason: "no external recipients" };
+  const row = await db.emailLog.create({
+    data: {
+      status: "QUEUED",
+      eventId: "",
+      automationId: null,
+      templateKey: "MAIL_CLIENT",
+      category: "CLIENT",
+      toEmail: params.to.join(", "),
+      cc: params.cc.join(", "),
+      bcc: params.bcc.join(", "),
+      replyTo: params.replyTo,
+      fromName: params.fromName,
+      fromEmail: params.fromEmail,
+      subject: headerSafe(params.subject || "(no subject)").slice(0, 500),
+      bodyHtml: params.html.slice(0, 512_000),
+      maxAttempts: 3,
+      attachmentRefs: JSON.stringify(
+        params.attachments.map((a) => ({ kind: "MAIL_FILE", filename: a.filename, key: a.key, contentType: a.contentType }))
+      ),
+    },
+  });
+  return { ok: true, id: row.id };
+}
+
 async function userBrief(userId: string): Promise<{ id: string; email: string; name: string } | null> {
   return db.user.findUnique({ where: { id: userId }, select: { id: true, email: true, name: true } });
 }
@@ -508,6 +553,8 @@ export async function tickEmailWorker(): Promise<number> {
         data: { status: "PROCESSING", attemptCount: { increment: 1 } },
       });
       if (claim.count !== 1) continue;
+      // Mirror the delivery state onto the email client's OUTBOX copies.
+      await db.mailMessage.updateMany({ where: { emailLogId: id }, data: { status: "SENDING" } }).catch(() => undefined);
       const log = await db.emailLog.findUnique({ where: { id } });
       if (!log) continue;
       try {
@@ -543,7 +590,10 @@ async function processOne(id: string, smtpReady: boolean): Promise<boolean> {
     await db.emailLog.update({ where: { id }, data: { status: "QUEUED", attemptCount: { decrement: 1 }, lastError: "SMTP is not configured — email stays queued.", errorClass: "CONFIG" } });
     return false;
   }
-  if (!(await emailChannelEnabled()) && !log.isTest) {
+  // The channel gate is for AUTOMATED notifications only. User-composed
+  // client mail and admin/test sends are explicit human actions and flow
+  // regardless of the automation opt-out.
+  if (log.category !== "CLIENT" && !log.isTest && !(await emailChannelEnabled())) {
     await db.emailLog.update({ where: { id }, data: { status: "QUEUED", attemptCount: { decrement: 1 }, lastError: "Email channel disabled in settings.", errorClass: "CONFIG" } });
     return false;
   }
@@ -564,9 +614,12 @@ async function processOne(id: string, smtpReady: boolean): Promise<boolean> {
     }
   }
 
-  // ── Inline logo (CID) for the branded shell.
-  const logo = getLogoBuffer();
-  if (logo) attachments.push({ filename: "logo.png", content: logo, contentType: "image/png", cid: "mohd-hms-logo" });
+  // ── Inline logo (CID) for the branded shell. Client mail keeps the exact
+  // MIME the user composed — no unreferenced parts.
+  if (log.category !== "CLIENT") {
+    const logo = getLogoBuffer();
+    if (logo) attachments.push({ filename: "logo.png", content: logo, contentType: "image/png", cid: "mohd-hms-logo" });
+  }
 
   // ── REAL SMTP send (§70 — no fake success).
   const result = await smtpProvider.send({
@@ -597,6 +650,11 @@ async function processOne(id: string, smtpReady: boolean): Promise<boolean> {
         failedAt: null,
       },
     });
+    // Client mailbox copies leave OUTBOX and land in SENT.
+    await db.mailMessage.updateMany({
+      where: { emailLogId: id },
+      data: { status: "SENT", folder: "SENT", sentAt: new Date(), failedReason: "" },
+    }).catch(() => undefined);
     return true;
   }
 
@@ -623,6 +681,14 @@ async function failOrRetry(id: string, attemptCount: number, maxAttempts: number
     data: canRetry
       ? { status: "QUEUED", scheduledAt: new Date(Date.now() + backoff), lastError: error.slice(0, 2000), errorClass, providerResponse: response.slice(0, 2000) }
       : { status: "DEAD_LETTER", failedAt: new Date(), lastError: error.slice(0, 2000), errorClass, providerResponse: response.slice(0, 2000) },
+  }).catch(() => undefined);
+  // Client mailbox mirror: retrying stays visibly QUEUED; terminal failures
+  // surface honestly as FAILED with the reason (never faked as SENT).
+  await db.mailMessage.updateMany({
+    where: { emailLogId: id, folder: "OUTBOX" },
+    data: canRetry
+      ? { status: "QUEUED", failedReason: "" }
+      : { status: "FAILED", failedReason: error.slice(0, 1000) },
   }).catch(() => undefined);
   if (!canRetry) {
     await audit({ actorEmail: "SYSTEM", action: "EMAIL_DEAD_LETTER", resourceType: "EMAIL", resourceId: id, metadata: { errorClass, error: error.slice(0, 300) } }).catch(() => undefined);
@@ -730,7 +796,10 @@ export async function retryEmail(id: string): Promise<{ ok: boolean; reason?: st
     where: { id, status: { in: ["FAILED", "DEAD_LETTER", "CANCELED", "QUEUED"] } },
     data: { status: "QUEUED", scheduledAt: new Date(), lastError: "", errorClass: "", failedAt: null },
   });
-  if (updated.count === 1) await audit({ action: "EMAIL_RETRIED", resourceType: "EMAIL", resourceId: id }).catch(() => undefined);
+  if (updated.count === 1) {
+    await db.mailMessage.updateMany({ where: { emailLogId: id, folder: "OUTBOX" }, data: { status: "QUEUED", failedReason: "" } }).catch(() => undefined);
+    await audit({ action: "EMAIL_RETRIED", resourceType: "EMAIL", resourceId: id }).catch(() => undefined);
+  }
   return { ok: updated.count === 1, reason: updated.count === 1 ? undefined : "state changed" };
 }
 
@@ -742,7 +811,10 @@ export async function cancelEmail(id: string): Promise<{ ok: boolean; reason?: s
     where: { id, status: { in: ["QUEUED", "FAILED"] } },
     data: { status: "CANCELED", failedAt: new Date() },
   });
-  if (updated.count === 1) await audit({ action: "EMAIL_CANCELED", resourceType: "EMAIL", resourceId: id }).catch(() => undefined);
+  if (updated.count === 1) {
+    await db.mailMessage.updateMany({ where: { emailLogId: id, folder: "OUTBOX" }, data: { status: "CANCELED", failedReason: "Delivery canceled by user." } }).catch(() => undefined);
+    await audit({ action: "EMAIL_CANCELED", resourceType: "EMAIL", resourceId: id }).catch(() => undefined);
+  }
   return { ok: updated.count === 1, reason: updated.count === 1 ? undefined : `cannot cancel from ${log.status}` };
 }
 

@@ -100,6 +100,15 @@ export function EmailTab() {
 
   return (
     <Tabs defaultValue="overview">
+      <div className="mb-4 flex items-start gap-2 rounded-lg border bg-muted/40 px-3.5 py-2.5 text-xs text-muted-foreground">
+        <Mail className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
+        <p>
+          This is the <span className="font-medium text-foreground">email infrastructure configuration</span> (SMTP,
+          templates, automations, delivery logs). To read and send email, open the{" "}
+          <a href="/email" className="font-medium text-primary underline-offset-2 hover:underline">Email module</a> —
+          the mailbox for inbox, compose, drafts and groups.
+        </p>
+      </div>
       <TabsList className="mb-4 flex-wrap">
         <TabsTrigger value="overview">Overview</TabsTrigger>
         {canTemplates ? <TabsTrigger value="templates">Templates</TabsTrigger> : null}
