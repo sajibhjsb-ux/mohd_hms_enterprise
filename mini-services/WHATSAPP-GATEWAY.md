@@ -12,6 +12,13 @@ WhatsApp gateway/transport ONLY. MOHD.HMS remains the business system of record.
 
 ## Local (sandbox) deployment — the one actually used in QA
 
+**Location**: the clone lives OUTSIDE the app tree (e.g. `/home/z/openwa`,
+sibling of `my-project/`), NOT in `mini-services/openwa/`. Reason: the sandbox
+caps inotify watches at 8192 (`fs.inotify.max_user_watches`, not raisable) and
+OpenWA's tree (~77k files with its own node_modules) exhausts the budget, which
+crashes `next dev`'s file watcher ("OS file watch limit reached"). Keep the
+git-ignored `.gitignore` line `mini-services/openwa/` as a safety net either way.
+
 ```bash
 git clone --depth 1 https://github.com/rmyndharis/OpenWA.git openwa
 cd openwa
@@ -19,11 +26,16 @@ git fetch --depth 1 origin bcd820d51b48701d051f659202dfdaa8b85f8373  # pin
 npm ci                                     # PUPPETEER_SKIP_DOWNLOAD=true is fine (Baileys engine)
 npm run build                              # nest build → dist/
 mkdir -p data
-# .env.runtime (NOT committed):
+# .env in the CLONE ROOT (ConfigModule loads `.env` — NOT `.env.runtime`):
 #   PORT=2785
 #   NODE_ENV=development
-#   ENGINE_TYPE=baileys
-#   API_MASTER_KEY=<openssl rand -hex 24>
+#   ENGINE_TYPE=baileys                     # MANDATORY — without it the engine
+#                                           # falls back to whatsapp-web.js, which
+#                                           # needs Puppeteer's Chrome and CRASHES
+#                                           # on start ("Could not find Chrome") →
+#                                           # no QR ever (the QR root cause).
+#   API_MASTER_KEY=<openssl rand -hex 24>   # if omitted, first boot generates
+#                                           # one and stores data/.api-key
 #   MAIN_DATABASE_NAME=./data/main.sqlite
 #   DATABASE_TYPE=sqlite                    # production: postgres (see below)
 #   DATABASE_NAME=./data/openwa.sqlite
@@ -32,7 +44,24 @@ mkdir -p data
 #   RESOLVE_LID_TO_PHONE=true               # §42: senderPhone on message.received
 #   SSRF_ALLOWED_HOSTS=127.0.0.1,localhost  # allow the loopback webhook target
 node dist/main.js
+# If the key was auto-generated: copy data/.api-key's value into
+# Settings → WhatsApp → Configuration (API key field) — the app stores it
+# AES-256-GCM encrypted and never returns it again.
 ```
+
+**QR format note**: the pairing QR decodes to
+`https://wa.me/settings/linked_devices#2@<ref>,<key>,<secret>,…` — this is the
+CURRENT official WhatsApp companion-device format (Baileys 7.x
+`companion-reg-client-utils.js`), not a website link. Any audit script should
+accept the wrapped form (and the legacy bare `2@…` ref) as genuine.
+
+**Unscanned session lifecycle**: an unpaired session rotates its QR roughly
+every 20-25s; after ~2min without a scan WhatsApp ends the QR-ref window
+(Baileys close 408) and the engine cycles through initializing → fresh QR.
+The app's freshness gate (`getSessionQrDataUrl`) serves a QR ONLY while the
+engine status is `qr_ready`, maps the re-establishing window to an honest
+WAITING state, and the QR dialog re-fetches every 10s — dead codes are never
+offered.
 
 ## Production notes (home server)
 
@@ -63,4 +92,4 @@ node dist/main.js
   idempotent by `X-OpenWA-Idempotency-Key`).
 - Settings → WhatsApp (admin administration) and the WhatsApp Inbox module
   (`/whatsapp`) for staff conversations.
-- End-to-end QA: `bun scripts/whatsapp-qa.ts`.
+- End-to-end QA: `bun scripts/whatsapp-e2e.ts (36-check full-system QA: pairing chain, QR freshness/decode, webhook signature+idempotency, RBAC, session lifecycle, restart recovery)`.
