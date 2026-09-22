@@ -179,8 +179,10 @@ async function getMessaging(): Promise<FcmMessagingLike | null> {
             "hms-push"
           );
         console.log(JSON.stringify({ ts: new Date().toISOString(), level: "info", channel: "PUSH", msg: "fcm-admin-initialized", projectId: account.projectId }));
-        // getMessaging returns the full SDK type; structurally compatible here.
-        return { messaging: admin.getMessaging(app) as unknown as FcmMessagingLike };
+        // firebase-admin v14 exposes getMessaging as a modular export.
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { getMessaging } = await import("firebase-admin/messaging");
+        return { messaging: getMessaging(app) as unknown as FcmMessagingLike };
       } catch (e) {
         console.error(JSON.stringify({ ts: new Date().toISOString(), level: "error", channel: "PUSH", msg: "fcm-admin-init-failed", err: e instanceof Error ? e.message : String(e) }));
         return null;
