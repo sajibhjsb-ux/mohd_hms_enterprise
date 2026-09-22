@@ -861,6 +861,14 @@ model WorkOrderMaterial {
   unit            String         @default("pcs")
   unitCostCents   Int            @default(0)
   totalCents      Int            @default(0)
+  // Inventory spec §11/§12 — material lifecycle: REQUESTED (no stock effect) →
+  // RESERVED → ISSUED (stock decrease through applyStockMovement) → USED (usage
+  // recorded against issued qty) → RETURNED (unused qty back to stock).
+  // CANCELLED lines never touched stock. Legacy rows default to REQUESTED and are
+  // auto-issued at WO completion (preserves the historical complete→deduct flow).
+  status          String         @default("REQUESTED")
+  issuedQty       Float          @default(0)
+  returnedQty     Float          @default(0)
 }
 
 // ─────────────────────────── PREVENTIVE MAINTENANCE ───────────────────────────
@@ -1354,14 +1362,41 @@ model InventoryItem {
   id            String    @id @default(cuid())
   sku           String    @unique
   name          String
+  // Inventory spec §5/§33/§64 — normalized name (lowercase, collapsed spaces) for
+  // duplicate detection and concurrency-safe custom item creation.
+  nameNorm      String    @default("")
+  description   String    @default("")
   category      String    @default("GENERAL")
+  subcategory   String    @default("")
+  brand         String    @default("")
+  model         String    @default("")
+  partNumber    String    @default("")
+  barcode       String    @default("")
+  // §3 — STOCK | SPARE_PART | CONSUMABLE | MATERIAL | TOOL | EQUIPMENT_COMPONENT | SERVICE | NON_STOCK | ASSET
+  itemType      String    @default("STOCK")
+  // §3 — STOCKED | NON_STOCK (SERVICE/NON_STOCK types never touch stock quantities)
+  stockType     String    @default("STOCKED")
   unit          String    @default("pcs")
   stockQty      Float     @default(0)
+  // §13 — quantity currently held by ACTIVE StockReservations; available = stockQty - reservedQty
+  reservedQty   Float     @default(0)
   minStockQty   Float     @default(0)
-  unitCostCents Int       @default(0)
+  maxStockQty   Float     @default(0)
+  reorderLevel  Float     @default(0)
+  unitCostCents Int       @default(0) // last purchase cost (§25)
+  avgCostCents  Int       @default(0) // moving average cost, maintained on receipts (§25/§51)
+  sellingPriceCents Int   @default(0)
+  taxCategory   String    @default("")
   supplierId    String?
   supplier      Supplier? @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  supplierPartNumber String @default("")
+  storageLocation String  @default("")
+  warehouseId   String?
+  warehouse     Warehouse? @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
   status        String    @default("ACTIVE")
+  createdById   String?
+  updatedById   String?
+  lastPurchaseAt DateTime?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -1369,22 +1404,109 @@ model InventoryItem {
   woMaterials    WorkOrderMaterial[]
   quotationItems QuotationItem[]
   purchaseItems  PurchaseItem[]
+  invoiceItems   InvoiceItem[]
+  stocks         WarehouseStock[]
+  reservations   StockReservation[]
+  countLines     StockCountLine[]
+
+  @@index([nameNorm])
+  @@index([category])
 }
 
 model StockMovement {
   id            String        @id @default(cuid())
   itemId        String
   item          InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
-  type          String // RECEIVE | ISSUE | RETURN | ADJUST
+  // Inventory spec §19 — OPENING | RECEIVE | ISSUE | RETURN | ADJUST |
+  // TRANSFER_OUT | TRANSFER_IN | DAMAGE | LOSS | STOCK_COUNT
+  type          String
   quantity      Float // signed
   balanceAfter  Float
-  referenceType String        @default("MANUAL") // MANUAL | WORK_ORDER | PURCHASE | QUOTATION
+  referenceType String        @default("MANUAL") // MANUAL | WORK_ORDER | PURCHASE | QUOTATION | STOCK_COUNT | TRANSFER | ITEM
   referenceId   String        @default("")
   note          String        @default("")
+  warehouseId   String? // §21/§22 — per-warehouse ledger row (nullable for legacy rows)
+  warehouse     Warehouse?    @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
   createdById   String?
   createdAt     DateTime      @default(now())
 
   @@index([itemId])
+}
+
+// ───────────────────── WAREHOUSES / RESERVATIONS / STOCK COUNTS (Inventory spec §13/§21/§22/§31) ─────────────────────
+
+model Warehouse {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  status    String   @default("ACTIVE") // ACTIVE | INACTIVE
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  stocks WarehouseStock[]
+  items  InventoryItem[]
+  counts StockCount[]
+  movements StockMovement[]
+}
+
+// Per-warehouse quantity for an item. item.stockQty stays the company-wide total;
+// every stock write goes through applyStockMovement which keeps both in sync.
+model WarehouseStock {
+  id          String        @id @default(cuid())
+  itemId      String
+  item        InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  warehouseId String
+  warehouse   Warehouse     @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  qty         Float         @default(0)
+
+  @@unique([itemId, warehouseId])
+}
+
+model StockReservation {
+  id          String        @id @default(cuid())
+  itemId      String
+  item        InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  quantity    Float
+  // ACTIVE | RELEASED | CONSUMED (issued against) | CANCELLED
+  status      String        @default("ACTIVE")
+  workOrderId String?
+  quotationId String?
+  note        String        @default("")
+  createdById String?
+  createdAt   DateTime      @default(now())
+  releasedAt  DateTime?
+
+  @@index([itemId, status])
+}
+
+model StockCount {
+  id           String     @id @default(cuid())
+  code         String     @unique
+  warehouseId  String?
+  warehouse    Warehouse? @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
+  // DRAFT → SUBMITTED → APPROVED (adjustment movements written) | CANCELLED
+  status       String     @default("DRAFT")
+  note         String     @default("")
+  createdById  String?
+  submittedAt  DateTime?
+  approvedById String?
+  approvedAt   DateTime?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  lines StockCountLine[]
+}
+
+model StockCountLine {
+  id         String        @id @default(cuid())
+  countId    String
+  count      StockCount    @relation(fields: [countId], references: [id], onDelete: Cascade)
+  itemId     String
+  item       InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  systemQty  Float
+  countedQty Float
+  variance   Float
+  note       String        @default("")
 }
 
 model PurchaseOrder {
@@ -1419,6 +1541,10 @@ model PurchaseItem {
   unitCostCents Int
   totalCents    Int
   receivedQty   Float          @default(0)
+  // Inventory spec §18 — goods receiving quality outcome (never stock-affecting by themselves:
+  // only ACCEPTED quantity increases stock).
+  rejectedQty   Float          @default(0)
+  damagedQty    Float          @default(0)
 }
 
 // ─────────────────────────── QUOTATIONS ───────────────────────────
@@ -1499,17 +1625,22 @@ model Invoice {
 }
 
 model InvoiceItem {
-  id              String  @id @default(cuid())
+  id              String         @id @default(cuid())
   invoiceId       String
-  invoice         Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-  kind            String  @default("MATERIAL")
+  invoice         Invoice        @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  kind            String         @default("MATERIAL")
+  // Inventory spec §53/§59 — optional traceability link to the canonical item.
+  // Line description/unit/rate stay snapshot values (§37) and are never rewritten
+  // when the item master changes.
+  itemId          String?
+  item            InventoryItem? @relation(fields: [itemId], references: [id], onDelete: SetNull)
   description     String
-  quantity        Float   @default(1)
-  unit            String  @default("pcs")
-  unitPriceCents  Int     @default(0)
-  discountPercent Float   @default(0)
-  taxPercent      Float   @default(0)
-  totalCents      Int     @default(0)
+  quantity        Float          @default(1)
+  unit            String         @default("pcs")
+  unitPriceCents  Int            @default(0)
+  discountPercent Float          @default(0)
+  taxPercent      Float          @default(0)
+  totalCents      Int            @default(0)
 }
 
 model Payment {

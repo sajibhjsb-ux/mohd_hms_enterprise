@@ -9,7 +9,7 @@ import { PERMISSIONS } from "@/lib/hms/constants";
 import { isStaff } from "@/lib/hms/rbac";
 import type { SessionUser } from "@/lib/hms/auth";
 
-const REPORT_TYPES = ["complaints", "work_orders", "equipment", "pm_compliance", "finance", "technicians", "payroll"] as const;
+const REPORT_TYPES = ["complaints", "work_orders", "equipment", "pm_compliance", "finance", "technicians", "payroll", "inventory"] as const;
 type ReportType = (typeof REPORT_TYPES)[number];
 
 type Row = Record<string, string | number | null>;
@@ -276,6 +276,54 @@ async function buildReport(type: ReportType, from: Date, to: Date, user: Session
         openComplaints: rows.reduce((s, r) => s + Number(r.openComplaints ?? 0), 0),
       };
       return { summary, rows };
+    }
+
+    // Inventory spec §50/§51 — stock valuation, low/out-of-stock, movement and
+    // adjustment summary. Valuation method follows the inventory_valuation_method
+    // setting (AVERAGE maintained on receipts; standard cost via unitCostCents).
+    case "inventory": {
+      const method = (await db.setting.findUnique({ where: { key: "inventory_valuation_method" } }))?.value ?? "AVERAGE";
+      const costField = method === "STANDARD" ? "unitCostCents" : "avgCostCents";
+      const items = await db.inventoryItem.findMany({
+        where: { status: "ACTIVE" },
+        include: { supplier: { select: { name: true } }, warehouse: { select: { code: true, name: true } } },
+        orderBy: { category: "asc" },
+      });
+      const [movementsAgg, adjustments, openPo] = await Promise.all([
+        db.stockMovement.findMany({ where: { createdAt: { gte: from, lte: to } }, select: { type: true, quantity: true } }),
+        db.stockMovement.count({ where: { type: { in: ["ADJUST", "DAMAGE", "LOSS", "STOCK_COUNT"] }, createdAt: { gte: from, lte: to } } }),
+        db.purchaseItem.aggregate({ _sum: { quantity: true, receivedQty: true }, where: { po: { status: { in: ["APPROVED", "PARTIALLY_RECEIVED"] } } } }),
+      ]);
+      const rows: Row[] = items.map((i) => {
+        const cost = costField === "unitCostCents" ? i.unitCostCents : i.avgCostCents;
+        return {
+          sku: i.sku,
+          name: i.name,
+          category: i.category,
+          unit: i.unit,
+          onHand: i.stockQty,
+          reserved: i.reservedQty,
+          available: Math.round((i.stockQty - i.reservedQty) * 100) / 100,
+          reorderPoint: i.reorderLevel > 0 ? i.reorderLevel : i.minStockQty,
+          warehouse: i.warehouse?.name ?? "",
+          supplier: i.supplier?.name ?? "",
+          valueCents: Math.round(i.stockQty * cost),
+          status: i.stockQty <= 0 ? "OUT_OF_STOCK" : (i.reorderLevel > 0 ? i.reorderLevel : i.minStockQty) >= i.stockQty ? "LOW_STOCK" : "OK",
+        };
+      });
+      const movementByType: Record<string, number> = {};
+      for (const mv of movementsAgg) movementByType[mv.type] = Math.round(((movementByType[mv.type] ?? 0) + mv.quantity) * 100) / 100;
+      const summary: Summary = {
+        items: rows.length,
+        stockValueCents: rows.reduce((s, r) => s + Number(r.valueCents ?? 0), 0),
+        lowStock: rows.filter((r) => r.status === "LOW_STOCK").length,
+        outOfStock: rows.filter((r) => r.status === "OUT_OF_STOCK").length,
+        reservedQty: Math.round(rows.reduce((s, r) => s + Number(r.reserved ?? 0), 0) * 100) / 100,
+        onOrder: Math.round(Math.max(0, (openPo._sum.quantity ?? 0) - (openPo._sum.receivedQty ?? 0)) * 100) / 100,
+        adjustmentsInRange: adjustments,
+        ...movementByType,
+      };
+      return { summary, rows, valuationMethod: method };
     }
   }
 }

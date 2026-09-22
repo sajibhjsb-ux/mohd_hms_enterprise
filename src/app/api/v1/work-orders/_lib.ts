@@ -18,7 +18,11 @@ export const WO_DETAIL_INCLUDE = {
   checklist: { orderBy: { sortOrder: "asc" } },
   materials: {
     orderBy: { id: "asc" },
-    include: { inventoryItem: { select: { id: true, name: true, unit: true } } },
+    include: {
+      inventoryItem: {
+        select: { id: true, name: true, unit: true, sku: true, stockQty: true, reservedQty: true, avgCostCents: true, stockType: true },
+      },
+    },
   },
 } satisfies Prisma.WorkOrderInclude;
 

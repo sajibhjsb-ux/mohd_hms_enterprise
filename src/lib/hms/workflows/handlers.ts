@@ -43,7 +43,7 @@ registerWorkflow(EVENT_TYPES.COMPLAINT_CONFIRMED, "AUTO_CREATE_DRAFT_INVOICE", a
     return { result: "SKIPPED", detail: "linked work order already invoiced" };
   }
   // Build billable lines from work orders (labour + inventoried/recorded materials).
-  type Line = { kind: string; description: string; quantity: number; unit: string; unitPriceCents: number; totalCents: number };
+  type Line = { kind: string; itemId?: string | null; description: string; quantity: number; unit: string; unitPriceCents: number; totalCents: number };
   const lines: Line[] = [];
   for (const wo of complaint.workOrders) {
     const labour = Math.round(wo.labourHours * wo.labourRateCents);
@@ -52,7 +52,8 @@ registerWorkflow(EVENT_TYPES.COMPLAINT_CONFIRMED, "AUTO_CREATE_DRAFT_INVOICE", a
     }
     for (const m of wo.materials) {
       if (m.totalCents > 0) {
-        lines.push({ kind: "MATERIAL", description: `${m.name} (${wo.code})`, quantity: m.quantity, unit: m.unit, unitPriceCents: m.unitCostCents, totalCents: m.totalCents });
+        // Inventory spec §53 — carry the canonical item link onto invoice lines.
+        lines.push({ kind: "MATERIAL", itemId: m.inventoryItemId, description: `${m.name} (${wo.code})`, quantity: m.quantity, unit: m.unit, unitPriceCents: m.unitCostCents, totalCents: m.totalCents });
       }
     }
   }
@@ -72,7 +73,7 @@ registerWorkflow(EVENT_TYPES.COMPLAINT_CONFIRMED, "AUTO_CREATE_DRAFT_INVOICE", a
       balanceCents: subtotalCents,
       dueDate: new Date(Date.now() + 30 * 86400000),
       notes: `Auto-generated draft from complaint ${complaint.code} (customer confirmed).`,
-      items: { create: lines.map((l) => ({ kind: l.kind, description: l.description, quantity: l.quantity, unit: l.unit, unitPriceCents: l.unitPriceCents, totalCents: l.totalCents })) },
+      items: { create: lines.map((l) => ({ kind: l.kind, itemId: l.itemId ?? null, description: l.description, quantity: l.quantity, unit: l.unit, unitPriceCents: l.unitPriceCents, totalCents: l.totalCents })) },
     },
     select: { id: true, code: true },
   });
@@ -136,7 +137,8 @@ registerWorkflow(EVENT_TYPES.WORK_ORDER_COMPLETED, "AUTO_CREATE_DRAFT_INVOICE_WO
       notes: `Auto-generated draft from work order ${wo.code}.`,
       items: { create: [
         ...(wo.labourTotalCents > 0 ? [{ kind: "LABOUR", description: `Labour — ${wo.title}`, quantity: wo.labourHours, unit: "hr", unitPriceCents: wo.labourRateCents, totalCents: wo.labourTotalCents }] : []),
-        ...wo.materials.filter((m) => m.totalCents > 0).map((m) => ({ kind: "MATERIAL", description: m.name, quantity: m.quantity, unit: m.unit, unitPriceCents: m.unitCostCents, totalCents: m.totalCents })),
+        // Inventory spec §53 — keep the canonical item link on auto-invoiced material lines.
+        ...wo.materials.filter((m) => m.totalCents > 0).map((m) => ({ kind: "MATERIAL", itemId: m.inventoryItemId, description: m.name, quantity: m.quantity, unit: m.unit, unitPriceCents: m.unitCostCents, totalCents: m.totalCents })),
       ] },
     },
     select: { id: true, code: true },

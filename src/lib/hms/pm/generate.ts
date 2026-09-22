@@ -31,6 +31,18 @@ function isoDay(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
+type RequiredPart = { inventoryItemId?: string | null; name: string; quantity: number; unit?: string; unitCostCents?: number };
+
+/** Safely parse the plan's requiredParts JSON (Inventory spec §41). */
+function parseJsonArray<T>(raw: string): T[] {
+  try {
+    const parsed = JSON.parse(raw || "[]");
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Generate the next PM occurrence for a plan (idempotent).
  * - occurrenceKey: calendar plans default to the due day (`cal:YYYY-MM-DD`),
@@ -139,6 +151,27 @@ export async function generatePmOccurrence(opts: {
           done: false,
           sortOrder: i,
         })),
+      });
+    }
+    // Inventory spec §41 — materialize the plan's requiredParts into canonical
+    // WorkOrderMaterial rows (REQUESTED — no stock effect until issued). Parts
+    // carrying an inventoryItemId link to the ONE canonical catalog item.
+    const requiredParts = parseJsonArray<RequiredPart>(plan.requiredParts);
+    if (requiredParts.length > 0) {
+      await tx.workOrderMaterial.createMany({
+        data: requiredParts.map((p) => {
+          const unitCostCents = p.unitCostCents ?? 0;
+          return {
+            workOrderId: workOrder.id,
+            inventoryItemId: p.inventoryItemId ?? null,
+            name: p.name,
+            quantity: p.quantity,
+            unit: p.unit || "pcs",
+            unitCostCents,
+            totalCents: Math.round(p.quantity * unitCostCents),
+            status: "REQUESTED",
+          };
+        }),
       });
     }
     // §31 — backend-authoritative next-due advance (calendar → next date,

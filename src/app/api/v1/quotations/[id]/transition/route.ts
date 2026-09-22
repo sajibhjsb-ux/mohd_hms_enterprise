@@ -1,4 +1,9 @@
 // MOHD.HMS ENTERPRISE — Quotation workflow transitions: send | approve | reject | expire
+// (Inventory spec §14/§15 — approving a quotation NEVER touches stock; it may
+// optionally RESERVE required material when the
+// `inventory_reservation_on_quotation_approval` setting is enabled. Reservation
+// failures are advisory — a quotation must remain approvable, procurement is the
+// fallback (§45: "The quotation should still be creatable…").)
 
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -10,6 +15,7 @@ import { isStaff } from "@/lib/hms/rbac";
 import type { SessionUser } from "@/lib/hms/auth";
 import { emit } from "@/lib/hms/workflows/bus";
 import { EVENT_TYPES } from "@/lib/hms/workflows/types";
+import { createReservation, reservationOnQuotationApproval } from "@/lib/hms/inventory";
 
 const bodySchema = z.object({
   action: z.enum(["send", "approve", "reject", "expire"]),
@@ -43,6 +49,31 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     }
 
     const updated = await db.quotation.update({ where: { id }, data: { status: TARGET[body.action] } });
+
+    if (body.action === "approve") {
+      // §15 — OPTIONAL reservation on approval, governed by a Setting (default OFF).
+      if (await reservationOnQuotationApproval()) {
+        const lines = await db.quotationItem.findMany({ where: { quotationId: id, kind: "MATERIAL", itemId: { not: null } } });
+        const reserved: Array<{ sku: string; quantity: number }> = [];
+        const short: Array<{ sku: string; available: number; requested: number }> = [];
+        for (const line of lines) {
+          if (!line.itemId) continue;
+          try {
+            await createReservation({ itemId: line.itemId, quantity: line.quantity, quotationId: id, note: `Quotation ${quotation.code}` }, { actorId: user.id });
+            const it = await db.inventoryItem.findUnique({ where: { id: line.itemId }, select: { sku: true } });
+            reserved.push({ sku: it?.sku ?? "", quantity: line.quantity });
+          } catch {
+            const it = await db.inventoryItem.findUnique({ where: { id: line.itemId }, select: { sku: true, stockQty: true, reservedQty: true } });
+            short.push({ sku: it?.sku ?? "", available: Math.round(((it?.stockQty ?? 0) - (it?.reservedQty ?? 0)) * 100) / 100, requested: line.quantity });
+          }
+        }
+        await audit({
+          actorId: user.id, actorEmail: user.email, action: "QUOTATION_MATERIALS_RESERVATION",
+          resourceType: "QUOTATION", resourceId: id,
+          metadata: { code: quotation.code, reserved, short },
+        });
+      }
+    }
 
     if (body.action === "send") {
       const portalUserId = quotation.customer.portalUser?.id;

@@ -55,6 +55,9 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
           items: {
             create: quotation.items.map((it) => ({
               kind: it.kind,
+              // Inventory spec §53/§59 — keep the canonical item link on the
+              // invoice line; description/unit/rate remain historical snapshots (§37).
+              itemId: it.itemId,
               description: it.description,
               quantity: it.quantity,
               unit: it.unit,

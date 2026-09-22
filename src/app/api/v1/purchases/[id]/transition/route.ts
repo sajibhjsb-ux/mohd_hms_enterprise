@@ -1,7 +1,8 @@
-// MOHD.HMS ENTERPRISE — Purchase order workflow transitions.
+// MOHD.HMS ENTERPRISE — Purchase order workflow transitions (Inventory spec §17/§18).
 // submit (DRAFT→PENDING_APPROVAL) · approve/reject (purchases_approve) ·
-// receive (stock in, $transaction) · cancel. All transitions are validated
-// server-side; the client cannot skip states.
+// receive (goods receipt: full/partial, rejected/damaged quantities — only the
+// ACCEPTED quantity increases stock, through the central engine) · cancel.
+// All transitions are validated server-side; the client cannot skip states.
 
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -14,6 +15,7 @@ import { db } from "@/lib/db";
 import { audit, notifyRole } from "@/lib/hms/services";
 import { emit } from "@/lib/hms/workflows/bus";
 import { EVENT_TYPES } from "@/lib/hms/workflows/types";
+import { applyStockMovement } from "@/lib/hms/inventory";
 
 function withId(
   permission: Permission,
@@ -31,7 +33,12 @@ const transitionSchema = z.object({
     .array(
       z.object({
         purchaseItemId: z.string().trim().min(1),
+        /** Accepted quantity — the amount that actually entered stock. */
         quantity: z.coerce.number().positive("Receive quantity must be greater than zero."),
+        /** §18 — quality outcome quantities (must not exceed the accepted qty context). */
+        rejectedQty: z.coerce.number().min(0).optional(),
+        damagedQty: z.coerce.number().min(0).optional(),
+        note: z.string().trim().max(300).optional(),
       })
     )
     .optional(),
@@ -137,7 +144,7 @@ export const POST = withId(PERMISSIONS.purchases_manage, async (id, { req, user 
             ? body.items
             : poItems
                 .filter((pi) => pi.receivedQty < pi.quantity)
-                .map((pi) => ({ purchaseItemId: pi.id, quantity: pi.quantity - pi.receivedQty }));
+                .map((pi) => ({ purchaseItemId: pi.id, quantity: pi.quantity - pi.receivedQty, rejectedQty: 0, damagedQty: 0, note: undefined as string | undefined }));
 
         if (lines.length === 0) throw Errors.badRequest("Nothing left to receive on this order.");
 
@@ -145,31 +152,39 @@ export const POST = withId(PERMISSIONS.purchases_manage, async (id, { req, user 
           const pi = poItems.find((p) => p.id === line.purchaseItemId);
           if (!pi) throw Errors.badRequest("A receive line does not belong to this purchase order.");
           const remaining = pi.quantity - pi.receivedQty;
+          const rejected = line.rejectedQty ?? 0;
+          const damaged = line.damagedQty ?? 0;
           if (line.quantity > remaining + 1e-9) {
             throw Errors.badRequest(`Receive quantity for "${pi.description}" exceeds the remaining ${remaining}.`);
+          }
+          if (rejected + damaged > line.quantity + 1e-9) {
+            throw Errors.badRequest(`Rejected + damaged quantity for "${pi.description}" cannot exceed the received quantity.`);
           }
 
           await tx.purchaseItem.update({
             where: { id: pi.id },
-            data: { receivedQty: pi.receivedQty + line.quantity },
+            data: {
+              receivedQty: pi.receivedQty + line.quantity,
+              rejectedQty: pi.rejectedQty + rejected,
+              damagedQty: pi.damagedQty + damaged,
+            },
           });
 
-          if (pi.itemId) {
+          // §18 — ONLY the accepted quantity increases stock, through the central
+          // engine (also maintains moving-average cost + last purchase cost, §25).
+          if (pi.itemId && line.quantity - rejected - damaged > 1e-9) {
+            const accepted = line.quantity - rejected - damaged;
             const invItem = await tx.inventoryItem.findUnique({ where: { id: pi.itemId } });
-            if (invItem) {
-              const balanceAfter = invItem.stockQty + line.quantity;
-              await tx.inventoryItem.update({ where: { id: invItem.id }, data: { stockQty: balanceAfter } });
-              await tx.stockMovement.create({
-                data: {
-                  itemId: invItem.id,
-                  type: "RECEIVE",
-                  quantity: line.quantity,
-                  balanceAfter,
-                  referenceType: "PURCHASE",
-                  referenceId: po.id,
-                  note: `Received against ${po.code}`,
-                  createdById: user.id,
-                },
+            if (invItem && invItem.stockType !== "NON_STOCK") {
+              await applyStockMovement(tx, {
+                itemId: invItem.id,
+                type: "RECEIVE",
+                signedQuantity: accepted,
+                referenceType: "PURCHASE",
+                referenceId: po.id,
+                note: `Received against ${po.code}${rejected || damaged ? ` (rejected ${rejected}, damaged ${damaged})` : ""}${line.note ? ` — ${line.note}` : ""}`,
+                createdById: user.id,
+                unitCostCents: pi.unitCostCents,
               });
             }
           }

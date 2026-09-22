@@ -35,15 +35,17 @@ export async function audit(input: AuditInput) {
   }
 }
 
-/** Sequential document numbers: CPT-2025-0001, WO-2025-0001, INV-2025-0001 ... */
-export async function nextNumber(prefix: string): Promise<string> {
+/** Sequential document numbers: CPT-2025-0001, WO-2025-0001, INV-2025-0001 ...
+ *  Pass a transaction client when calling inside $transaction — using the global
+ *  pool inside an open interactive transaction deadlocks SQLite (single writer). */
+export async function nextNumber(prefix: string, client?: { counter: { upsert: (args: unknown) => Promise<{ value: number }> } }): Promise<string> {
   const year = new Date().getFullYear();
   const key = `${prefix}-${year}`;
-  const row = await db.counter.upsert({
+  const row = await (client ?? db).counter.upsert({
     where: { key },
     update: { value: { increment: 1 } },
     create: { key, value: 1 },
-  });
+  } as never);
   return `${prefix}-${year}-${String(row.value).padStart(4, "0")}`;
 }
 

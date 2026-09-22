@@ -87,6 +87,11 @@ export const PERMISSIONS = {
   // inventory
   inventory_read: "inventory.read",
   inventory_manage: "inventory.manage",
+  // Inventory spec §42/§56/§71 — issue/return stock (supervisors+); technicians
+  // may REQUEST materials but never directly move stock without authorization.
+  inventory_issue: "inventory.issue",
+  // Inventory spec §31/§32 — approve stock counts / authorized adjustments (admins only).
+  inventory_adjust: "inventory.adjust",
   // purchases
   purchases_read: "purchases.read",
   purchases_manage: "purchases.manage",
@@ -184,7 +189,7 @@ const SUPERVISOR_PERMS: Permission[] = [
   // Checklist engine — supervisors generate/review/approve; templates are managed here too
   PERMISSIONS.checklist_view, PERMISSIONS.checklist_generate, PERMISSIONS.checklist_edit,
   PERMISSIONS.checklist_approve, PERMISSIONS.checklist_template_manage,
-  PERMISSIONS.inventory_read,
+  PERMISSIONS.inventory_read, PERMISSIONS.inventory_issue,
   PERMISSIONS.purchases_read,
   PERMISSIONS.quotations_read, PERMISSIONS.quotations_manage,
   PERMISSIONS.invoices_read,
@@ -237,6 +242,8 @@ const FINANCE_PERMS: Permission[] = [
   PERMISSIONS.payments_read, PERMISSIONS.payments_record,
   PERMISSIONS.finance_read, PERMISSIONS.finance_manage,
   PERMISSIONS.purchases_read, PERMISSIONS.purchases_approve,
+  // Inventory spec §56 — Finance views costing/stock valuation (read-only).
+  PERMISSIONS.inventory_read,
   PERMISSIONS.reports_read, PERMISSIONS.reports_export,
   // Payroll (spec §29) — Finance reviews, approves and marks payment;
   // preparation stays with HR (segregation of duties).
@@ -323,6 +330,34 @@ export const WO_TRANSITIONS: Record<string, string[]> = {
 export const INVOICE_STATUSES = ["DRAFT", "SENT", "PARTIALLY_PAID", "PAID", "OVERDUE", "CANCELLED"] as const;
 export const QUOTATION_STATUSES = ["DRAFT", "SENT", "APPROVED", "REJECTED", "EXPIRED", "CONVERTED"] as const;
 export const PO_STATUSES = ["DRAFT", "PENDING_APPROVAL", "APPROVED", "REJECTED", "PARTIALLY_RECEIVED", "RECEIVED", "CANCELLED"] as const;
+
+// ── Inventory spec §3/§12/§28/§29 — canonical item taxonomy, material states, UOMs ──
+export const ITEM_TYPES = [
+  "STOCK", "SPARE_PART", "CONSUMABLE", "MATERIAL", "TOOL", "EQUIPMENT_COMPONENT", "SERVICE", "NON_STOCK", "ASSET",
+] as const;
+/** Item types that never hold stock (§3 — do not make every quotation line stockable). */
+export const NON_STOCK_ITEM_TYPES = ["SERVICE", "NON_STOCK"] as const;
+export const WO_MATERIAL_STATUSES = ["REQUESTED", "RESERVED", "ISSUED", "USED", "RETURNED", "CANCELLED"] as const;
+export const STOCK_MOVEMENT_TYPES = [
+  "OPENING", "RECEIVE", "ISSUE", "RETURN", "ADJUST", "TRANSFER_OUT", "TRANSFER_IN", "DAMAGE", "LOSS", "STOCK_COUNT",
+] as const;
+/** §29 — one canonical UOM set. Free-text units are normalized to upper-case of this list when matched. */
+export const UOMS = ["PCS", "EA", "SET", "BOX", "M", "M2", "M3", "KG", "L", "ROLL", "PACK", "UNIT", "HR"] as const;
+/** §28 — suggested categories (configurable; the inventory module also accepts free text). */
+export const INVENTORY_CATEGORIES = [
+  "HVAC", "ELECTRICAL", "PLUMBING", "FIRE_PROTECTION", "GENERATOR", "MECHANICAL", "CIVIL",
+  "CLEANING", "PEST_CONTROL", "LANDSCAPE", "GENERAL", "TOOLS", "CONSUMABLES", "SPARE_PARTS",
+] as const;
+
+export function normalizeUom(unit: string | undefined | null): string {
+  const u = (unit ?? "").trim().toUpperCase();
+  if (!u) return "PCS";
+  const aliases: Record<string, string> = { METRE: "M", METER: "M", METERS: "M", METRES: "M", MTR: "M", LTR: "L", LITRE: "L", LITER: "L", PIECE: "PCS", PIECES: "PCS", PC: "PCS", HRS: "HR", HOUR: "HR", HOURS: "HR", EACH: "EA", SQM: "M2", CBM: "M3" };
+  if (aliases[u]) return aliases[u];
+  if ((UOMS as readonly string[]).includes(u)) return u;
+  return u; // unknown units pass through upper-cased (never silently renamed)
+}
+
 export const PM_FREQUENCIES = [
   "DAILY", "WEEKLY", "BIWEEKLY", "MONTHLY", "EVERY_2_MONTHS", "QUARTERLY", "SEMI_ANNUAL", "ANNUAL", "CUSTOM",
 ] as const;

@@ -15,6 +15,12 @@ import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 import { emit } from "@/lib/hms/workflows/bus";
 import { dedupeSubmission } from "@/lib/hms/workflows/idempotency";
 import { computeNextDue } from "@/lib/hms/pm/schedule";
+import { applyStockMovement, consumeReservation } from "@/lib/hms/inventory";
+
+/** Consume this WO's active reservation for an item inside the caller's transaction. */
+function consumeReservationInTx(tx: Parameters<Parameters<typeof db.$transaction>[0]>[0], itemId: string, quantity: number, workOrderId: string) {
+  return consumeReservation(itemId, quantity, workOrderId, tx);
+}
 
 type Ctx = { req: NextRequest; user: SessionUser };
 
@@ -170,22 +176,37 @@ export const POST = withId(
             );
           }
 
-          // Stock deduction for inventoried materials (once — from-status guard above)
+          // Inventory spec §11/§12 — stock leaves ONLY through the central engine
+          // (applyStockMovement). Still-REQUESTED lines auto-issue here (approved
+          // legacy behavior: add material → complete → deduct); RESERVED lines
+          // consume their reservation first; ISSUED/USED/RETURNED/CANCELLED lines
+          // already settled. Insufficient stock REJECTS completion (§70).
           const lowStock: { id: string }[] = [];
           for (const m of current.materials) {
             if (!m.inventoryItemId) continue;
-            const item = await tx.inventoryItem.findUnique({ where: { id: m.inventoryItemId }, select: { id: true, stockQty: true, minStockQty: true } });
-            if (!item) continue;
-            const balanceAfter = item.stockQty - m.quantity;
-            await tx.inventoryItem.update({ where: { id: item.id }, data: { stockQty: balanceAfter } });
-            await tx.stockMovement.create({
-              data: {
-                itemId: item.id, type: "ISSUE", quantity: -m.quantity, balanceAfter,
-                referenceType: "WORK_ORDER", referenceId: current.id, note: current.code, createdById: user.id,
-              },
+            if (["ISSUED", "USED", "RETURNED", "CANCELLED"].includes(m.status)) continue;
+            const item = await tx.inventoryItem.findUnique({
+              where: { id: m.inventoryItemId },
+              select: { id: true, sku: true, stockQty: true, minStockQty: true, reorderLevel: true, stockType: true },
             });
-            // §17 — flag items that dropped to/below minimum after this issue.
-            if (balanceAfter <= item.minStockQty) lowStock.push({ id: item.id });
+            if (!item || item.stockType === "NON_STOCK") continue;
+            const consumeReservations = m.status === "RESERVED";
+            if (consumeReservations) await consumeReservationInTx(tx, item.id, m.quantity, current.id);
+            const mv = await applyStockMovement(tx, {
+              itemId: item.id,
+              type: "ISSUE",
+              signedQuantity: -m.quantity,
+              referenceType: "WORK_ORDER",
+              referenceId: current.id,
+              note: `${current.code} — ${m.name} (auto-issue at completion)`,
+              createdById: user.id,
+            });
+            await tx.workOrderMaterial.update({
+              where: { id: m.id },
+              data: { status: "ISSUED", issuedQty: Math.round((m.issuedQty + m.quantity) * 100) / 100 },
+            });
+            // §17/§43 — flag items that dropped to/below the reorder point after this issue.
+            if (mv.lowStock || mv.outOfStock) lowStock.push({ id: item.id });
           }
 
           // Transactional outbox (§5): completion event commits with the stock
