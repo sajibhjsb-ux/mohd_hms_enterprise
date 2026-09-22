@@ -24,6 +24,7 @@ import { EmailAutomations } from "./email-automations";
 import { EmailLogs } from "./email-logs";
 import { EmailTemplates } from "./email-templates";
 import { MailboxesAdmin } from "./email-mailboxes";
+import { RoleAccessMapping } from "./email-role-access";
 
 type EmailHealth = {
   sentToday: number;
@@ -114,6 +115,7 @@ export function EmailTab() {
       <TabsList className="mb-4 flex-wrap">
         <TabsTrigger value="overview">Overview</TabsTrigger>
         {canConfig ? <TabsTrigger value="mailboxes">Mailboxes</TabsTrigger> : null}
+        {canConfig ? <TabsTrigger value="role-access">Role Access</TabsTrigger> : null}
         {canTemplates ? <TabsTrigger value="templates">Templates</TabsTrigger> : null}
         {canAutomations ? <TabsTrigger value="automations">Automations</TabsTrigger> : null}
         {canView ? <TabsTrigger value="logs">Logs</TabsTrigger> : null}
@@ -125,6 +127,11 @@ export function EmailTab() {
       {canConfig ? (
         <TabsContent value="mailboxes">
           <MailboxesAdmin />
+        </TabsContent>
+      ) : null}
+      {canConfig ? (
+        <TabsContent value="role-access">
+          <RoleAccessMapping />
         </TabsContent>
       ) : null}
       {canTemplates ? (

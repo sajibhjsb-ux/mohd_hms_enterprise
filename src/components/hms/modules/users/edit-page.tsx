@@ -33,6 +33,7 @@ import { History, KeyRound, Lock, Save, ShieldCheck, Briefcase, UserCog, Triangl
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
+import { CorporateEmailCard } from "./corporate-email-card";
 
 // ── Types & constants ──
 
@@ -564,7 +565,13 @@ export function UserEditPage({ id }: { id: string }) {
           </CardContent>
         </Card>
 
-        {/* ── Card 4: Reset password ── */}
+        {/* ── Card 4.5: CORPORATE EMAIL (email provisioning spec §8/§29) —
+            self-managed card: shows the real backend provisioning state and
+            the authorized admin actions; auto-refreshes while provisioning
+            runs asynchronously on the outbox worker. ── */}
+        <CorporateEmailCard userId={id} role={target.role} onChanged={() => void load()} />
+
+        {/* ── Card 5: Reset password ── */}
         <Card className="shadow-sm h-fit">
           <CardHeader className="pb-3">
             <CardTitle className="text-base flex items-center gap-2">

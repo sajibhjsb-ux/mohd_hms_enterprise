@@ -64,6 +64,8 @@ model User {
   // not every user has a corporate mailbox).
   ownedMailboxes     Mailbox[]       @relation("MailboxOwner")
   mailboxMemberships MailboxMember[] @relation("MailboxMemberships")
+  // Corporate email provisioning lifecycle (email provisioning spec §10).
+  mailboxProvisioning MailboxProvisioning?
   // Payroll actors (spec §9 — every workflow step is attributable)
   payrollRunsCreated   PayrollRun[] @relation("PayrollRunCreator")
   payrollRunsSubmitted PayrollRun[] @relation("PayrollRunSubmitter")
@@ -2251,6 +2253,9 @@ model Mailbox {
 
   members  MailboxMember[]
   messages MailMessage[]
+  // Provisioning lifecycle record (email provisioning spec §10) — the mailbox
+  // is never cascade-deleted from here (SetNull keeps message history intact).
+  provisioning MailboxProvisioning?
 
   @@index([ownerUserId])
 }
@@ -2268,6 +2273,43 @@ model MailboxMember {
 
   @@unique([mailboxId, userId])
   @@index([userId])
+}
+
+// Corporate email provisioning state (email provisioning spec §10/§46).
+// ONE row per user — created by the backend when a role change makes the user
+// staff-eligible (CUSTOMER → staff) or an administrator provisions manually.
+// The corporate address is DETERMINISTIC (first.last@mohdhms.com) with a
+// collision suffix; the mailbox itself lives in the existing Mailbox model
+// (the application's authoritative mail store) — this row carries the
+// provisioning LIFECYCLE: PENDING → PROVISIONING → ACTIVE / FAILED, DISABLED
+// on staff→CUSTOMER downgrade (mailbox data is NEVER deleted, only disabled).
+// No credentials are ever stored here (§12 — internal mailboxes are accessed
+// through the user's existing application session; there is no mailbox password).
+model MailboxProvisioning {
+  id             String    @id @default(cuid())
+  userId         String    @unique
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Generated corporate address (stable once provisioned — reused on re-promotion).
+  corporateEmail String
+  // The provisioned mailbox (null until the mailbox row exists).
+  mailboxId      String?   @unique
+  mailbox        Mailbox?  @relation(fields: [mailboxId], references: [id], onDelete: SetNull)
+  // NOT_REQUIRED | PENDING | PROVISIONING | ACTIVE | FAILED | DISABLED
+  status         String    @default("PENDING")
+  // Role transition that triggered this provisioning attempt (audit context).
+  previousRole   String    @default("")
+  newRole        String    @default("")
+  attempts       Int       @default(0)
+  // Safe, user-displayable provider error (sanitized — never credentials).
+  lastError      String    @default("")
+  // Administrator who triggered/retried provisioning (null = system workflow).
+  triggeredById  String?
+  provisionedAt  DateTime?
+  disabledAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([status])
 }
 
 model MailMessage {

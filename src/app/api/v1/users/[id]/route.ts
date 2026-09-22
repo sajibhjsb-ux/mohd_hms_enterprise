@@ -422,6 +422,18 @@ export const PATCH = withId(PERMISSIONS.users_update, async (id, { req, user }) 
   // KEPT (no forced re-login); the client refreshes its own session state when
   // the USER_UPDATED event for its own id arrives (shell.tsx sync).
   await emit({ type: EVENT_TYPES.USER_UPDATED, resourceType: "USER", resourceId: id, payload: { fields: Object.keys(body).filter((k) => k !== "action"), roleChanged, positionChanged }, actorType: "USER", actorId: user.id });
+  // ── Corporate email provisioning trigger (email provisioning spec §2/§25) ──
+  // The backend detects the role transition itself (previousRole/newRole in the
+  // secure server-generated payload); the EMAIL_PROVISIONING outbox workflow
+  // provisions the corporate mailbox WITHOUT blocking this response (§26).
+  if (roleChanged) {
+    await emit({
+      type: EVENT_TYPES.USER_ROLE_CHANGED,
+      resourceType: "USER", resourceId: id,
+      payload: { previousRole: target.role, newRole: body.role, targetEmail: target.email, targetName: target.name },
+      actorType: "USER", actorId: user.id,
+    });
+  }
   return ok(fresh ?? updated);
 });
 

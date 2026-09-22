@@ -154,7 +154,7 @@ export const smtpProvider: EmailProvider = {
 };
 
 /** Strip anything credential-like from provider error strings. */
-function sanitizeProviderError(message: string): string {
+export function sanitizeProviderError(message: string): string {
   return message
     .replace(/(password|pass|secret|token)\s*[:=]\s*\S+/gi, "$1: ***")
     .replace(/\b535\b.*$/, "authentication failed (535)")

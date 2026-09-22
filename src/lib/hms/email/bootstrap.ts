@@ -7,14 +7,21 @@ import "server-only";
 import { db } from "@/lib/db";
 import { AUTOMATION_SEEDS, TEMPLATE_CATALOG } from "./catalog";
 import { registerEmailWorkflows } from "./workflows";
+import { registerProvisioningWorkflow, ensureSharedMailboxes } from "./provisioning";
 
 const g = globalThis as unknown as { __hmsEmailBooted?: boolean };
 
 export async function bootstrapEmailSystem(): Promise<void> {
   registerEmailWorkflows(); // engine handlers — always (cheap, registry on globalThis)
+  registerProvisioningWorkflow(); // EMAIL_PROVISIONING on USER_ROLE_CHANGED (email provisioning spec §25)
   if (g.__hmsEmailBooted) return;
   g.__hmsEmailBooted = true;
   try {
+    // ── Canonical shared mailboxes (provisioning spec §15 — mapping targets) ──
+    const sharedCreated = await ensureSharedMailboxes();
+    if (sharedCreated > 0) {
+      console.log(JSON.stringify({ ts: new Date().toISOString(), level: "info", msg: "shared-mailboxes-bootstrapped", created: sharedCreated }));
+    }
     // ── Templates ──
     const existing = await db.emailTemplate.findMany({ select: { key: true } });
     const have = new Set(existing.map((t) => t.key));

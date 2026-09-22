@@ -69,6 +69,10 @@ type ProfilePayload = {
     lastLoginAt: string | null;
     createdAt: string;
   };
+  // Corporate email (email provisioning spec §8) — the WORK identity, kept
+  // separate from the sign-in identity. Null when the account has no corporate
+  // mailbox; active:false shows a suspended mailbox honestly.
+  corporateEmail?: { email: string; active: boolean } | null;
   technicianProfile: {
     id: string;
     employeeNo: string;
@@ -417,6 +421,18 @@ function ProfileViewPage() {
               <Briefcase className="h-4 w-4 text-muted-foreground shrink-0" aria-hidden />
               <span className="text-muted-foreground">Position:</span>
               <span>{data.user.position ?? data.employee?.position}</span>
+            </div>
+          ) : null}
+          {/* Corporate email (email provisioning spec §8) — WORK identity shown
+              next to the account identity; honest about suspension state. */}
+          {data.corporateEmail ? (
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <Building2 className="h-4 w-4 text-muted-foreground shrink-0" aria-hidden />
+              <span className="text-muted-foreground">Corporate email:</span>
+              <span className="font-medium break-all">{data.corporateEmail.email}</span>
+              <Badge variant="outline" className={data.corporateEmail.active ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-stone-100 text-stone-600 border-stone-200"}>
+                {data.corporateEmail.active ? "ACTIVE" : "SUSPENDED"}
+              </Badge>
             </div>
           ) : null}
           <Separator />

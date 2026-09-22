@@ -974,15 +974,29 @@ export async function readAttachment(userId: string, messageId: string, attachme
 
 export async function recipientSuggestions(user: { id: string; role: string }, q: string) {
   const query = q.trim().slice(0, 80);
-  if (!query) return { users: [], customers: [], mailboxes: [], groups: [] };
+  if (!query) return { users: [], customers: [], mailboxes: [], groups: [], corporateEmails: [] };
   const like = { contains: query };
-  const [users, mailboxes, customers] = await Promise.all([
+  const qLower = query.toLowerCase();
+  const [users, corporateDirectory, myMailboxList, customers] = await Promise.all([
     db.user.findMany({
       where: { status: "ACTIVE", role: { not: "CUSTOMER" }, OR: [{ name: like }, { email: like }] },
       select: { id: true, name: true, email: true, role: true },
       orderBy: { name: "asc" },
       take: 8,
     }),
+    // Corporate-address directory search (email provisioning spec §22/§34):
+    // a query may match a colleague's CORPORATE address or display name — the
+    // result is merged into the staff suggestions below (never a second identity).
+    db.mailbox.findMany({
+      where: { kind: "PERSONAL", isActive: true, ownerUserId: { not: null } },
+      select: { email: true, displayName: true, owner: { select: { id: true, email: true, name: true, role: true } } },
+      take: 200,
+    }).then((rows) =>
+      rows.filter((r) =>
+        r.owner?.role !== "CUSTOMER" &&
+        (r.email.toLowerCase().includes(qLower) || r.displayName.toLowerCase().includes(qLower) || (r.owner?.name.toLowerCase().includes(qLower) ?? false))
+      ).slice(0, 8)
+    ),
     myMailboxes(user.id),
     roleCan(user.role, PERMISSIONS.customers_read)
       ? db.customer.findMany({
@@ -992,9 +1006,26 @@ export async function recipientSuggestions(user: { id: string; role: string }, q
         })
       : Promise.resolve([] as { id: string; companyName: string; contactPerson: string; email: string }[]),
   ]);
+  // Merge corporate-directory hits into the staff user list (deduped by id) so
+  // compose suggests the colleague ONCE with their authoritative sign-in
+  // identity; the corporate address travels alongside as directory metadata.
+  const byId = new Map<string, { id: string; name: string; email: string; role: string; corporateEmail?: string }>();
+  for (const u of users) byId.set(u.id, { ...u });
+  for (const hit of corporateDirectory) {
+    const owner = hit.owner!;
+    const existing = byId.get(owner.id);
+    if (existing) existing.corporateEmail = hit.email;
+    else byId.set(owner.id, { id: owner.id, name: owner.name, email: owner.email, role: owner.role, corporateEmail: hit.email });
+  }
+  const mergedUsers = [...byId.values()];
   return {
-    users: users.map((u) => ({ id: u.id, name: u.name, email: u.email, role: u.role })),
-    mailboxes: mailboxes.map((m) => ({ id: m.id, name: m.displayName || m.email, email: m.email })),
+    users: mergedUsers.map((u) => ({ id: u.id, name: u.name, email: u.email, role: u.role })),
+    // Corporate email directory hits (§22) — consumers may offer
+    // name <corporate@mohdhms.com> completions; sign-in identity is preserved.
+    corporateEmails: mergedUsers
+      .filter((u) => u.corporateEmail)
+      .map((u) => ({ id: u.id, name: u.name, email: u.corporateEmail!, role: u.role })),
+    mailboxes: myMailboxList.map((m) => ({ id: m.id, name: m.displayName || m.email, email: m.email })),
     customers: customers
       .filter((c) => Boolean(c.email))
       .map((c) => ({ id: c.id, name: c.companyName || c.contactPerson, email: c.email })),

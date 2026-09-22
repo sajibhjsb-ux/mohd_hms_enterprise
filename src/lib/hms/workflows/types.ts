@@ -79,6 +79,9 @@ export const EVENT_TYPES = {
   EQUIPMENT_UPDATED: "EQUIPMENT_UPDATED",
   CUSTOMER_UPDATED: "CUSTOMER_UPDATED",
   USER_UPDATED: "USER_UPDATED",
+  // Role change (email provisioning spec §25) — emitted by the authoritative
+  // role-change path; the EMAIL_PROVISIONING workflow reacts on the worker.
+  USER_ROLE_CHANGED: "USER_ROLE_CHANGED",
   HR_LEAVE_UPDATED: "HR_LEAVE_UPDATED",
   EMPLOYEE_UPDATED: "EMPLOYEE_UPDATED",
   // Payroll (under HR) — run lifecycle + payslip publication + overtime approvals

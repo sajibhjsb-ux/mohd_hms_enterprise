@@ -66,7 +66,7 @@ export const GET = handler(async ({ user }) => {
   });
   if (!me) throw Errors.notFound("User not found.");
 
-  const [profileState, pendingPhoneRequest] = await Promise.all([
+  const [profileState, pendingPhoneRequest, corporateMailbox] = await Promise.all([
     customerProfileState(user),
     db.profileChangeRequest.findFirst({
       where: { userId: user.id, field: "PHONE", status: "PENDING" },
@@ -74,6 +74,12 @@ export const GET = handler(async ({ user }) => {
       select: {
         id: true, proposedValue: true, currentValue: true, createdAt: true,
       },
+    }),
+    // Corporate mailbox (email provisioning spec §8) — the employee profile
+    // shows the PERSONAL/ACCOUNT email above and the CORPORATE email here.
+    db.mailbox.findFirst({
+      where: { kind: "PERSONAL", ownerUserId: user.id },
+      select: { email: true, isActive: true },
     }),
   ]);
 
@@ -92,6 +98,12 @@ export const GET = handler(async ({ user }) => {
       lastLoginAt: me.lastLoginAt?.toISOString() ?? null,
       createdAt: me.createdAt.toISOString(),
     },
+    // Corporate email (email provisioning spec §8) — null when the account has
+    // no corporate mailbox (e.g. CUSTOMER accounts). Disabled mailboxes are
+    // shown with active:false so the profile is honest about mailbox state.
+    corporateEmail: corporateMailbox
+      ? { email: corporateMailbox.email, active: corporateMailbox.isActive }
+      : null,
     technicianProfile: me.technicianProfile
       ? {
           id: me.technicianProfile.id,
