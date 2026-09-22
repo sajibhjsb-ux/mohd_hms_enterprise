@@ -181,12 +181,13 @@ export function AuthLoginScreen({
           <div className="flex items-center gap-2">
             <Checkbox
               id="auth-remember"
+              data-testid="auth-remember"
               checked={remember}
               onCheckedChange={(v) => onRememberChange(v === true)}
               className="h-[1.1rem] w-[1.1rem]"
             />
             <Label htmlFor="auth-remember" className="text-sm font-normal text-foreground/90">
-              Remember me
+              Keep me signed in on this device
             </Label>
           </div>
           <button

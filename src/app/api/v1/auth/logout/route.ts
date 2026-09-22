@@ -1,5 +1,7 @@
 import { handler, ok } from "@/lib/hms/api";
-import { destroySession, getSessionUser } from "@/lib/hms/auth";
+import {
+  destroySession, clearSessionCookie, markSessionIdleRevoked, SESSION_COOKIE,
+} from "@/lib/hms/auth";
 import { audit } from "@/lib/hms/services";
 
 export const POST = handler(
@@ -26,7 +28,21 @@ export const POST = handler(
         });
       }
     }
-    await destroySession();
+
+    // USER-CONTROLLED AUTO LOGIN: an inactivity logout on a remember-grant
+    // ("Keep me signed in on this device") revokes the LIVE credential while
+    // preserving the grant row, so a genuinely fresh app open can restore the
+    // session through the validated restore endpoint (token rotation). A
+    // MANUAL logout — no reason, or any reason other than "idle" — always
+    // destroys the grant: explicit sign-out is more authoritative than
+    // persistence and the user is never silently logged back in.
+    let idleMarked = false;
+    if (reason === "idle") {
+      const token = req.cookies.get(SESSION_COOKIE)?.value;
+      if (token) idleMarked = await markSessionIdleRevoked(token);
+    }
+    if (idleMarked) await clearSessionCookie();
+    else await destroySession();
     return ok({ loggedOut: true });
   },
   { auth: false }

@@ -105,6 +105,19 @@ model Session {
   // never touches it. The server enforces: idle >= SESSION_IDLE_TIMEOUT_MS
   // invalidates the session on the next authenticated request.
   lastActivityAt DateTime @default(now())
+  // USER-CONTROLLED AUTO LOGIN ("Keep me signed in on this device").
+  // remember=true marks THIS device's session as a persistent-login grant —
+  // set only by an explicit user choice (login checkbox or the Security
+  // settings toggle), DEFAULT OFF for every new session/device/user.
+  remember      Boolean   @default(false)
+  // Idle-timeout marker for remember-grants: instead of deleting the row, the
+  // 5-minute idle expiry revokes the LIVE credential (every authenticated
+  // request → 401 SESSION_EXPIRED, exactly as before) while the grant survives
+  // so a genuinely FRESH app open can restore it via
+  // POST /api/v1/auth/auto-login/restore (token rotation on restore).
+  // Explicit logout, password change/reset, admin reset and user disable all
+  // DELETE the row — an explicit logout always wins over auto login.
+  idleRevokedAt DateTime?
 
   @@index([userId])
   @@index([expiresAt])

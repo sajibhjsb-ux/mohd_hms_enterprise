@@ -88,13 +88,18 @@ export type SessionUser = {
  * Create a DB-backed session. `ttlMs` defaults to the standard 7-day TTL;
  * the login flow passes SESSION_REMEMBER_TTL_MS when "Remember me" is set
  * (sliding renewal continues to apply to both variants).
+ *
+ * `remember` is the user-controlled Auto Login grant ("Keep me signed in on
+ * this device") — DEFAULT false. Only an explicit user choice (login checkbox
+ * or the Profile → Security toggle) ever sets it; it is stored per SESSION
+ * (= per device/browser), never per user, so devices stay independent.
  */
-export async function createSession(userId: string, ip?: string, userAgent?: string, ttlMs: number = SESSION_TTL_MS) {
+export async function createSession(userId: string, ip?: string, userAgent?: string, ttlMs: number = SESSION_TTL_MS, remember: boolean = false) {
   const token = generateToken();
   const expiresAt = new Date(Date.now() + ttlMs);
   const lastActivityAt = new Date(); // a fresh sign-in is, by definition, active
   await db.session.create({
-    data: { token, userId, expiresAt, ip: ip ?? null, userAgent: userAgent ?? null, lastActivityAt },
+    data: { token, userId, expiresAt, ip: ip ?? null, userAgent: userAgent ?? null, lastActivityAt, remember },
   });
   return { token, expiresAt };
 }
@@ -136,18 +141,38 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   const session = await db.session.findUnique({ where: { token }, include: { user: true } });
   if (!session) return null;
 
-  // 1. Absolute expiry.
+  // 1. Absolute expiry (the 30-day cap for remember-grants too — the sliding
+  //    renewal below is the only thing that can extend it, and it only runs
+  //    for live sessions).
   if (session.expiresAt.getTime() < Date.now()) {
     await db.session.delete({ where: { id: session.id } }).catch(() => undefined);
     lastSessionRejection = "EXPIRED";
     return null;
   }
 
+  // 1b. Already idle-revoked remember-grant: the live credential was revoked
+  //     by a previous idle expiry. It stays LOGGED OUT for every normal
+  //     request — restoration is only possible via the dedicated restore
+  //     endpoint, never by carrying on with the stale cookie.
+  if (session.idleRevokedAt) {
+    lastSessionRejection = "IDLE_TIMEOUT";
+    return null;
+  }
+
   // 2. Idle timeout — the inactivity auto-logout. The user record is loaded
   //    with the session, so the audit has full actor context.
+  //    USER-CONTROLLED AUTO LOGIN: a remember-grant is not deleted here — the
+  //    LIVE credential is revoked (idleRevokedAt) so the user is genuinely
+  //    logged out (this and every other request fail 401 SESSION_EXPIRED),
+  //    while the grant itself survives for a possible restoration on a fresh
+  //    app open. Non-remember sessions keep the historical delete behavior.
   const idleMs = Date.now() - session.lastActivityAt.getTime();
   if (idleMs >= SESSION_IDLE_TIMEOUT_MS) {
-    await db.session.delete({ where: { id: session.id } }).catch(() => undefined);
+    if (session.remember) {
+      await db.session.update({ where: { id: session.id }, data: { idleRevokedAt: new Date() } }).catch(() => undefined);
+    } else {
+      await db.session.delete({ where: { id: session.id } }).catch(() => undefined);
+    }
     lastSessionRejection = "IDLE_TIMEOUT";
     try {
       const { audit } = await import("@/lib/hms/services");
@@ -204,6 +229,75 @@ export async function destroySession() {
     await db.session.deleteMany({ where: { token } }).catch(() => undefined);
   }
   await clearSessionCookie();
+}
+
+/** Mark a remember-grant as idle-revoked WITHOUT deleting it (used by the
+ *  client-initiated inactivity logout, reason "idle"). Returns false for any
+ *  session that is not a live remember-grant — the caller then falls back to
+ *  the normal destructive logout. Manual logout NEVER calls this: explicit
+ *  sign-out always destroys the grant (§auto-login: logout wins). */
+export async function markSessionIdleRevoked(token: string): Promise<boolean> {
+  const s = await db.session.findUnique({ where: { token } }).catch(() => null);
+  if (!s || !s.remember || s.idleRevokedAt) return false;
+  await db.session.update({ where: { id: s.id }, data: { idleRevokedAt: new Date() } }).catch(() => undefined);
+  return true;
+}
+
+export type RestoreResult =
+  | { restored: true; user: SessionUser; expiresAt: Date }
+  | { restored: false; reason: string | null; rejected: boolean };
+
+/**
+ * USER-CONTROLLED AUTO LOGIN — secure persistent-session restoration.
+ *
+ * Called ONLY by POST /api/v1/auth/auto-login/restore on a genuinely fresh
+ * app open (the client skips it entirely when the current tab was itself
+ * logged out — sessionStorage notice — so auto login can never defeat the
+ * 5-minute inactivity timeout in the same sitting).
+ *
+ * Server-authoritative validation chain: the cookie must hold the token of a
+ * remember-grant that (a) still exists — explicit logout, password change /
+ * reset, admin reset and user disable all DELETE the row, (b) is within its
+ * absolute expiry, (c) is actually idle-revoked (a live session never needs
+ * restoration), and (d) belongs to an ACTIVE user. The authoritative role and
+ * permissions are re-resolved from the User row — never replayed from stale
+ * state. On success the token is ROTATED (the old credential sat in a logged-
+ * out browser) and a fresh HttpOnly cookie is issued.
+ */
+export async function restorePersistentSession(): Promise<RestoreResult> {
+  const jar = await cookies();
+  const token = jar.get(SESSION_COOKIE)?.value;
+  if (!token) return { restored: false, reason: null, rejected: false };
+  const session = await db.session.findUnique({ where: { token }, include: { user: true } }).catch(() => null);
+  if (!session) return { restored: false, reason: "session-gone", rejected: true };
+  if (!session.remember) return { restored: false, reason: "not-a-grant", rejected: true };
+  if (session.expiresAt.getTime() < Date.now()) {
+    await db.session.delete({ where: { id: session.id } }).catch(() => undefined);
+    return { restored: false, reason: "expired", rejected: true };
+  }
+  if (!session.idleRevokedAt) return { restored: false, reason: "not-idle-revoked", rejected: true };
+  if (session.user.status !== "ACTIVE") return { restored: false, reason: "user-not-active", rejected: true };
+
+  const newToken = generateToken();
+  await db.session.update({
+    where: { id: session.id },
+    data: { token: newToken, idleRevokedAt: null, lastActivityAt: new Date(), lastSeenAt: new Date() },
+  }).catch(() => undefined);
+  await setSessionCookie(newToken, session.expiresAt);
+  return {
+    restored: true,
+    expiresAt: session.expiresAt,
+    user: {
+      id: session.user.id,
+      email: session.user.email,
+      name: session.user.name,
+      role: session.user.role,
+      status: session.user.status,
+      customerId: session.user.customerId,
+      permissions: can(session.user.role as never),
+      sessionExpiresAt: session.expiresAt,
+    },
+  };
 }
 
 /** Password policy: min 8 chars, letter + number. */

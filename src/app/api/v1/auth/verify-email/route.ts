@@ -52,9 +52,13 @@ export const POST = handler(
       user.id,
       ip,
       req.headers.get("user-agent") ?? undefined,
-      remember ? SESSION_REMEMBER_TTL_MS : SESSION_TTL_MS
+      remember ? SESSION_REMEMBER_TTL_MS : SESSION_TTL_MS,
+      remember
     );
     await setSessionCookie(token, expiresAt);
+    if (remember) {
+      await audit({ actorId: user.id, actorEmail: user.email, action: "PERSISTENT_SESSION_CREATED", resourceType: "SESSION", metadata: { via: "email-verification" }, ip });
+    }
     await clearEmailOtpDevMailbox(user.id);
     await audit({ actorId: user.id, actorEmail: user.email, action: "EMAIL_VERIFIED", resourceType: "AUTH", ip });
 

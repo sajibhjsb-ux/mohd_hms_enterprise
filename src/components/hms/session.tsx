@@ -53,6 +53,22 @@ const Ctx = createContext<SessionCtx>({
  *  redirect, consumed + cleared once by the auth flow). */
 export const SESSION_EXPIRED_NOTICE_KEY = "hms_session_expired_notice";
 
+/** True when THIS tab was itself logged out in the current sitting (idle
+ *  expiry or manual logout navigation) — the flag survives in-tab reloads but
+ *  dies when the browser/PWA is closed. USER-CONTROLLED AUTO LOGIN uses it to
+ *  distinguish the states the spec separates (§22): restoration is attempted
+ *  ONLY on a genuinely fresh app open, never right after an in-tab logout —
+ *  so auto login can never defeat the 5-minute inactivity timeout or undo an
+ *  explicit logout in front of the user. */
+export function hasSessionExpiredFlag(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return sessionStorage.getItem(SESSION_EXPIRED_NOTICE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 export function useSession() {
   return useContext(Ctx);
 }
@@ -66,8 +82,31 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const refresh = useCallback(async () => {
     try {
       const res = await api.get<{ authenticated: boolean; user?: SessionUser; idleTimeoutSeconds?: number }>("/api/v1/auth/session");
-      setUser(res.data.authenticated && res.data.user ? res.data.user : null);
-      if (res.data.idleTimeoutSeconds) setIdleTimeoutSeconds(res.data.idleTimeoutSeconds);
+      if (res.data.authenticated && res.data.user) {
+        setUser(res.data.user);
+        if (res.data.idleTimeoutSeconds) setIdleTimeoutSeconds(res.data.idleTimeoutSeconds);
+      } else {
+        setUser(null);
+        // USER-CONTROLLED AUTO LOGIN (server-authoritative): on a fresh app
+        // open with an expired/idle-revoked session, ask the backend to
+        // validate the persistent-login grant ("Keep me signed in on this
+        // device") and restore the session. The backend alone decides — the
+        // grant must exist (explicit logout/password change/admin reset all
+        // destroy it), be unexpired, belong to an ACTIVE user, and the role
+        // comes back freshly resolved from the DB. A tab that logged itself
+        // out this sitting (sessionStorage flag) never attempts restoration.
+        if (!hasSessionExpiredFlag()) {
+          try {
+            const r = await api.post<{ restored: boolean; user?: SessionUser; idleTimeoutSeconds?: number }>("/api/v1/auth/auto-login/restore");
+            if (r.data?.restored && r.data.user) {
+              // Restoration is NOT a real sign-in: no welcome popup, no
+              // persisted-route reset — the app opens as the user left it.
+              setUser(r.data.user);
+              if (r.data.idleTimeoutSeconds) setIdleTimeoutSeconds(r.data.idleTimeoutSeconds);
+            }
+          } catch { /* no grant / rejected — stay on the login flow */ }
+        }
+      }
     } catch {
       setUser(null);
     } finally {

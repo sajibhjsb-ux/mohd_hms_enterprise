@@ -77,11 +77,17 @@ export const POST = handler(
       user.id,
       ip,
       req.headers.get("user-agent") ?? undefined,
-      remember ? SESSION_REMEMBER_TTL_MS : SESSION_TTL_MS
+      remember ? SESSION_REMEMBER_TTL_MS : SESSION_TTL_MS,
+      remember
     );
     await setSessionCookie(token, expiresAt);
     await db.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
     await audit({ actorId: user.id, actorEmail: user.email, action: "LOGIN", resourceType: "AUTH", ip });
+    if (remember) {
+      // USER-CONTROLLED AUTO LOGIN: the login checkbox explicitly opted this
+      // device into a persistent-login grant (30-day cap, revocable, audited).
+      await audit({ actorId: user.id, actorEmail: user.email, action: "PERSISTENT_SESSION_CREATED", resourceType: "SESSION", metadata: { via: "login" }, ip });
+    }
 
     // Profile state is derived server-side (authoritative) and customerId is
     // included so the client session is complete immediately after login.
