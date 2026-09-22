@@ -334,7 +334,15 @@ export async function enablePush(): Promise<{ ok: boolean; error?: string; trans
   try {
     if (typeof Notification === "undefined") return { ok: false, error: "This browser does not support notifications." };
     const permission = await Notification.requestPermission();
-    if (permission !== "granted") return { ok: false, error: "Notification permission was not granted." };
+    if (permission !== "granted") {
+      return {
+        ok: false,
+        error:
+          permission === "denied"
+            ? "Browser notifications are blocked for this site. Allow them in your browser's site settings (padlock icon in the address bar → Notifications) and try again."
+            : "Notification permission was not granted.",
+      };
+    }
 
     const status = await fetchPushStatus();
     if (!("serviceWorker" in navigator)) return { ok: false, error: "Service worker is not available." };

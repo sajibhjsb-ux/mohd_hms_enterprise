@@ -272,6 +272,66 @@ async function processOne(logId: string): Promise<void> {
   log("error", "push-dead-letter", { pushLogId: row.id, attempt, err: firstError.slice(0, 120) });
 }
 
+export type TestSendResult = {
+  status: string;
+  channel: string;
+  deviceCount: number;
+  sentCount: number;
+  failedCount: number;
+  skippedCount: number;
+  fcmMessageId?: string;
+  errorCode?: string;
+  error?: string;
+};
+
+/**
+ * Admin test send (spec §31): enqueue a clearly-marked test row, drive it
+ * through the SAME delivery path (processOne), and return the ACTUAL outcome
+ * synchronously — never a fabricated success. Runs inline (not via the
+ * scheduler) so the admin sees the authoritative result immediately.
+ */
+export async function runTestSend(input: {
+  userId: string;
+  targetDeviceId?: string;
+  title: string;
+  body: string;
+}): Promise<TestSendResult> {
+  const row = await db.pushLog.create({
+    data: {
+      userId: input.userId,
+      type: "INFO",
+      title: input.title.slice(0, 120),
+      body: input.body.slice(0, 300),
+      route: "/dashboard",
+      priority: "NORMAL",
+      channel: fcmConfigured() ? "FCM" : "VAPID",
+      targetDeviceId: input.targetDeviceId ?? "",
+      isTest: true,
+    },
+  });
+  try {
+    await processOne(row.id);
+  } catch (e) {
+    // Honest terminal state even when the worker itself throws (§13).
+    await db.pushLog.update({
+      where: { id: row.id },
+      data: { status: "FAILED", errorCode: "Transient", lastError: `Test send exception: ${e instanceof Error ? e.message : String(e)}`.slice(0, 200) },
+    }).catch(() => undefined);
+  }
+  const done = await db.pushLog.findUniqueOrThrow({ where: { id: row.id } });
+  return {
+    status: done.status,
+    channel: done.channel,
+    deviceCount: done.deviceCount,
+    sentCount: done.sentCount,
+    failedCount: done.failedCount,
+    skippedCount: done.skippedCount,
+    fcmMessageId: done.fcmMessageId || undefined,
+    errorCode: done.errorCode || undefined,
+    error: done.lastError || undefined,
+  };
+}
+
 /** One worker tick: recover stuck rows, then process due QUEUED rows. */
 export async function tickPushWorker(): Promise<void> {
   if (g.__hmsPushWorkerBusy) return;

@@ -72,3 +72,6 @@ mini-services/*/storage.log
 qa/
 # Vendored OpenWA gateway clone (pinned third-party deployment — see mini-services/WHATSAPP-GATEWAY.md)
 mini-services/openwa/
+# ...but the push admin test-send API route is real source code:
+!src/app/api/v1/push/admin/test/
+!src/app/api/v1/push/admin/test/**

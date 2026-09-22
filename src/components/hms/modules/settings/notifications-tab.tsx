@@ -44,6 +44,27 @@ type TestResult = {
   skippedCount: number; fcmMessageId?: string; errorCode?: string; error?: string;
 };
 
+/**
+ * Safe human-readable delivery reasons (spec §13): the real reason is always
+ * shown — NoDevices vs Unconfigured vs Firebase failure are NOT collapsed
+ * into a generic "Something went wrong". Raw diagnostics stay in server logs.
+ */
+function friendlyPushError(code: string | undefined, raw: string | undefined): string {
+  const detail = (raw ?? "").trim();
+  switch (code) {
+    case "NoDevices":
+      return "No active push device is registered for this user. Enable notifications on the user's browser/device (Profile → Notifications) and try again.";
+    case "Unconfigured":
+      return detail || "Push transport is not configured on this server yet. Add the Firebase (or VAPID) credentials to the server environment, then retry.";
+    case "Permanent":
+      return "The device registration was rejected as invalid/expired by the push service. The user must disable and re-enable notifications on that device.";
+    case "Transient":
+      return "The push service is temporarily unavailable — delivery will retry automatically. If it keeps failing, check the server logs.";
+    default:
+      return detail || (code ? `Delivery problem: ${code}.` : "Delivery did not succeed. See the delivery history for details.");
+  }
+}
+
 function statusBadge(status: string) {
   const map: Record<string, string> = {
     SENT: "border-emerald-300 text-emerald-700 bg-emerald-50",
@@ -123,7 +144,7 @@ export function NotificationsTab() {
       if (res.data.status === "SENT") {
         toast({ title: "Test notification delivered", description: `${res.data.sentCount}/${res.data.deviceCount} device(s) accepted.` });
       } else {
-        toast({ title: `Test push ${res.data.status.toLowerCase()}`, description: res.data.error ?? res.data.errorCode ?? "See the result details.", variant: "destructive" });
+        toast({ title: `Test push ${res.data.status.toLowerCase()}`, description: friendlyPushError(res.data.errorCode, res.data.error), variant: "destructive" });
       }
       void load();
     } catch (e) {
@@ -135,11 +156,15 @@ export function NotificationsTab() {
 
   const fcm = overview?.channels.fcm;
   const fcmReady = !!fcm?.configured && !!fcm?.clientReady;
+  const activeDevices = (devices ?? []).filter((d) => d.active);
+  const noActiveDevices = devices !== null && activeDevices.length === 0;
   const resultSummary = useMemo(() => {
     if (!result) return null;
-    if (result.status === "SENT") return `${result.sentCount}/${result.deviceCount} device(s) accepted by ${result.channel}.`;
-    if (result.status === "SKIPPED") return `Skipped — ${result.error ?? result.errorCode ?? "channel not available"}.`;
-    return `Failed — ${result.error ?? result.errorCode ?? "unknown error"}.`;
+    if (result.status === "SENT") {
+      return `${result.sentCount}/${result.deviceCount} device(s) accepted by ${result.channel}.` + (result.fcmMessageId ? ` Message ID: ${result.fcmMessageId.slice(0, 24)}…` : "");
+    }
+    if (result.status === "SKIPPED") return `Skipped — ${friendlyPushError(result.errorCode, result.error)}`;
+    return `Failed — ${friendlyPushError(result.errorCode, result.error)}`;
   }, [result]);
 
   return (
@@ -265,8 +290,20 @@ export function NotificationsTab() {
               <Input id="push-test-body" value={body} maxLength={300} onChange={(e) => setBody(e.target.value)} />
             </div>
           </div>
+          {noActiveDevices ? (
+            <Alert>
+              <Smartphone className="h-4 w-4" aria-hidden />
+              <AlertTitle>No active push devices registered for this user.</AlertTitle>
+              <AlertDescription className="text-xs">
+                The recipient must enable notifications on their device first — open this application on their
+                browser/PWA, go to Profile → Notifications → “Enable on this device”, grant the browser permission,
+                and make sure the push channel is configured on this server. Registered devices appear here
+                automatically.
+              </AlertDescription>
+            </Alert>
+          ) : null}
           <div className="flex items-center gap-2">
-            <Button onClick={onSendTest} disabled={!userId || sending || (devices !== null && !devices.some((d) => d.active))}>
+            <Button onClick={onSendTest} disabled={!userId || sending || noActiveDevices}>
               {sending ? <RefreshCw className="h-4 w-4 mr-1.5 animate-spin" aria-hidden /> : <Send className="h-4 w-4 mr-1.5" aria-hidden />}
               Send Test Notification
             </Button>
