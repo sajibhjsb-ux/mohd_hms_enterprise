@@ -38,6 +38,7 @@ type EmailHealth = {
     host: string | null;
     port: number | null;
     security: string | null;
+    provider?: string | null;
     lastVerifyAt: string | null;
     lastVerifyOk: boolean | null;
   };
@@ -64,6 +65,7 @@ type EmailMeta = {
 };
 
 type ConfigDraft = {
+  provider: string;
   smtpHost: string;
   smtpPort: string;
   smtpSecurity: string;
@@ -82,6 +84,7 @@ function when(iso: string | null | undefined): string {
 
 function configToDraft(c: EmailConfig): ConfigDraft {
   return {
+    provider: c.provider || "SMTP",
     smtpHost: c.smtpHost ?? "",
     smtpPort: c.smtpPort == null ? "" : String(c.smtpPort),
     smtpSecurity: c.smtpSecurity || "NONE",
@@ -210,7 +213,8 @@ function OverviewPanel() {
 
   const saveConfig = async () => {
     if (!draft) return;
-    const portNum = draft.smtpPort.trim() === "" ? null : Number(draft.smtpPort);
+    const portNum =
+      draft.provider === "SMTP" && draft.smtpPort.trim() !== "" ? Number(draft.smtpPort) : null;
     const timeoutNum = draft.timeoutMs.trim() === "" ? null : Number(draft.timeoutMs);
     if (portNum !== null && (!Number.isFinite(portNum) || portNum <= 0)) {
       toast({ title: "Invalid SMTP port", description: "The port must be a positive number.", variant: "destructive" });
@@ -223,17 +227,20 @@ function OverviewPanel() {
     setSaving(true);
     try {
       const payload: Record<string, unknown> = {
+        provider: draft.provider,
         // Empty strings CLEAR a stored value — the PATCH schema rejects nulls
         // for these fields (only smtpPassword accepts an explicit null).
-        smtpHost: draft.smtpHost.trim(),
-        smtpSecurity: draft.smtpSecurity,
-        smtpUser: draft.smtpUser.trim(),
         fromName: draft.fromName.trim(),
         fromEmail: draft.fromEmail.trim(),
         replyTo: draft.replyTo.trim(),
         testRecipient: draft.testRecipient.trim(),
       };
-      if (portNum !== null) payload.smtpPort = portNum;
+      if (draft.provider === "SMTP") {
+        payload.smtpHost = draft.smtpHost.trim();
+        payload.smtpSecurity = draft.smtpSecurity;
+        payload.smtpUser = draft.smtpUser.trim();
+        if (portNum !== null) payload.smtpPort = portNum;
+      }
       if (timeoutNum !== null) payload.timeoutMs = timeoutNum;
       // The stored password is never read back — only sent when freshly typed.
       if (password.trim() !== "") payload.smtpPassword = password;
@@ -270,8 +277,8 @@ function OverviewPanel() {
       const ok = res.data?.ok === true;
       const detail = res.data?.detail ?? (ok ? "Connected." : "Connection failed.");
       setConn({ ok, detail });
-      if (ok) toast({ title: "SMTP connection successful", description: detail });
-      else toast({ title: "SMTP connection failed", description: detail, variant: "destructive" });
+      if (ok) toast({ title: "Provider connection successful", description: detail });
+      else toast({ title: "Provider connection failed", description: detail, variant: "destructive" });
     } catch (e) {
       const detail = e instanceof Error ? e.message : "Connection test failed.";
       setConn({ ok: false, detail });
@@ -364,23 +371,27 @@ function OverviewPanel() {
         </CardContent>
       </Card>
 
-      {/* SMTP status */}
+      {/* Provider status */}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center gap-2 text-base">
-            <Plug className="h-4 w-4 text-primary" /> SMTP status
+            <Plug className="h-4 w-4 text-primary" /> Provider status
           </CardTitle>
           <CardDescription>
             {smtp.configured
-              ? "Outgoing mail server used by every notification and automated email."
-              : "Not configured — emails are queued but cannot be delivered until SMTP is set up."}
+              ? "Outgoing mail transport used by every notification and automated email."
+              : "Not configured — emails are queued but cannot be delivered until a provider is set up."}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
+            <div className="rounded-lg border p-2.5">
+              <p className="text-xs text-muted-foreground">Provider</p>
+              <p className="font-medium font-mono text-xs">{smtp.provider ?? "SMTP"}</p>
+            </div>
             <div className="rounded-lg border p-2.5">
               <p className="text-xs text-muted-foreground">Server</p>
-              <p className="font-medium font-mono text-xs">{smtp.host ? `${smtp.host}:${smtp.port ?? 25}` : "—"}</p>
+              <p className="font-medium font-mono text-xs">{smtp.host ? `${smtp.host}:${smtp.port ?? ""}` : "—"}</p>
             </div>
             <div className="rounded-lg border p-2.5">
               <p className="text-xs text-muted-foreground">Security</p>
@@ -411,7 +422,7 @@ function OverviewPanel() {
               </Button>
               {conn ? (
                 <p className={"text-xs " + (conn.ok ? "text-emerald-700" : "text-red-700")}>
-                  {conn.ok ? "SMTP connection successful" : "SMTP connection failed"} — {conn.detail}
+                  {conn.ok ? "Provider connection successful" : "Provider connection failed"} — {conn.detail}
                 </p>
               ) : null}
             </div>
@@ -466,7 +477,9 @@ function OverviewPanel() {
           </CardTitle>
           <CardDescription>
             {canConfig
-              ? "Provider and SMTP transport for every outgoing email. The password is write-only — it is never sent back to the browser."
+              ? draft && draft.provider === "RESEND"
+                ? "Provider and transport for every outgoing email (Resend HTTP API). The API key is write-only — it is never sent back to the browser."
+                : "Provider and SMTP transport for every outgoing email. The password is write-only — it is never sent back to the browser."
               : "Read-only — ask an administrator to change the email configuration."}
           </CardDescription>
         </CardHeader>
@@ -476,34 +489,51 @@ function OverviewPanel() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <Label htmlFor="cfg-provider">Provider</Label>
-                  <Input id="cfg-provider" value={config.provider ?? ""} disabled />
-                  <p className="text-xs text-muted-foreground">Provider is fixed in this deployment.</p>
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="cfg-security">SMTP security</Label>
-                  <Select value={draft.smtpSecurity} onValueChange={(v) => setDraft((d) => d && ({ ...d, smtpSecurity: v }))}>
-                    <SelectTrigger id="cfg-security"><SelectValue /></SelectTrigger>
+                  <Select
+                    value={draft.provider}
+                    onValueChange={(v) => setDraft((d) => d && ({ ...d, provider: v }))}
+                  >
+                    <SelectTrigger id="cfg-provider"><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="NONE">NONE</SelectItem>
-                      <SelectItem value="SSL">SSL</SelectItem>
-                      <SelectItem value="STARTTLS">STARTTLS</SelectItem>
+                      <SelectItem value="SMTP">SMTP</SelectItem>
+                      <SelectItem value="RESEND">Resend (HTTP API)</SelectItem>
                     </SelectContent>
                   </Select>
+                  <p className="text-xs text-muted-foreground">
+                    {draft.provider === "RESEND"
+                      ? "Sends via api.resend.com — the From domain must be verified there."
+                      : "SMTP transport — host/port/security for the corporate mail endpoint."}
+                  </p>
                 </div>
+                {draft.provider === "SMTP" ? (
+                  <>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="cfg-security">SMTP security</Label>
+                      <Select value={draft.smtpSecurity} onValueChange={(v) => setDraft((d) => d && ({ ...d, smtpSecurity: v }))}>
+                        <SelectTrigger id="cfg-security"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="NONE">NONE</SelectItem>
+                          <SelectItem value="SSL">SSL</SelectItem>
+                          <SelectItem value="STARTTLS">STARTTLS</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="cfg-host">SMTP host</Label>
+                      <Input id="cfg-host" value={draft.smtpHost} onChange={(e) => setDraft((d) => d && ({ ...d, smtpHost: e.target.value }))} placeholder="smtp.company.com" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="cfg-port">SMTP port</Label>
+                      <Input id="cfg-port" type="number" value={draft.smtpPort} onChange={(e) => setDraft((d) => d && ({ ...d, smtpPort: e.target.value }))} placeholder="587" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="cfg-user">SMTP user</Label>
+                      <Input id="cfg-user" value={draft.smtpUser} onChange={(e) => setDraft((d) => d && ({ ...d, smtpUser: e.target.value }))} placeholder="notifications@company.com" />
+                    </div>
+                  </>
+                ) : null}
                 <div className="space-y-1.5">
-                  <Label htmlFor="cfg-host">SMTP host</Label>
-                  <Input id="cfg-host" value={draft.smtpHost} onChange={(e) => setDraft((d) => d && ({ ...d, smtpHost: e.target.value }))} placeholder="smtp.company.com" />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="cfg-port">SMTP port</Label>
-                  <Input id="cfg-port" type="number" value={draft.smtpPort} onChange={(e) => setDraft((d) => d && ({ ...d, smtpPort: e.target.value }))} placeholder="587" />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="cfg-user">SMTP user</Label>
-                  <Input id="cfg-user" value={draft.smtpUser} onChange={(e) => setDraft((d) => d && ({ ...d, smtpUser: e.target.value }))} placeholder="notifications@company.com" />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="cfg-password">SMTP password</Label>
+                  <Label htmlFor="cfg-password">{draft.provider === "RESEND" ? "Resend API key" : "SMTP password"}</Label>
                   <div className="flex gap-2">
                     <Input
                       id="cfg-password"
@@ -519,8 +549,15 @@ function OverviewPanel() {
                       </Button>
                     ) : null}
                   </div>
-                  <p className="text-xs text-muted-foreground">Write-only — blank keeps the stored password.</p>
+                  <p className="text-xs text-muted-foreground">
+                    {draft.provider === "RESEND"
+                      ? `Write-only — blank keeps the stored API key. Starts with re_.`
+                      : "Write-only — blank keeps the stored password."}
+                  </p>
                 </div>
+                {draft.provider === "RESEND" ? (
+                  <div className="sm:col-span-1" />
+                ) : null}
                 <div className="space-y-1.5">
                   <Label htmlFor="cfg-from-name">From name</Label>
                   <Input id="cfg-from-name" value={draft.fromName} onChange={(e) => setDraft((d) => d && ({ ...d, fromName: e.target.value }))} placeholder="MOHD.HMS Enterprise" />
@@ -528,6 +565,9 @@ function OverviewPanel() {
                 <div className="space-y-1.5">
                   <Label htmlFor="cfg-from-email">From email</Label>
                   <Input id="cfg-from-email" type="email" value={draft.fromEmail} onChange={(e) => setDraft((d) => d && ({ ...d, fromEmail: e.target.value }))} placeholder="noreply@company.com" />
+                  {draft.provider === "RESEND" ? (
+                    <p className="text-xs text-muted-foreground">Must be on a domain verified in Resend (e.g. mohdhms.com).</p>
+                  ) : null}
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="cfg-reply-to">Reply-To</Label>
@@ -552,7 +592,8 @@ function OverviewPanel() {
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
               <div className="rounded-lg border p-2.5"><p className="text-xs text-muted-foreground">Configured</p><p className="font-medium">{smtp.configured ? "Yes" : "No"}</p></div>
-              <div className="rounded-lg border p-2.5"><p className="text-xs text-muted-foreground">Server</p><p className="font-medium font-mono text-xs">{smtp.host ? `${smtp.host}:${smtp.port ?? 25}` : "—"}</p></div>
+              <div className="rounded-lg border p-2.5"><p className="text-xs text-muted-foreground">Provider</p><p className="font-medium font-mono text-xs">{smtp.provider ?? "SMTP"}</p></div>
+              <div className="rounded-lg border p-2.5"><p className="text-xs text-muted-foreground">Server</p><p className="font-medium font-mono text-xs">{smtp.host ? `${smtp.host}:${smtp.port ?? ""}` : "—"}</p></div>
               <div className="rounded-lg border p-2.5"><p className="text-xs text-muted-foreground">Security</p><p className="font-medium font-mono text-xs">{smtp.security ?? "—"}</p></div>
               <div className="rounded-lg border p-2.5"><p className="text-xs text-muted-foreground">Last verification</p><p className="font-medium">{smtp.lastVerifyAt ? when(smtp.lastVerifyAt) : "—"}</p></div>
               <p className="text-xs text-muted-foreground sm:col-span-2">Full configuration editing requires the email configuration permission.</p>

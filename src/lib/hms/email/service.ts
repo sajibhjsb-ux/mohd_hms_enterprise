@@ -18,11 +18,11 @@ import { audit, notify } from "@/lib/hms/services";
 import { getAutomationSetting } from "@/lib/hms/workflows/settings";
 import { emailOtpResendCooldownSec } from "@/lib/hms/email-otp";
 import { EMAIL_OTP_TTL_SEC } from "@/lib/hms/email-otp";
-import { getEmailConfig } from "./config";
+import { getEmailConfig, isConfigReady } from "./config";
 import { resolveAttachments } from "./attachments";
 import { resolveTemplateData, type ResolutionContext } from "./resolve";
 import { renderTemplate } from "./render";
-import { smtpProvider } from "./provider";
+import { getProvider } from "./provider";
 import type {
   AttachmentSpec, EmailCondition, RecipientRule, RenderedEmail, SenderIdentity,
 } from "./types";
@@ -595,7 +595,7 @@ export async function tickEmailWorker(): Promise<number> {
   let sent = 0;
   try {
     const cfg = await getEmailConfig();
-    const smtpReady = Boolean(cfg.smtpHost && (cfg.fromEmail || cfg.smtpUser));
+    const providerReady = isConfigReady(cfg);
 
     // CONFIG backoff (§70): with no SMTP configured nothing can be sent, so do
     // not claim/requeue in a hot loop — that starves SQLite for every other
@@ -620,7 +620,7 @@ export async function tickEmailWorker(): Promise<number> {
       const log = await db.emailLog.findUnique({ where: { id } });
       if (!log) continue;
       try {
-        sent += (await processOne(log.id, smtpReady)) ? 1 : 0;
+        sent += (await processOne(log.id, providerReady)) ? 1 : 0;
       } catch (e) {
         await failOrRetry(log.id, log.attemptCount, log.maxAttempts, "PROVIDER", e instanceof Error ? e.message : String(e), "");
         const related = await db.emailLog.findUnique({ where: { id: log.id }, select: { relatedType: true, relatedId: true } });
@@ -645,13 +645,13 @@ export async function tickEmailWorker(): Promise<number> {
   return sent;
 }
 
-async function processOne(id: string, smtpReady: boolean): Promise<boolean> {
+async function processOne(id: string, providerReady: boolean): Promise<boolean> {
   const log = await db.emailLog.findUnique({ where: { id } });
   if (!log) return false;
 
-  if (!smtpReady) {
+  if (!providerReady) {
     // CONFIG state: stays queued without burning attempts — honest error shown (§70).
-    await db.emailLog.update({ where: { id }, data: { status: "QUEUED", attemptCount: { decrement: 1 }, lastError: "SMTP is not configured — email stays queued.", errorClass: "CONFIG" } });
+    await db.emailLog.update({ where: { id }, data: { status: "QUEUED", attemptCount: { decrement: 1 }, lastError: "Email provider is not configured — email stays queued.", errorClass: "CONFIG" } });
     if (log.relatedType === "MAIL_MESSAGE") void syncMailMessageDelivery(log.relatedId);
     return false;
   }
@@ -683,8 +683,9 @@ async function processOne(id: string, smtpReady: boolean): Promise<boolean> {
   const logo = getLogoBuffer();
   if (logo) attachments.push({ filename: "logo.png", content: logo, contentType: "image/png", cid: "mohd-hms-logo" });
 
-  // ── REAL SMTP send (§70 — no fake success).
-  const result = await smtpProvider.send({
+  // ── REAL send through the configured provider (§70 — no fake success).
+  const provider = await getProvider();
+  const result = await provider.send({
     to: log.toEmail,
     cc: log.cc ? log.cc.split(",").map((a) => a.trim()).filter(Boolean) : undefined,
     bcc: log.bcc ? log.bcc.split(",").map((a) => a.trim()).filter(Boolean) : undefined,
@@ -753,7 +754,7 @@ async function failOrRetry(id: string, attemptCount: number, maxAttempts: number
 // ─── 6. Admin operations (§27/§28/§37/§43/§44) ──────────────────────────────
 
 export async function testConnection(): Promise<{ ok: boolean; detail: string }> {
-  const result = await smtpProvider.verify();
+  const result = await (await getProvider()).verify();
   const { recordVerifyResult } = await import("./config");
   await recordVerifyResult(result.ok);
   return { ok: result.ok, detail: result.detail };
@@ -765,7 +766,7 @@ export async function testConnection(): Promise<{ ok: boolean; detail: string }>
  */
 export async function sendTestEmail(params: { to: string; templateId?: string }): Promise<{ ok: boolean; detail: string; logId?: string }> {
   const cfg = await getEmailConfig();
-  if (!cfg.smtpHost) return { ok: false, detail: "SMTP host is not configured." };
+  if (!isConfigReady(cfg)) return { ok: false, detail: cfg.provider === "RESEND" ? "Resend is not configured — set the API key and a From email on a verified Resend domain." : "SMTP host is not configured." };
   if (!isValidAddr(params.to)) return { ok: false, detail: "The test recipient address is not valid." };
 
   let rendered: RenderedEmail;
@@ -796,7 +797,8 @@ export async function sendTestEmail(params: { to: string; templateId?: string })
 
   const sender = await senderFor();
   const logo = getLogoBuffer();
-  const result = await smtpProvider.send({
+  const provider = await getProvider();
+  const result = await provider.send({
     to: params.to.trim(),
     fromName: sender.fromName,
     fromEmail: sender.fromEmail,
@@ -838,8 +840,8 @@ export async function sendTestEmail(params: { to: string; templateId?: string })
   }).catch(() => undefined);
 
   return result.ok
-    ? { ok: true, detail: `Test email sent — accepted by SMTP (${result.response || "250 OK"})`, logId: row.id }
-    : { ok: false, detail: result.error || "The SMTP server did not accept the test email.", logId: row.id };
+    ? { ok: true, detail: `Test email sent — accepted by the provider (${result.response || "accepted"})`, logId: row.id }
+    : { ok: false, detail: result.error || "The email provider did not accept the test email.", logId: row.id };
 }
 
 export async function retryEmail(id: string): Promise<{ ok: boolean; reason?: string }> {
@@ -930,10 +932,11 @@ export async function emailHealth() {
     lastSuccess: lastSent ? { at: lastSent.sentAt?.toISOString() ?? null, to: lastSent.toEmail, subject: lastSent.subject } : null,
     lastFailure: lastFailed ? { at: lastFailed.failedAt?.toISOString() ?? null, to: lastFailed.toEmail, error: lastFailed.lastError } : null,
     smtp: {
-      configured: Boolean(cfg.smtpHost && (cfg.fromEmail || cfg.smtpUser)),
-      host: cfg.smtpHost,
-      port: cfg.smtpPort,
-      security: cfg.smtpSecurity,
+      configured: isConfigReady(cfg),
+      host: cfg.provider === "RESEND" ? "api.resend.com" : cfg.smtpHost,
+      port: cfg.provider === "RESEND" ? 443 : cfg.smtpPort,
+      security: cfg.provider === "RESEND" ? "HTTPS" : cfg.smtpSecurity,
+      provider: cfg.provider,
       lastVerifyAt: cfg.lastVerifyAt?.toISOString() ?? null,
       lastVerifyOk: cfg.lastVerifyOk,
     },

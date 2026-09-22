@@ -58,7 +58,7 @@ export async function getSmtpSecret(): Promise<string | null> {
 }
 
 export function toSafeConfig(cfg: ConfigRow): EmailConfigSafe {
-  const configured = Boolean(cfg.smtpHost && cfg.smtpPort && (cfg.fromEmail || cfg.smtpUser));
+  const configured = isConfigReady(cfg);
   return {
     provider: cfg.provider,
     smtpHost: cfg.smtpHost,
@@ -99,10 +99,24 @@ export function isValidEmail(address: string): boolean {
   return address.length <= 254 && EMAIL_RE.test(address);
 }
 
+/**
+ * Provider-aware readiness: can this configuration actually attempt delivery?
+ * SMTP needs a host (+ a sender address or user); Resend needs the encrypted
+ * API key (+ a from address on a verified Resend domain).
+ */
+export function isConfigReady(cfg: Pick<ConfigRow, "provider" | "smtpHost" | "smtpPort" | "fromEmail" | "smtpUser" | "smtpSecretEnc">): boolean {
+  if (cfg.provider === "RESEND") return Boolean(cfg.smtpSecretEnc && cfg.fromEmail);
+  return Boolean(cfg.smtpHost && cfg.smtpPort && (cfg.fromEmail || cfg.smtpUser));
+}
+
 export async function updateEmailConfig(update: EmailConfigUpdate): Promise<EmailConfigSafe> {
   const current = await loadConfig();
   const data: Record<string, unknown> = {};
-  if (update.provider !== undefined) data.provider = update.provider.slice(0, 50);
+  if (update.provider !== undefined) {
+    const provider = update.provider.trim().toUpperCase();
+    if (!["SMTP", "RESEND"].includes(provider)) throw new Error("Provider must be SMTP or RESEND.");
+    data.provider = provider;
+  }
   if (update.smtpHost !== undefined) data.smtpHost = update.smtpHost.trim().slice(0, 253);
   if (update.smtpPort !== undefined) data.smtpPort = Math.min(65535, Math.max(1, Math.floor(update.smtpPort)));
   if (update.smtpSecurity !== undefined) data.smtpSecurity = update.smtpSecurity;
@@ -131,7 +145,7 @@ export async function updateEmailConfig(update: EmailConfigUpdate): Promise<Emai
     data.testRecipient = v;
   }
   const merged = { ...current, ...data } as ConfigRow;
-  const nowConfigured = Boolean(merged.smtpHost && merged.smtpPort && (merged.fromEmail || merged.smtpUser));
+  const nowConfigured = isConfigReady(merged);
   if (nowConfigured && !merged.configuredAt) data.configuredAt = new Date();
   if (nowConfigured) {
     // A configuration change invalidates the previous verification result.

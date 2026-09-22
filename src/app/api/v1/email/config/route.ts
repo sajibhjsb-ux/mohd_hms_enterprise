@@ -22,7 +22,7 @@ export const GET = handler(
 );
 
 const updateSchema = z.object({
-  provider: z.string().max(50).optional(),
+  provider: z.enum(["SMTP", "RESEND"]).optional(),
   smtpHost: z.string().max(253).optional(),
   smtpPort: z.number().int().min(1).max(65535).optional(),
   smtpSecurity: z.enum(["NONE", "SSL", "STARTTLS"]).optional(),

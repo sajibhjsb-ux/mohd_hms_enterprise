@@ -1,8 +1,9 @@
 // MOHD.HMS ENTERPRISE — Email provider abstraction (§5 EMAIL PROVIDER
-// CONFIGURATION). ONE provider interface; the current implementation is the
-// SMTP provider used with the corporate Mailflare endpoint (host/port/security
-// come from the admin-managed EmailConfig — never hardcoded). Future providers
-// plug in behind the same interface; modules never create their own clients.
+// CONFIGURATION). ONE provider interface. The SMTP provider is used with the
+// corporate Mailflare endpoint (host/port/security come from the admin-managed
+// EmailConfig — never hardcoded); the Resend provider sends through the Resend
+// HTTP API using the same encrypted provider secret. Providers plug in behind
+// the same interface; modules never create their own clients.
 
 import "server-only";
 import nodemailer, { type Transporter } from "nodemailer";
@@ -159,6 +160,164 @@ export function sanitizeProviderError(message: string): string {
     .replace(/(password|pass|secret|token)\s*[:=]\s*\S+/gi, "$1: ***")
     .replace(/\b535\b.*$/, "authentication failed (535)")
     .slice(0, 300);
+}
+
+// ─── Resend provider (HTTP API — mohdhms.com is DKIM/SPF verified) ──────────
+
+const RESEND_API = "https://api.resend.com/emails";
+const RESEND_DOMAINS_API = "https://api.resend.com/domains";
+
+type ResendErrorBody = { statusCode?: number; name?: string; message?: string };
+
+function classifyResendError(status: number | undefined, body?: ResendErrorBody): { errorClass: EmailErrorClass; permanent: boolean } {
+  if (status === 401 || status === 403 || !status) {
+    return { errorClass: "AUTHENTICATION", permanent: true };
+  }
+  if (status === 429) return { errorClass: "RATE_LIMIT", permanent: false };
+  if (status === 422 || status === 400) {
+    const msg = String(body?.message ?? "").toLowerCase();
+    // Only recipient-scoped failures are terminal for this message; anything
+    // else (template, invalid from, payload) will not improve on retry but is
+    // classified as a controlled PERMANENT so the log surfaces it honestly.
+    if (/recipient|address.*(fail|invalid|reject)|unsubscribed|bounce/.test(msg)) {
+      return { errorClass: "RECIPIENT", permanent: true };
+    }
+    return { errorClass: "PERMANENT", permanent: true };
+  }
+  if (status >= 500) return { errorClass: "TEMPORARY", permanent: false };
+  return { errorClass: "TEMPORARY", permanent: false };
+}
+
+function parseResendError(text: string): ResendErrorBody | undefined {
+  try {
+    return JSON.parse(text) as ResendErrorBody;
+  } catch {
+    return undefined;
+  }
+}
+
+async function resendFetch(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export const resendProvider: EmailProvider = {
+  name: "RESEND",
+
+  async send(message: OutgoingEmail): Promise<SendResult> {
+    const apiKey = await getSmtpSecret();
+    if (!apiKey) {
+      return { ok: false, messageId: "", response: "", errorClass: "CONFIG", error: "Resend API key is not configured." };
+    }
+    const from = message.fromName ? `${message.fromName} <${message.fromEmail}>` : message.fromEmail;
+
+    // Regular attachments go in `attachments`; CID images (the branded logo)
+    // go in `images` and are referenced by filename, so rewrite cid: refs.
+    const attachments = (message.attachments ?? [])
+      .filter((a) => !a.cid)
+      .map((a) => ({
+        filename: a.filename,
+        content: a.content.toString("base64"),
+        content_type: a.contentType || "application/octet-stream",
+      }));
+    let html = message.html;
+    const images: { filename: string; content: string; content_type: string }[] = [];
+    for (const a of message.attachments ?? []) {
+      if (!a.cid) continue;
+      images.push({ filename: a.filename, content: a.content.toString("base64"), content_type: a.contentType || "application/octet-stream" });
+      if (html.includes(`cid:${a.cid}`)) html = html.split(`cid:${a.cid}`).join(a.filename);
+    }
+
+    const body: Record<string, unknown> = { from, to: message.to };
+    if (message.cc?.length) body.cc = message.cc;
+    if (message.bcc?.length) body.bcc = message.bcc;
+    if (message.replyTo) body.reply_to = message.replyTo;
+    body.subject = message.subject;
+    body.html = html;
+    body.text = message.text;
+    if (attachments.length) body.attachments = attachments;
+    if (images.length) body.images = images;
+
+    try {
+      const res = await resendFetch(
+        RESEND_API,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+        message.timeoutMs,
+      );
+      const text = await res.text().catch(() => "");
+      if (!res.ok) {
+        const bodyErr = parseResendError(text);
+        const { errorClass } = classifyResendError(res.status, bodyErr);
+        return {
+          ok: false, messageId: "", response: text.slice(0, 500) || `HTTP ${res.status}`,
+          errorClass, error: sanitizeProviderError(bodyErr?.message ?? `Resend API rejected the message (${res.status})`),
+        };
+      }
+      let id = "";
+      try {
+        const json = JSON.parse(text) as { id?: unknown };
+        id = typeof json?.id === "string" ? json.id : "";
+      } catch { /* non-JSON body — still accepted */ }
+      return { ok: true, messageId: `<${id || Date.now()}@resend>`, response: id ? `accepted ${id}` : "accepted" };
+    } catch (err) {
+      const aborted = (err as { name?: string }).name === "AbortError";
+      const e = err as { message?: string };
+      return {
+        ok: false, messageId: "", response: "",
+        errorClass: aborted ? "TEMPORARY" : "NETWORK",
+        error: sanitizeProviderError(aborted ? "Resend request timed out" : (e?.message ?? "Resend request failed")),
+      };
+    }
+  },
+
+  async verify(): Promise<{ ok: boolean; detail: string; errorClass?: EmailErrorClass }> {
+    const apiKey = await getSmtpSecret();
+    if (!apiKey) return { ok: false, detail: "Resend API key is not set.", errorClass: "CONFIG" };
+    try {
+      const res = await resendFetch(RESEND_DOMAINS_API, { headers: { Authorization: `Bearer ${apiKey}` } }, 15_000);
+      const text = await res.text().catch(() => "");
+      if (!res.ok) {
+        const bodyErr = parseResendError(text);
+        const { errorClass } = classifyResendError(res.status, bodyErr);
+        const hint = bodyErr?.message ?? `Resend rejected the API key (${res.status})`;
+        return { ok: false, detail: sanitizeProviderError(hint), errorClass };
+      }
+      let domains: { name?: string; status?: string; capabilities?: { sending?: string } }[] = [];
+      try {
+        const json = JSON.parse(text) as { data?: typeof domains };
+        domains = json?.data ?? [];
+      } catch { /* ignore */ }
+      const cfg = await getEmailConfig();
+      const fromDomain = cfg.fromEmail.split("@").pop()?.toLowerCase() ?? "";
+      const match = domains.find((d) => d.name?.toLowerCase() === fromDomain);
+      if (!fromDomain) return { ok: false, detail: "Resend API key valid — set a From email (a verified Resend domain) first.", errorClass: "CONFIG" };
+      if (match) {
+        if (match.status === "verified" && match.capabilities?.sending === "enabled") {
+          return { ok: true, detail: `Resend API key valid — ${fromDomain} is verified for sending.` };
+        }
+        return { ok: false, detail: `Resend API key valid but ${fromDomain} is not ready (status: ${match.status ?? "unknown"}, sending: ${match.capabilities?.sending ?? "unknown"}).`, errorClass: "CONFIG" };
+      }
+      return { ok: false, detail: `Resend API key valid but ${fromDomain} is not verified in Resend.`, errorClass: "CONFIG" };
+    } catch (err) {
+      const aborted = (err as { name?: string }).name === "AbortError";
+      const e = err as { message?: string };
+      return { ok: false, detail: sanitizeProviderError(aborted ? "Resend request timed out" : (e?.message ?? "Resend request failed")), errorClass: "NETWORK" };
+    }
+  },
+};
+
+export async function getProvider(): Promise<EmailProvider> {
+  const cfg = await getEmailConfig();
+  return cfg.provider === "RESEND" ? resendProvider : smtpProvider;
 }
 
 export { resetTransportCache };
