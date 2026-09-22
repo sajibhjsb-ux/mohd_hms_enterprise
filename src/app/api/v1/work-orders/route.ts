@@ -3,6 +3,7 @@
 // Money is integer cents. Stock deduction happens at completion (transition route).
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
+import { ciContains, normalizeSearchTerm } from "@/lib/hms/text-search";
 import { db } from "@/lib/db";
 import { handler, ok, okList, parseBody, listQuery, pagedMeta, Errors } from "@/lib/hms/api";
 import { audit, nextNumber, notify } from "@/lib/hms/services";
@@ -16,7 +17,8 @@ const materialSchema = z.object({
   inventoryItemId: z.string().min(1).optional(),
   name: z.string().min(1, "Material name is required.").max(200),
   quantity: z.number().positive("Quantity must be greater than zero.").max(1_000_000),
-  unitCostCents: z.number().int("unitCostCents must be integer cents.").min(0),
+  unit: z.string().trim().max(20).optional(),
+  unitCostCents: z.number().int("unitCostCents must be integer cents.").min(0).optional(),
 });
 
 const createSchema = z.object({
@@ -62,7 +64,8 @@ export const GET = handler(
       where.sourceType = upper;
     }
     if (q.search) {
-      where.AND = [{ OR: [{ code: { contains: q.search } }, { title: { contains: q.search } }] }];
+      const term = ciContains(normalizeSearchTerm(q.search));
+      where.AND = [{ OR: [{ code: term }, { title: term }] }];
     }
 
     const [rows, total] = await Promise.all([
@@ -126,7 +129,7 @@ export const POST = handler(
     }
 
     const materials = body.materials ?? [];
-    const materialsTotalCents = materials.reduce((sum, m) => sum + Math.round(m.quantity * m.unitCostCents), 0);
+    const materialsTotalCents = materials.reduce((sum, m) => sum + Math.round(m.quantity * (m.unitCostCents ?? 0)), 0);
 
     const scheduledDate = body.scheduledDate ? new Date(body.scheduledDate) : null;
     if (scheduledDate && isNaN(scheduledDate.getTime())) throw Errors.badRequest("scheduledDate is not a valid date.");
@@ -160,13 +163,16 @@ export const POST = handler(
         },
         materials: {
           create: materials.map((m) => {
-            const totalCents = Math.round(m.quantity * m.unitCostCents);
+            const totalCents = Math.round(m.quantity * (m.unitCostCents ?? 0));
             return {
               inventoryItemId: m.inventoryItemId ?? null,
               name: m.name,
               quantity: m.quantity,
+              unit: m.unit && m.unit.length > 0 ? m.unit : "pcs",
               unitCostCents: m.unitCostCents,
               totalCents,
+              // Inventory spec §11 — creation is a REQUEST, never a stock change.
+              status: "REQUESTED",
             };
           }),
         },

@@ -20,6 +20,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ClientApiError, api } from "@/lib/hms/api-client";
 import { hasPerm, useSession } from "@/components/hms/session";
+import { GlobalSearch, type SearchNavigateTarget } from "./global-search";
 import { useUi } from "@/lib/hms/ui-store";
 import { navigateTo, RESOURCE_ROUTES } from "@/lib/hms/router";
 import { humanize, PERMISSIONS } from "@/lib/hms/constants";
@@ -32,7 +33,7 @@ import { useToast } from "@/hooks/use-toast";
 import { PushNotificationRow, startInstall, useInstallable } from "./pwa-menu";
 import {
   AlertTriangle, Bell, CheckCircle2, CheckCheck, ChevronDown, CircleUserRound, Download, Globe, Info, KeyRound, Loader2,
-  LogOut, Moon, QrCode, Search, Sun,
+  LogOut, Moon, QrCode, Search, Sun, X,
 } from "lucide-react";
 
 type NotifItem = {
@@ -41,19 +42,24 @@ type NotifItem = {
 };
 
 type Props = {
-  onOpenSearch: () => void;
+  /** Navigates to a search result's detail page through the shell's
+   *  dirty-state guard (same path the old dialog used). */
+  onSearchNavigate: (target: SearchNavigateTarget) => void;
   onOpenQr: () => void;
   onSelectModule: (key: string) => void;
   onOpenChangePassword: () => void;
   onOpenAbout: () => void;
 };
 
-export function TopHeader({ onOpenSearch, onOpenQr, onSelectModule, onOpenChangePassword, onOpenAbout }: Props) {
+export function TopHeader({ onSearchNavigate, onOpenQr, onSelectModule, onOpenChangePassword, onOpenAbout }: Props) {
   const { user, signOut } = useSession();
   const { resolvedTheme, setTheme } = useTheme();
   const [notifs, setNotifs] = useState<NotifItem[]>([]);
   const [unread, setUnread] = useState(0);
   const [mounted, setMounted] = useState(false);
+  // Mobile INLINE search mode: the header row swaps to a full-width search
+  // field (results dropdown beneath it) — never a fullscreen modal/dialog.
+  const [mobileSearch, setMobileSearch] = useState(false);
   const { toast } = useToast();
   const toastSeq = useRef(0);
 
@@ -114,6 +120,30 @@ export function TopHeader({ onOpenSearch, onOpenQr, onSelectModule, onOpenChange
     <TooltipProvider delayDuration={250}>
       <header className="sticky top-0 z-40 border-b border-border/50 bg-background/85 backdrop-blur-xl no-print pt-[env(safe-area-inset-top)]">
         <div className="mx-auto max-w-[1500px] px-3 min-[360px]:px-4 sm:px-6 h-16 md:h-[72px] flex items-center gap-2 sm:gap-4">
+          {mobileSearch ? (
+            /* MOBILE INLINE SEARCH MODE — the same header, same bar position,
+               zero modal/overlay: a full-width field with the results panel
+               anchored beneath it. [×] (or Escape) returns to the header. */
+            <div className="flex items-center gap-1.5 w-full min-w-0" data-testid="mobile-search-mode">
+              <GlobalSearch
+                variant="mobile"
+                autoFocus
+                onNavigate={onSearchNavigate}
+                onClose={() => setMobileSearch(false)}
+              />
+              <Button
+                variant="ghost"
+                size="icon"
+                className="rounded-full h-10 w-10 shrink-0"
+                onClick={() => setMobileSearch(false)}
+                aria-label="Close search"
+                data-testid="mobile-search-close"
+              >
+                <X className="h-5 w-5" aria-hidden />
+              </Button>
+            </div>
+          ) : (
+            <>
           {/* Branding — full official brand lockup on EVERY width (logo + two-line
               wordmark, one indivisible brand group). Responsive tiers shrink the
               logo/text/gaps on narrow screens; the name is never hidden, wrapped
@@ -126,37 +156,23 @@ export function TopHeader({ onOpenSearch, onOpenQr, onSelectModule, onOpenChange
             <BrandLockup />
           </button>
 
-          {/* Global search — centered pill on DESKTOP only. On mobile the flex-1
-              spacer keeps the logo left and the action group right; search is a
-              compact icon inside that group (never an isolated center element). */}
+          {/* Global search — INLINE on DESKTOP: the centered pill IS the real
+              input. Clicking it focuses the field directly and results open in
+              a dropdown anchored beneath it — no popup/dialog/overlay. */}
           <div className="hidden lg:flex flex-1 justify-center min-w-0">
-            <button
-              onClick={onOpenSearch}
-              className={cn(
-                "group flex items-center gap-2.5 h-10 md:h-11 rounded-full border border-border/70 bg-muted/40 hover:bg-muted/70 hover:border-border transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                "w-10 md:w-auto md:flex-1 md:min-w-0 md:max-w-[560px] justify-center md:justify-start md:px-4"
-              )}
-              aria-label="Open global search"
-            >
-              <Search className="h-4 w-4 shrink-0 text-muted-foreground group-hover:text-foreground transition-colors" aria-hidden />
-              <span className="hidden md:inline text-sm text-muted-foreground group-hover:text-foreground/80 transition-colors truncate">
-                Search equipment, customers, work orders…
-              </span>
-              <kbd className="hidden lg:inline-flex ml-auto items-center gap-0.5 rounded-md border border-border/70 bg-background px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
-                <SearchShortcutHint />
-              </kbd>
-            </button>
+            <GlobalSearch variant="desktop" onNavigate={onSearchNavigate} />
           </div>
 
           {/* Right action group — search · notifications · profile share one
               vertical centerline; the group hugs the right edge on mobile. */}
           <div className="ml-auto flex items-center gap-0.5 sm:gap-1">
-            {/* Compact mobile search — opens the SAME global search dialog. */}
+            {/* Compact mobile search — activates the SAME inline search inside
+                the header (never the desktop dialog). */}
             <Button
               variant="ghost"
               size="icon"
               className="rounded-full h-10 w-10 sm:h-9 sm:w-9 lg:hidden"
-              onClick={onOpenSearch}
+              onClick={() => setMobileSearch(true)}
               aria-label="Search"
               data-testid="mobile-search-button"
             >
@@ -211,6 +227,8 @@ export function TopHeader({ onOpenSearch, onOpenQr, onSelectModule, onOpenChange
               onOpenAbout={onOpenAbout}
             />
           </div>
+            </>
+          )}
         </div>
       </header>
     </TooltipProvider>
@@ -249,11 +267,6 @@ function BrandLockup() {
       </span>
     </>
   );
-}
-
-function SearchShortcutHint() {
-  const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent);
-  return <span aria-hidden>{isMac ? "⌘K" : "Ctrl K"}</span>;
 }
 
 /**

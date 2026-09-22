@@ -2,6 +2,7 @@
 // Workflow: NEW → ASSIGNED → IN_PROGRESS → COMPLETED → CONFIRMED → CLOSED (+ CANCELLED).
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
+import { ciContains, normalizeSearchTerm } from "@/lib/hms/text-search";
 import { db } from "@/lib/db";
 import { handler, ok, okList, parseBody, listQuery, pagedMeta, Errors } from "@/lib/hms/api";
 import { isStaff } from "@/lib/hms/rbac";
@@ -42,12 +43,13 @@ export const GET = handler(
       where.assignedTechnicianId = profile?.id ?? "none";
     }
     if (q.search) {
+      const term = ciContains(normalizeSearchTerm(q.search));
       where.AND = [
         {
           OR: [
-            { code: { contains: q.search } },
-            { title: { contains: q.search } },
-            { description: { contains: q.search } },
+            { code: term },
+            { title: term },
+            { description: term },
           ],
         },
       ];

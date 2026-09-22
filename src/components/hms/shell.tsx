@@ -34,7 +34,7 @@ import { useToast } from "@/hooks/use-toast";
 import { TopHeader } from "./shell/header";
 import { FloatingNav } from "./shell/floating-nav";
 import { MobileNav } from "./shell/mobile-nav";
-import { GlobalSearch, type SearchNavigateTarget } from "./shell/global-search";
+import type { SearchNavigateTarget } from "./shell/global-search";
 import { QrScanDialog } from "./shell/qr-dialog";
 import { RealtimeProvider } from "./realtime/realtime-provider";
 import { TermsConsentGate } from "./legal/terms-consent-gate";
@@ -66,7 +66,6 @@ export function AppShell() {
   const setDeepLink = useUi((s) => s.setDeepLink);
   const changePwOpen = useUi((s) => s.changePwOpen);
   const setChangePwOpen = useUi((s) => s.setChangePwOpen);
-  const [searchOpen, setSearchOpen] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   /** Hash the user asked for while a dirty form blocked navigation. */
@@ -282,7 +281,7 @@ export function AppShell() {
         gap) so the footer and every page element clear the floating bottom nav */}
     <div className="min-h-screen flex flex-col bg-[radial-gradient(60rem_30rem_at_50%_-10%,oklch(0.95_0.05_152/0.6),transparent)] dark:bg-none pb-[var(--hms-mobile-nav-h,102px)] lg:pb-0">
       <TopHeader
-        onOpenSearch={() => setSearchOpen(true)}
+        onSearchNavigate={navigateFromSearch}
         onOpenQr={() => setQrOpen(true)}
         onSelectModule={switchModule}
         onOpenChangePassword={() => setChangePwOpen(true)}
@@ -347,7 +346,6 @@ export function AppShell() {
           happened (consumes the one-shot signal from lib/hms/welcome.ts). */}
       <WelcomeDialog />
       <ChangePasswordDialog open={changePwOpen} onOpenChange={setChangePwOpen} />
-      <GlobalSearch open={searchOpen} onOpenChange={setSearchOpen} onNavigate={navigateFromSearch} />
       <QrScanDialog open={qrOpen} onOpenChange={setQrOpen} onNavigate={navigateFromQr} />
 
       {/* Unsaved-changes guard — blocks any route change away from a dirty form */}

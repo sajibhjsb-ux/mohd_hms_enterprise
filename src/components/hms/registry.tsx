@@ -10,6 +10,7 @@ import {
   Wrench, CalendarClock, Boxes, ShoppingCart, FileText, Receipt, Wallet, IdCard,
   SearchCheck, BarChart3, Settings, History, Truck, QrCode, CircleUserRound,
   ScrollText, ShieldCheck, MessageCircle, ScanLine, Mail, Mailbox, FolderClosed,
+  Search as SearchIcon,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -50,6 +51,7 @@ import { VehiclesModule } from "./modules/vehicles";
 import { SettingsModule } from "./modules/settings";
 import { AuditModule } from "./modules/audit";
 import { ProfileModule } from "./modules/profile";
+import { SearchModule } from "./modules/search";
 import { TermsModule, PrivacyModule } from "./legal/legal-module";
 import { ScanModule } from "./modules/scan";
 
@@ -102,6 +104,12 @@ export const MODULES: ModuleDef[] = [
   // Views: /profile (view), /profile/edit, /profile/complete. Identity fields
   // (name/email/phone) are managed by SUPER_ADMIN — enforced by the backend.
   { key: "profile", label: "My Profile", shortLabel: "Profile", icon: CircleUserRound, navHidden: true, component: ProfileModule },
+  // Global Search — full results page (/search?q=…), the "View all results"
+  // destination of the INLINE header search. Reuses the SAME search APIs and
+  // permission gating (no second search system); hidden from the module nav
+  // (entered from the header search bar), reachable by every signed-in user —
+  // each result group inside is permission-gated and the backend enforces RBAC.
+  { key: "search", label: "Search", shortLabel: "Search", icon: SearchIcon, navHidden: true, component: SearchModule },
   // Legal pages — the CANONICAL Terms & Conditions / Privacy Policy (spec §2/§3).
   // Entered from the footer, the auth screens, the profile page and document
   // references; hidden from the module nav on purpose (spec §27). Logged-out

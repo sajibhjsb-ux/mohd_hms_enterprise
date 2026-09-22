@@ -4,6 +4,7 @@
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
+import { ciContains, normalizeSearchTerm } from "@/lib/hms/text-search";
 import { db } from "@/lib/db";
 import { handler, ok, okList, Errors, parseBody, listQuery, pagedMeta } from "@/lib/hms/api";
 import { PERMISSIONS } from "@/lib/hms/constants";
@@ -46,11 +47,12 @@ export const GET = handler(
       if (q.customerId) where.id = q.customerId;
       if (q.status) where.status = q.status.toUpperCase();
       if (q.search) {
+        const term = ciContains(normalizeSearchTerm(q.search));
         where.OR = [
-          { companyName: { contains: q.search } },
-          { contactPerson: { contains: q.search } },
-          { email: { contains: q.search } },
-          { code: { contains: q.search } },
+          { companyName: term },
+          { contactPerson: term },
+          { email: term },
+          { code: term },
         ];
       }
     }
