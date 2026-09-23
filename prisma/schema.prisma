@@ -56,6 +56,7 @@ model User {
   employee          Employee?
   notifications     Notification[]
   auditLogs         AuditLog[]
+  aiUsageLogs       AiUsageLog[]
   attendance        Attendance[]
   legalAcceptances  LegalAcceptance[]
   whatsappContacts  WhatsAppContact[]    @relation("WhatsAppContactUser")
@@ -2913,4 +2914,79 @@ model FileUploadSession {
   updatedAt    DateTime  @updatedAt
 
   @@index([userId, status])
+}
+
+// ─────────────────────────── CENTRAL AI CONFIGURATION ───────────────────────────
+// ONE application-level AI configuration managed from Settings → AI by authorized
+// administrators (settings.manage RBAC). Every AI-powered feature obtains its
+// provider, credential and model through the central AIService — individual
+// modules never hold their own keys (central AI configuration spec §2/§37).
+
+model AiConfiguration {
+  id       String @id @default("singleton")
+  // ZAI_PLATFORM (built-in platform AI — no external credential needed)
+  // | GOOGLE_GEMINI. Provider is selectable so further providers can be added
+  // later without rewriting AI features (spec §2).
+  provider String @default("ZAI_PLATFORM")
+  // AES-256-GCM encrypted provider credential, format v1:iv:tag:data (the SAME
+  // approved mechanism as EmailConfig.smtpSecretEnc / WhatsAppConfig.apiKeyEnc).
+  // Plaintext is never stored, never logged, never audited, never returned by
+  // any API, never sent to the browser (spec §3/§5/§30).
+  apiKeyEnc   String @default("")
+  // Last-4 hint ONLY (e.g. "a1b2") for the Settings masked display.
+  apiKeyLast4 String @default("")
+  apiKeySetAt DateTime?
+  // Pending credential during rotation (spec §17): the previous working
+  // credential stays active until the new one passes Test Connection, then it
+  // is promoted and the old one is discarded.
+  pendingApiKeyEnc   String    @default("")
+  pendingApiKeyLast4 String    @default("")
+  pendingKeySetAt    DateTime?
+  // Provider model id (e.g. gemini-2.5-flash). Empty = provider default.
+  // Centrally configurable — features never hardcode model ids (spec §8).
+  model           String  @default("")
+  enabled         Boolean @default(true)
+  temperature     Float   @default(0.4)
+  maxOutputTokens Int     @default(2048)
+  timeoutMs       Int     @default(30000)
+  // NOT_CONFIGURED | CONFIGURED (credential saved, not yet tested OK) |
+  // ACTIVE (last connection test succeeded) | FAILED (last test failed).
+  status           String    @default("NOT_CONFIGURED")
+  lastTestedAt     DateTime?
+  lastTestOk       Boolean?
+  // Sanitized, human-readable failure reason — never contains the credential.
+  lastErrorCode    String    @default("")
+  lastErrorMessage String    @default("")
+  createdById      String    @default("")
+  updatedById      String    @default("")
+  updatedByEmail   String    @default("")
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+}
+
+// Per-request AI usage metadata (spec §22) — safe metadata only. Never stores
+// the API key, authorization headers, encrypted secrets or raw prompt content.
+model AiUsageLog {
+  id           String   @id @default(cuid())
+  userId       String?
+  user         User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  // Feature identifier from the central feature registry, e.g.
+  // checklist_generation | inspection_report | letter_draft | quotation_scope.
+  feature      String
+  requestId    String   @default("")
+  provider     String   @default("")
+  model        String   @default("")
+  // SUCCESS | FAILED | REJECTED (blocked by policy before any provider call).
+  status       String   @default("SUCCESS")
+  inputTokens  Int?
+  outputTokens Int?
+  totalTokens  Int?
+  durationMs   Int      @default(0)
+  // Machine-readable failure code (AI_AUTH_FAILED, AI_RATE_LIMITED, ...).
+  errorCode    String   @default("")
+  createdAt    DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([feature])
+  @@index([userId])
 }

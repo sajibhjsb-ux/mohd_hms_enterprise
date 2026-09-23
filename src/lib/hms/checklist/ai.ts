@@ -1,82 +1,64 @@
-// MOHD.HMS ENTERPRISE — Checklist engine AI caller (z-ai-web-dev-sdk, server-only).
-// Spec §39: API keys stay server-side (the SDK handles credentials); §71: this is
-// a REAL provider call — there is no hardcoded-template fake behind it. The
-// function never throws; failures come back as {ok:false} so the engine can fall
-// back to an approved template (§72) or ask for manual creation (§73).
+// MOHD.HMS ENTERPRISE — Checklist engine AI caller (server-only).
+// CENTRAL AI CONFIG SPEC §15/§27: this module no longer initializes its own
+// provider client. ALL provider traffic goes through the central AIService
+// (src/lib/hms/ai/service.ts), which loads the Settings-managed configuration
+// (provider, encrypted credential, model), enforces gating/rate limits and
+// records usage metadata. This file keeps its original contract so the
+// checklist engine is untouched apart from richer provider metadata.
+//
+// Spec §39: API keys stay server-side; §71: this is a REAL provider call —
+// there is no hardcoded-template fake behind it. Failures come back as
+// {ok:false} so the engine can fall back to an approved template (§72) or ask
+// for manual creation (§73).
 
 import "server-only";
-import ZAI from "z-ai-web-dev-sdk";
+import { aiGenerate, extractJsonObject } from "@/lib/hms/ai/service";
+
+// Consolidated JSON extraction (previously duplicated here and in
+// letters/generation.ts) — re-exported for backward compatibility.
+export { extractJsonObject };
 
 export type AiCallResult =
-  | { ok: true; raw: unknown; model: string }
+  | { ok: true; raw: unknown; model: string; provider: string }
   | { ok: false; error: string };
 
-/** Extract the first balanced JSON object from a model response (letters/generation.ts pattern). */
-export function extractJsonObject(text: string): Record<string, unknown> | null {
-  if (!text) return null;
-  const cleaned = text.replace(/```(?:json)?/gi, "").trim();
-  const start = cleaned.indexOf("{");
-  if (start === -1) return null;
-  let depth = 0;
-  let inStr = false;
-  let esc = false;
-  for (let i = start; i < cleaned.length; i++) {
-    const ch = cleaned[i];
-    if (inStr) {
-      if (esc) esc = false;
-      else if (ch === "\\") esc = true;
-      else if (ch === '"') inStr = false;
-      continue;
-    }
-    if (ch === '"') inStr = true;
-    else if (ch === "{") depth++;
-    else if (ch === "}") {
-      depth--;
-      if (depth === 0) {
-        try {
-          const parsed: unknown = JSON.parse(cleaned.slice(start, i + 1));
-          return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
-        } catch {
-          return null;
-        }
-      }
-    }
+/** Map central AIService failure codes to honest, user-safe messages. */
+function friendlyAiError(code: string): string {
+  switch (code) {
+    case "AI_DISABLED":
+      return "AI is currently disabled by the administrator.";
+    case "AI_NOT_CONFIGURED":
+      return "AI service is not configured. Please contact an administrator.";
+    case "AI_RATE_LIMITED":
+      return "Too many AI requests. Please wait a moment and try again.";
+    default:
+      return "AI generation is temporarily unavailable.";
   }
-  return null;
 }
 
 /**
- * Call the configured AI provider with the checklist generation prompt.
+ * Call the central AIService with the checklist generation prompt.
  * Returns the parsed JSON object or a friendly failure reason (never raw
  * provider errors — spec §70: no stack traces / parsing errors reach users).
  */
 export async function callChecklistAi(system: string, user: string): Promise<AiCallResult> {
-  try {
-    const zai = await ZAI.create();
-    const completion = await zai.chat.completions.create({
-      messages: [
-        { role: "assistant", content: system },
-        { role: "user", content: user },
-      ],
-      thinking: { type: "disabled" },
-    });
-    const text = completion.choices[0]?.message?.content ?? "";
-    const parsed = extractJsonObject(text);
-    if (!parsed) {
-      return { ok: false, error: "AI returned an unusable response format." };
-    }
-    return { ok: true, raw: parsed, model: "z-ai-chat" };
-  } catch (err) {
+  const res = await aiGenerate({ feature: "checklist_generation", system, prompt: user, json: true });
+  if (!res.ok) {
     console.error(
       JSON.stringify({
         ts: new Date().toISOString(),
         level: "error",
         msg: "checklist-ai-generate-failed",
-        err: err instanceof Error ? err.message : String(err),
+        code: res.code,
       })
     );
-    return { ok: false, error: "AI generation is temporarily unavailable." };
+    return { ok: false, error: friendlyAiError(res.code) };
   }
+  const parsed = extractJsonObject(res.text);
+  if (!parsed) {
+    return { ok: false, error: "AI returned an unusable response format." };
+  }
+  return { ok: true, raw: parsed, model: res.model, provider: res.provider };
 }
 
 /**
@@ -84,31 +66,23 @@ export async function callChecklistAi(system: string, user: string): Promise<AiC
  * checklist results; the prompt forbids invention. Returns null on failure.
  */
 export async function callChecklistSummaryAi(system: string, user: string): Promise<string | null> {
-  try {
-    const zai = await ZAI.create();
-    const completion = await zai.chat.completions.create({
-      messages: [
-        { role: "assistant", content: system },
-        { role: "user", content: user },
-      ],
-      thinking: { type: "disabled" },
-    });
-    const text = String(completion.choices[0]?.message?.content ?? "")
-      .replace(/```[\s\S]*?```/g, " ")
-      .replace(/^#+\s*/gm, "")
-      .replace(/\*\*(.*?)\*\*/g, "$1")
-      .replace(/\s+/g, " ")
-      .trim();
-    return text.length > 0 ? text.slice(0, 1200) : null;
-  } catch (err) {
+  const res = await aiGenerate({ feature: "checklist_summary", system, prompt: user });
+  if (!res.ok) {
     console.error(
       JSON.stringify({
         ts: new Date().toISOString(),
         level: "error",
         msg: "checklist-ai-summary-failed",
-        err: err instanceof Error ? err.message : String(err),
+        code: res.code,
       })
     );
     return null;
   }
+  const text = res.text
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/^#+\s*/gm, "")
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text.length > 0 ? text.slice(0, 1200) : null;
 }

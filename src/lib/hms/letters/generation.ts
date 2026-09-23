@@ -14,12 +14,13 @@
 //  - It is hard-instructed to never invent dates, reference/project numbers,
 //    contract values, names, deadlines, financial figures or legal claims; the
 //    caller enforces required fields BEFORE calling (§12).
-//  - No API key handling here — the existing z-ai-web-dev-sdk abstraction.
+//  - No API key handling here — all provider traffic goes through the central
+//    AIService (Settings-managed configuration, central AI config spec §15).
 //  - Never throws: returns { ok:false, error } and the route maps it to a
 //    friendly structured error (same contract as the IRMS AI helper).
 
 import "server-only";
-import ZAI from "z-ai-web-dev-sdk";
+import { aiGenerate, extractJsonObject } from "@/lib/hms/ai/service";
 import { letterTypeLabel, type LetterAiAction, type TemplateField } from "./shared";
 import type { TemplateContentSnapshot } from "./server";
 
@@ -56,23 +57,6 @@ function sanitize(raw: string): string {
 function capWords(text: string, max: number): string {
   const words = text.split(/\s+/).filter(Boolean);
   return words.length > max ? words.slice(0, max).join(" ") + "." : text;
-}
-
-/**
- * Extract the first JSON object from a model response (handles ```json fences
- * and stray prose around the object).
- */
-function extractJsonObject(raw: string): Record<string, unknown> | null {
-  const text = String(raw ?? "");
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start < 0 || end <= start) return null;
-  try {
-    const parsed = JSON.parse(text.slice(start, end + 1));
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
-  } catch {
-    return null;
-  }
 }
 
 /** Only the filled ai-flagged fields travel to the provider (§41). */
@@ -137,16 +121,19 @@ export async function generateLetterContent(opts: {
 }): Promise<GenerationResult> {
   const { system, user } = buildPrompt(opts);
   try {
-    const zai = await ZAI.create();
-    const completion = await zai.chat.completions.create({
-      messages: [
-        { role: "assistant", content: system },
-        { role: "user", content: user },
-      ],
-      thinking: { type: "disabled" },
-    });
-    const raw = completion.choices[0]?.message?.content ?? "";
-    const obj = extractJsonObject(raw);
+    const res = await aiGenerate({ feature: "letter_draft", system, prompt: user });
+    if (!res.ok) {
+      const message =
+        res.code === "AI_DISABLED"
+          ? "AI is currently disabled by the administrator. Write the letter manually or contact an administrator."
+          : res.code === "AI_NOT_CONFIGURED"
+            ? "AI service is not configured. Write the letter manually or contact an administrator."
+            : res.code === "AI_RATE_LIMITED"
+              ? "Too many AI requests. Please wait a moment and try again, or write the letter manually."
+              : "The AI assistant is unavailable right now. Please try again in a moment, or write the letter manually.";
+      return { ok: false, error: "UNAVAILABLE", message };
+    }
+    const obj = extractJsonObject(res.text);
     if (!obj) {
       return { ok: false, error: "INVALID_RESPONSE", message: "The AI response could not be interpreted. Please try again." };
     }

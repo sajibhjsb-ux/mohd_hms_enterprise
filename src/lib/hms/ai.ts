@@ -1,4 +1,7 @@
-// MOHD.HMS ENTERPRISE — server-only AI helper for IRMS (z-ai-web-dev-sdk).
+// MOHD.HMS ENTERPRISE — server-only AI helper for IRMS.
+// CENTRAL AI CONFIG SPEC §15/§27: provider traffic goes through the central
+// AIService (Settings-managed configuration: provider, encrypted credential,
+// model, gating, usage logging). No provider client is initialized here.
 //
 // DISCLAIMER / GUARDRAILS (contract §15 / spec §10):
 //  - Output is DRAFT ASSISTANCE ONLY. Staff preview it in the UI and must insert
@@ -9,7 +12,7 @@
 //    the caller decides the error response (friendly 502-style ApiError).
 
 import "server-only";
-import ZAI from "z-ai-web-dev-sdk";
+import { aiGenerate } from "./ai/service";
 
 export const AI_FIELDS = ["remarks", "correctiveAction", "recommendation", "summary", "safetyNotes", "rootCause"] as const;
 export type AiField = (typeof AI_FIELDS)[number];
@@ -90,15 +93,20 @@ export async function generateInspectionText(field: AiField, context: AiContext)
     `Inspection context:\n${contextBlock(context) || "(no context provided — write a neutral, professional placeholder-free opening that the inspector can complete)"}`;
 
   try {
-    const zai = await ZAI.create();
-    const completion = await zai.chat.completions.create({
-      messages: [
-        { role: "assistant", content: system },
-        { role: "user", content: user },
-      ],
-      thinking: { type: "disabled" },
-    });
-    const text = sanitize(completion.choices[0]?.message?.content ?? "");
+    const res = await aiGenerate({ feature: "inspection_report", system, prompt: user });
+    if (!res.ok) {
+      console.error(
+        JSON.stringify({
+          ts: new Date().toISOString(),
+          level: "error",
+          msg: "irms-ai-generate-failed",
+          field,
+          code: res.code,
+        })
+      );
+      return null;
+    }
+    const text = sanitize(res.text);
     return text.length > 0 ? text : null;
   } catch (err) {
     console.error(

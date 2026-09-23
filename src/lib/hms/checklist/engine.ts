@@ -282,7 +282,7 @@ export async function generateChecklistDraft(opts: {
     data: {
       sourceType: opts.sourceType, sourceId: opts.sourceId, workOrderId: source.workOrderId,
       templateId: template?.id ?? null, templateVersion: template?.version ?? null,
-      promptVersion: CHECKLIST_PROMPT_VERSION, provider: "z-ai", model: "",
+      promptVersion: CHECKLIST_PROMPT_VERSION, provider: "unknown", model: "",
       status: "PENDING", contextSummary: "",
       createdById: opts.actorId,
     },
@@ -296,7 +296,7 @@ export async function generateChecklistDraft(opts: {
     if (validation.ok) {
       await db.checklistAiGeneration.update({
         where: { id: gen.id },
-        data: { status: "COMPLETED", model: ai.model, itemCount: validation.items.length, contextSummary: contextFingerprint(ctx) },
+        data: { status: "COMPLETED", provider: ai.provider, model: ai.model, itemCount: validation.items.length, contextSummary: contextFingerprint(ctx) },
       });
       const requireApproval = await isAutomationEnabled("checklist_require_approval");
       const result = await persistDraft({
@@ -329,7 +329,7 @@ export async function generateChecklistDraft(opts: {
     // §41 — invalid AI output is never saved.
     await db.checklistAiGeneration.update({
       where: { id: gen.id },
-      data: { status: "VALIDATION_FAILED", model: ai.model, error: validation.reason, contextSummary: contextFingerprint(ctx) },
+      data: { status: "VALIDATION_FAILED", provider: ai.provider, model: ai.model, error: validation.reason, contextSummary: contextFingerprint(ctx) },
     });
   } else {
     await db.checklistAiGeneration.update({

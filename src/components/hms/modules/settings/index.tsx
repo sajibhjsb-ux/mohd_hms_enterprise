@@ -18,6 +18,7 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { AutomationTab } from "./automation-tab";
+import { AiTab } from "./ai-tab";
 import { EmailTab } from "../email-config/email-tab";
 import { LegalTab } from "./legal-tab";
 import { NotificationsTab } from "./notifications-tab";
@@ -157,6 +158,7 @@ export function SettingsModule() {
           <TabsTrigger value="company">Company</TabsTrigger>
           <TabsTrigger value="localization">Localization</TabsTrigger>
           <TabsTrigger value="automation">Automation</TabsTrigger>
+          {canManage ? <TabsTrigger value="ai">AI</TabsTrigger> : null}
           {canViewEmail ? <TabsTrigger value="email">Email</TabsTrigger> : null}
           {canViewWhatsApp ? <TabsTrigger value="whatsapp">WhatsApp</TabsTrigger> : null}
           {canViewPush ? <TabsTrigger value="notifications">Notifications</TabsTrigger> : null}
@@ -261,6 +263,14 @@ export function SettingsModule() {
         <TabsContent value="automation">
           <AutomationTab />
         </TabsContent>
+
+        {/* ── AI Configuration (central AI config spec §2/§7 — ONE central AI
+            configuration for the whole application, settings.manage RBAC) ── */}
+        {canManage ? (
+          <TabsContent value="ai">
+            <AiTab />
+          </TabsContent>
+        ) : null}
 
         {/* ── Email (§30 — ALL email infrastructure administration lives here:
             SMTP, mailboxes, templates, automations, logs — per the user's
