@@ -1,13 +1,14 @@
 import "server-only";
 
-// MOHD.HMS ENTERPRISE — per-user push notification preferences (spec §19).
+// MOHD.HMS ENTERPRISE — per-user notification preferences (spec §19).
 // Categories mirror the business domains. Storage: the NotificationPreference
-// row (JSON `channels` map category → { push: boolean }). Absent category or
-// row ⇒ push enabled (opt-out model, matching the existing notification UX).
+// row (JSON `channels` map category → { push, email, whatsapp }). Legacy boolean
+// values in the same map (`{ "<CATEGORY>": true }`) still read as push-only.
+// Absent category or row ⇒ all channels enabled (opt-out model, matching the
+// existing notification UX).
 //
-// Scope: preferences gate the PUSH channel only. In-app is always created (it
-// is the application's own record), and Email/WhatsApp remain governed by the
-// existing business rules + automation toggles — nothing existing is bypassed.
+// In-app is always created (it is the application's own record). The channel
+// preferences here govern the PUSH / EMAIL / WHATSAPP outbound channels.
 
 import { db } from "@/lib/db";
 
@@ -127,6 +128,99 @@ export async function savePrefs(userId: string, prefs: PushPrefMap): Promise<voi
   // Merge into the existing row so unknown future categories are preserved.
   const existing = await db.notificationPreference.findUnique({ where: { userId }, select: { channels: true } });
   const merged = { ...parsePrefMap(existing?.channels ?? ""), ...prefs };
+  await db.notificationPreference.upsert({
+    where: { userId },
+    create: { userId, channels: JSON.stringify(merged) },
+    update: { channels: JSON.stringify(merged) },
+  });
+}
+
+// ---- per-channel preferences (push / email / whatsapp) ---------------------
+
+export type ChannelPref = {
+  push: boolean;
+  email: boolean;
+  whatsapp: boolean;
+};
+
+/** Partial per-channel map (only categories present in the payload/row). */
+export type ChannelPrefMap = Partial<Record<PushCategory, ChannelPref>>;
+
+export type EffectiveChannelPrefs = Record<PushCategory, ChannelPref>;
+
+function parseChannelMap(raw: string): ChannelPrefMap {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const out: ChannelPrefMap = {};
+    for (const cat of PUSH_CATEGORIES) {
+      const v = parsed[cat];
+      if (typeof v === "boolean") {
+        out[cat] = { push: v, email: true, whatsapp: true };
+      } else if (v && typeof v === "object") {
+        const cv = v as { push?: unknown; email?: unknown; whatsapp?: unknown };
+        out[cat] = {
+          push: typeof cv.push === "boolean" ? cv.push : true,
+          email: typeof cv.email === "boolean" ? cv.email : true,
+          whatsapp: typeof cv.whatsapp === "boolean" ? cv.whatsapp : true,
+        };
+      }
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+/** Effective per-channel preferences for every category (default: all enabled). */
+export async function getEffectiveChannelPrefs(userId: string): Promise<EffectiveChannelPrefs> {
+  const defaults = {} as EffectiveChannelPrefs;
+  for (const cat of PUSH_CATEGORIES) defaults[cat] = { push: true, email: true, whatsapp: true };
+  try {
+    const row = await db.notificationPreference.findUnique({ where: { userId }, select: { channels: true } });
+    if (row) {
+      const map = parseChannelMap(row.channels);
+      for (const cat of PUSH_CATEGORIES) {
+        const p = map[cat];
+        if (p) defaults[cat] = p;
+      }
+    }
+  } catch {
+    /* defaults */
+  }
+  return defaults;
+}
+
+/** Validate + normalize a client-supplied per-channel preference payload. */
+export function sanitizeChannelPrefInput(input: unknown): ChannelPrefMap {
+  const out: ChannelPrefMap = {};
+  if (!input || typeof input !== "object") return out;
+  for (const [k, v] of Object.entries(input as Record<string, unknown>)) {
+    if (!(PUSH_CATEGORIES as readonly string[]).includes(k)) continue;
+    const cat = k as PushCategory;
+    if (typeof v === "boolean") {
+      out[cat] = { push: v, email: true, whatsapp: true };
+      continue;
+    }
+    if (v && typeof v === "object") {
+      const cv = v as { push?: unknown; email?: unknown; whatsapp?: unknown };
+      if (typeof cv.push === "boolean" || typeof cv.email === "boolean" || typeof cv.whatsapp === "boolean") {
+        out[cat] = {
+          push: typeof cv.push === "boolean" ? cv.push : true,
+          email: typeof cv.email === "boolean" ? cv.email : true,
+          whatsapp: typeof cv.whatsapp === "boolean" ? cv.whatsapp : true,
+        };
+      }
+    }
+  }
+  return out;
+}
+
+/** Merge + persist per-channel preferences (keeps the existing boolean format readable). */
+export async function saveChannelPrefs(userId: string, prefs: ChannelPrefMap): Promise<void> {
+  const existing = await db.notificationPreference.findUnique({ where: { userId }, select: { channels: true } });
+  const merged: Record<string, ChannelPref> = { ...parseChannelMap(existing?.channels ?? "") };
+  for (const [k, p] of Object.entries(prefs)) merged[k] = p as ChannelPref;
   await db.notificationPreference.upsert({
     where: { userId },
     create: { userId, channels: JSON.stringify(merged) },
