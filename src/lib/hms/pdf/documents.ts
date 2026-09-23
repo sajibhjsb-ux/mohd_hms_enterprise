@@ -320,8 +320,10 @@ const inspectionReport: DocumentDef = {
     }
 
     // Photo grid pages are built during render — canonical category order,
-    // sortOrder within category, chunked into ≤9-cell pages; DISPLAY variant
-    // bytes read from disk sequentially (§52); missing file → placeholder cell.
+    // sortOrder within category, chunked into ≤9-cell page-groups; DISPLAY
+    // variant bytes read from disk sequentially (§52); missing file →
+    // placeholder cell. Placement itself is decided by the engine (flowing
+    // rows + keep-together headings, layout spec §6-§21).
     const orderedPhotos = canonicalPhotoOrder(r.photos);
     type GridCell = { caption: string; number: string; bytes: Buffer | Uint8Array | null };
 
@@ -372,14 +374,14 @@ const inspectionReport: DocumentDef = {
         ]);
         d.spacer(6);
         if (r.taskDescription?.trim()) {
-          d.heading("Work Description");
+          d.heading("Work Description", { keepWithNext: 24 });
           d.para(r.taskDescription, { size: 9 });
         }
         if (r.summary?.trim()) {
-          d.heading("Summary");
+          d.heading("Summary", { keepWithNext: 24 });
           d.para(r.summary, { size: 9 });
         }
-        d.heading("Findings");
+        d.heading("Findings", { keepWithNext: 48 });
         d.table(
           [
             { header: "#", width: 0.4, align: "center" },
@@ -400,7 +402,7 @@ const inspectionReport: DocumentDef = {
           ["Notes", r.notes],
         ].filter(([, v]) => (v ?? "").trim().length > 0) as [string, string][];
         if (workDetails.length > 0 || r.labourHours > 0 || r.completionPercent > 0) {
-          d.heading("Work Details");
+          d.heading("Work Details", { keepWithNext: 24 });
           for (const [label, value] of workDetails) {
             d.para(`${label}: ${value}`, { size: 8.8 });
           }
@@ -412,11 +414,15 @@ const inspectionReport: DocumentDef = {
         if (r.recommendations?.trim()) d.notesBlock("Recommendations", r.recommendations);
 
         // Photo sections + signatures + approval history + QR (async embeds).
+        // §14/§21 — the photo ENGINE owns placement: each category heading is
+        // passed into photoGrid and travels with its first photo row (never
+        // orphaned), complete rows flow onto the current page while they fit,
+        // and the remainder continues on the next page. No forced dedicated
+        // photo pages, no reserved full-page grids.
         return (async () => {
           for (const category of IRMS_PHOTO_CATEGORIES) {
             const catPhotos = orderedPhotos.filter((p) => p.category === category);
             if (catPhotos.length === 0) continue;
-            d.heading(`Photographs — ${humanize(category)}`);
             const chunks: GridCell[][] = [];
             for (let i = 0; i < catPhotos.length; i += 9) {
               const chunk = catPhotos.slice(i, i + 9);
@@ -431,11 +437,11 @@ const inspectionReport: DocumentDef = {
               }
               chunks.push(cells);
             }
-            await d.photoGrid(chunks);
+            await d.photoGrid(chunks, { heading: `Photographs — ${humanize(category)}` });
           }
-          d.heading("Signatures");
+          d.heading("Signatures", { keepWithNext: 92 });
           await d.signatureImage(signatureItems);
-          d.heading("Approval History");
+          d.heading("Approval History", { keepWithNext: 48 });
           d.table(
             [
               { header: "Step", width: 1.6 },

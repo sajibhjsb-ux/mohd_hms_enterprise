@@ -103,6 +103,12 @@ export class PdfDoc {
   private y = 0;
   private logo: PDFImage | null = null;
   private footerLabel = "MOHD.HMS ENTERPRISE";
+  // Per-page ink extents (bottom-most ink y, right-most ink x) recorded by the
+  // drawing primitives. Used for placement decisions that must guarantee no
+  // overlap with already-drawn content (e.g. the QR verification band) — the
+  // engine can then co-locate fixed-position elements on the current page
+  // whenever the occupied region demonstrably cannot collide (§8/§36).
+  private inkBars: { bottom: number; right: number }[] = [];
   // Header geometry — measured by drawHeader() from the actual content, so the
   // brand rule and the body start adapt to any content height (no fixed
   // offsets that could let the rule overlap text). Defaults only apply until
@@ -142,6 +148,12 @@ export class PdfDoc {
     this.page = this.pdf.addPage([A4W, A4H]);
     this.pages.push(this.page);
     this.y = this.bodyTop;
+    this.inkBars = [];
+  }
+
+  /** Record the ink extent of a drawn element (conservative upper bounds). */
+  private recordInk(bottom: number, right: number): void {
+    this.inkBars.push({ bottom, right: Math.min(right, A4W - MARGIN) });
   }
 
   /** Truncate to a pixel width (never mid-glyph overflow); adds an ellipsis.
@@ -302,15 +314,22 @@ export class PdfDoc {
     this.y -= 7;
     this.page.drawLine({ start: { x: MARGIN, y: this.y }, end: { x: A4W - MARGIN, y: this.y }, thickness: 0.8, color });
     this.y -= 7;
+    this.recordInk(this.y, A4W - MARGIN);
   }
 
-  /** Section heading with green square marker. */
-  heading(text: string): void {
+  /** Section heading with green square marker.
+   *  keepWithNext (pt) reserves room for the START of the block that follows
+   *  (§7 keep-together): when the following block could not even begin on the
+   *  current page, the page breaks BEFORE the heading is drawn, so a heading
+   *  is never orphaned at the bottom of a page. 0 keeps the plain behaviour. */
+  heading(text: string, opts?: { keepWithNext?: number }): void {
     const size = 10.5;
-    this.ensure(26);
+    this.ensure(26 + Math.max(0, opts?.keepWithNext ?? 0));
     this.y -= 18;
     this.page.drawRectangle({ x: MARGIN, y: this.y - 1.5, width: 7, height: 7, color: GREEN });
-    this.page.drawText(pdfText(text), { x: MARGIN + 12, y: this.y, size, font: this.bold, color: INK });
+    const label = pdfText(text);
+    this.page.drawText(label, { x: MARGIN + 12, y: this.y, size, font: this.bold, color: INK });
+    this.recordInk(this.y - 3, MARGIN + 12 + this.bold.widthOfTextAtSize(label, size));
     this.y -= 8;
   }
 
@@ -329,6 +348,7 @@ export class PdfDoc {
       this.ensure(size + 4);
       this.y -= size + 3.2;
       this.page.drawText(ln, { x: MARGIN + indent, y: this.y, size, font, color });
+      this.recordInk(this.y - 2.5, MARGIN + indent + font.widthOfTextAtSize(ln, size));
     }
     this.y -= opts?.gap ?? 2;
   }
@@ -355,6 +375,7 @@ export class PdfDoc {
         });
       });
       this.y = yTop - maxH;
+      this.recordInk(this.y, A4W - MARGIN);
     }
   }
 
@@ -381,6 +402,7 @@ export class PdfDoc {
         this.page.drawText(label, { x, y: this.y - hH + 6, size: 8, font: this.bold, color: WHITE });
       });
       this.y -= hH;
+      this.recordInk(this.y, A4W - MARGIN);
     };
 
     this.ensure(40);
@@ -425,6 +447,7 @@ export class PdfDoc {
       this.y -= rowH;
       // faint row separator
       this.page.drawLine({ start: { x: MARGIN, y: this.y }, end: { x: A4W - MARGIN, y: this.y }, thickness: 0.4, color: LINE });
+      this.recordInk(this.y, A4W - MARGIN);
     });
     this.y -= 4;
   }
@@ -448,6 +471,7 @@ export class PdfDoc {
       this.page.drawText(v, { x: x0 + blockW - vw, y: this.y - 12, size, font: f, color: isLast ? GREEN_INK : INK });
       this.y -= isLast ? 22 : 16;
     });
+    this.recordInk(this.y, x0 + blockW);
   }
 
   /** Full-width single line label/value banner (status lines). */
@@ -470,6 +494,7 @@ export class PdfDoc {
       color: tone === "green" ? GREEN_INK : tone === "danger" ? DANGER : MUTED,
     });
     this.y -= h + 8;
+    this.recordInk(this.y + 4, A4W - MARGIN);
   }
 
   /** Signature lines (§18) — up to 3 side-by-side. */
@@ -488,12 +513,14 @@ export class PdfDoc {
       this.page.drawText(pdfText(s.caption).slice(0, 44), { x, y: this.y - 11, size: 7.5, font: this.font, color: MUTED });
     });
     this.y -= 18;
+    const slotCount = Math.min(3, Math.max(1, items.length));
+    this.recordInk(this.y, MARGIN + (slotCount - 1) * (this.contentW / slotCount) + 8 + Math.min(170, this.contentW / slotCount - 30));
   }
 
   /** Notes/terms block rendered as a titled section. */
   notesBlock(title: string, body: string): void {
     if (!body?.trim()) return;
-    this.heading(title);
+    this.heading(title, { keepWithNext: 24 });
     this.para(body, { size: 8.8, color: "muted" });
   }
 
@@ -521,6 +548,7 @@ export class PdfDoc {
       this.page.drawText(singleLine(opts.caption).slice(0, 90), { x: MARGIN, y: this.y, size: 7.5, font: this.font, color: MUTED });
     }
     this.y -= 6;
+    this.recordInk(this.y, MARGIN + dim.width);
   }
 
   // ── IRMS photo-grid / QR / signature-image extensions (contract §17) ──────
@@ -537,72 +565,125 @@ export class PdfDoc {
     }
   }
 
+  /** Professional photo-row geometry (§9/§10/§12). One row = 3 cards of
+   *  [image box + caption strip], separated by consistent gaps. The row
+   *  height is derived from the MEASURED body top so exactly 3 rows fill a
+   *  fresh page (§14) — no per-report or per-page size variation, and no
+   *  hardcoded offsets that could collide with the header or footer. */
+  private photoRowMetrics(): { rowH: number; cellW: number; imgW: number; imgH: number; gap: number; floorY: number } {
+    const gap = 7; // card → card spacing, horizontal and vertical (§12: 6–10pt)
+    const floorY = MARGIN + 30; // footer clearance — same floor as ensure()
+    const cellW = (this.contentW - 2 * gap) / 3;
+    const rowH = Math.floor(((this.bodyTop - floorY) - 2 * gap) / 3); // 3 rows fill a fresh page
+    const imgH = rowH - 34; // caption strip (number + caption) keeps its proven 34pt
+    return { rowH, cellW, imgW: cellW - 12, imgH, gap, floorY };
+  }
+
+  /** One row of ≤3 photo cards at (yTop → yTop - rowH). Contain-fit images
+   *  (never distorted §11), placeholder cell for a missing file, number +
+   *  caption strip under each image (§13). */
+  private async drawPhotoRow(
+    cells: { caption: string; number: string; bytes: Buffer | Uint8Array | null }[],
+    yTop: number,
+    m: { rowH: number; cellW: number; imgW: number; imgH: number; gap: number }
+  ): Promise<void> {
+    for (let i = 0; i < Math.min(3, cells.length); i++) {
+      const cell = cells[i];
+      const x = MARGIN + i * (m.cellW + m.gap);
+
+      this.page.drawRectangle({
+        x,
+        y: yTop - m.rowH + 2,
+        width: m.cellW,
+        height: m.rowH - 4,
+        borderColor: LINE,
+        borderWidth: 0.7,
+      });
+
+      let drew = false;
+      if (cell.bytes && cell.bytes.length > 0) {
+        const img = await this.embed(cell.bytes);
+        if (img) {
+          const dim = img.scaleToFit(m.imgW, m.imgH);
+          const ix = x + (m.cellW - dim.width) / 2;
+          const iy = yTop - 8 - m.imgH + (m.imgH - dim.height) / 2;
+          this.page.drawImage(img, { x: ix, y: iy, width: dim.width, height: dim.height });
+          drew = true;
+        }
+      }
+      if (!drew) {
+        this.page.drawRectangle({ x: x + 7, y: yTop - 8 - m.imgH, width: m.cellW - 14, height: m.imgH, color: ZEBRA });
+        const t = "Photo file unavailable";
+        const tw = this.font.widthOfTextAtSize(t, 8);
+        this.page.drawText(t, { x: x + (m.cellW - tw) / 2, y: yTop - 8 - m.imgH / 2 + 3, size: 8, font: this.font, color: FAINT });
+      }
+
+      // Number (bold) + caption in the strip under the cell (§13).
+      const capY = yTop - m.rowH + 14;
+      const numText = singleLine(cell.number).slice(0, 12);
+      this.page.drawText(numText, { x: x + 6, y: capY, size: 8, font: this.bold, color: GREEN_INK });
+      const numW = this.bold.widthOfTextAtSize(numText, 8) + 6;
+      const caption = singleLine(cell.caption || "—");
+      const maxCw = m.cellW - numW - 14;
+      let line = caption.slice(0, 60);
+      while (line.length > 1 && this.font.widthOfTextAtSize(line, 7.5) > maxCw) line = line.slice(0, -1);
+      if (caption.length > line.length) line = line.slice(0, -1) + "…";
+      this.page.drawText(line, { x: x + 6 + numW, y: capY, size: 7.5, font: this.font, color: MUTED });
+    }
+  }
+
   /**
-   * 3×3 photo grid pages. Each inner array is ONE pre-chunked page of ≤9 cells
-   * (the renderer guarantees categories are never mixed on a page). Images are
-   * contain-fit (never distorted) with number + caption under each cell; a
-   * missing file renders a placeholder cell instead.
+   * Flowing photo grid (§6/§7/§8/§14/§20/§21) — THE photo engine for every
+   * inspection report. Each inner array is one category page-group (the
+   * renderer keeps categories in canonical order); the engine decides ALL
+   * placement:
+   *
+   *   • keep-together (§7/§8): the section heading is drawn directly above
+   *     its first photo row — when heading + one row cannot fit on the
+   *     current page, the whole logical block moves to the next page BEFORE
+   *     anything is drawn, so a heading is never orphaned.
+   *   • dynamic pagination (§14): complete rows flow onto the current page
+   *     while they fit; the remainder continues on the next page. Sections
+   *     are never forced onto a dedicated page, and a short section no
+   *     longer reserves a full-page 3×3 area (§15: no fixed photo-area
+   *     heights — the old full-page reservation wasted 40–75% of pages).
+   *   • professional size (§10): row geometry is fixed from the measured
+   *     body top — photos keep the same size on every page and report.
    */
-  async photoGrid(pages: { caption: string; number: string; bytes: Buffer | Uint8Array | null }[][]): Promise<void> {
-    const usableTop = this.bodyTop;
+  async photoGrid(pages: { caption: string; number: string; bytes: Buffer | Uint8Array | null }[][], opts?: { heading?: string }): Promise<void> {
+    const m = this.photoRowMetrics();
+    let headingPending = opts?.heading?.trim() ?? "";
+
     for (const cells of pages) {
       if (!cells || cells.length === 0) continue;
-      // Continue on the current page only when it is still effectively fresh
-      // (a section heading was just drawn); otherwise start a dedicated page.
-      if (this.y < usableTop - 60) this.addPage();
-      const gridTop = this.y;
-      const gridBottom = MARGIN + 30;
-      const cellW = this.contentW / 3;
-      const cellH = (gridTop - gridBottom) / 3;
-      const imgH = cellH - 34;
-      const imgW = cellW - 12;
 
-      for (let i = 0; i < Math.min(9, cells.length); i++) {
-        const cell = cells[i];
-        const col = i % 3;
-        const row = Math.floor(i / 3);
-        const x = MARGIN + col * cellW;
-        const yTop = gridTop - row * cellH;
-
-        this.page.drawRectangle({
-          x: x + 1,
-          y: yTop - cellH + 2,
-          width: cellW - 2,
-          height: cellH - 4,
-          borderColor: LINE,
-          borderWidth: 0.7,
-        });
-
-        let drew = false;
-        if (cell.bytes && cell.bytes.length > 0) {
-          const img = await this.embed(cell.bytes);
-          if (img) {
-            const dim = img.scaleToFit(imgW, imgH);
-            const ix = x + (cellW - dim.width) / 2;
-            const iy = yTop - 8 - imgH + (imgH - dim.height) / 2;
-            this.page.drawImage(img, { x: ix, y: iy, width: dim.width, height: dim.height });
-            drew = true;
-          }
-        }
-        if (!drew) {
-          this.page.drawRectangle({ x: x + 7, y: yTop - 8 - imgH, width: cellW - 14, height: imgH, color: ZEBRA });
-          const t = "Photo file unavailable";
-          const tw = this.font.widthOfTextAtSize(t, 8);
-          this.page.drawText(t, { x: x + (cellW - tw) / 2, y: yTop - 8 - imgH / 2 + 3, size: 8, font: this.font, color: FAINT });
-        }
-
-        // Number (bold) + caption in the strip under the cell.
-        const capY = yTop - cellH + 14;
-        this.page.drawText(singleLine(cell.number).slice(0, 12), { x: x + 6, y: capY, size: 8, font: this.bold, color: GREEN_INK });
-        const numW = this.bold.widthOfTextAtSize(singleLine(cell.number).slice(0, 12), 8) + 6;
-        const caption = singleLine(cell.caption || "—");
-        const maxCw = cellW - numW - 14;
-        let line = caption.slice(0, 60);
-        while (line.length > 1 && this.font.widthOfTextAtSize(line, 7.5) > maxCw) line = line.slice(0, -1);
-        if (caption.length > line.length) line = line.slice(0, -1) + "…";
-        this.page.drawText(line, { x: x + 6 + numW, y: capY, size: 7.5, font: this.font, color: MUTED });
+      // §7/§8 — heading travels with its first row.
+      if (headingPending) {
+        if (this.y - (26 + m.rowH) < m.floorY) this.addPage();
+        this.heading(headingPending);
+        headingPending = "";
       }
-      this.y = gridTop - 3 * cellH - 6;
+
+      let i = 0;
+      while (i < cells.length) {
+        const rowsLeft = Math.ceil((cells.length - i) / 3);
+        let rowsHere = Math.min(Math.floor((this.y - m.floorY + m.gap) / (m.rowH + m.gap)), rowsLeft);
+        if (rowsHere <= 0) {
+          this.addPage();
+          rowsHere = Math.min(Math.floor((this.y - m.floorY + m.gap) / (m.rowH + m.gap)), rowsLeft);
+        }
+        for (let r = 0; r < rowsHere; r++) {
+          // Row top: leave the gap above every row except the first on the page.
+          const rowTop = r === 0 ? this.y : this.y - m.gap;
+          await this.drawPhotoRow(cells.slice(i, i + 3), rowTop, m);
+          this.y = rowTop - m.rowH;
+          this.recordInk(this.y, A4W - MARGIN);
+          i += 3;
+        }
+      }
+    }
+    if (headingPending === "" && pages.some((c) => c && c.length > 0)) {
+      this.y -= 8; // §35: consistent section bottom spacing before the next block
     }
   }
 
@@ -621,11 +702,19 @@ export class PdfDoc {
     const caption = singleLine(opts?.caption ?? "Scan to Verify").slice(0, 44);
     const ref = opts?.reference ? singleLine(opts.reference).slice(0, 30) : "";
 
-    // Last-page placement (default): reserve the band — a fresh final page
-    // carries the QR alone when the document fills its last content page.
-    if (opts?.placement !== "first" && this.y < 50 + size + 10) this.addPage();
-    const page = opts?.placement === "first" ? this.pages[0] : this.page;
+    // Last-page placement (default): the plate lives at its fixed bottom-right
+    // position; a fresh final page is added ONLY when already-drawn ink
+    // genuinely intersects the QR band (plate + side caption corridor). Short
+    // left-aligned lines (e.g. the revision note) do not reach the corridor,
+    // so the QR joins the current page instead of wasting one (§8/§36).
     const x = A4W - MARGIN - size;
+    if (opts?.placement !== "first") {
+      const zoneTop = 50 + size + 3;
+      const corridorLeft = x - 14 - Math.max(this.bold.widthOfTextAtSize(caption, 7.5), ref ? this.font.widthOfTextAtSize(ref, 7) : 0);
+      const collides = this.inkBars.some((b) => b.bottom < zoneTop + 2 && b.right > corridorLeft);
+      if (collides) this.addPage();
+    }
+    const page = opts?.placement === "first" ? this.pages[0] : this.page;
     const y = 50;
     // white plate + hairline border guarantees contrast on any paper (§44)
     page.drawRectangle({ x: x - 3, y: y - 3, width: size + 6, height: size + 6, color: WHITE, borderColor: LINE, borderWidth: 0.8 });
@@ -671,6 +760,7 @@ export class PdfDoc {
       this.page.drawLine({ start: { x, y: lineY }, end: { x: x + lineW, y: lineY }, thickness: 0.9, color: MUTED });
     });
     this.y -= 20;
+    this.recordInk(this.y, MARGIN + (shown.length - 1) * slotW + 8 + lineW);
   }
 
   private wrap(text: string, font: PDFFont, size: number, maxWidth: number): string[] {
