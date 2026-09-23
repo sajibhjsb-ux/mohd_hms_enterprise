@@ -64,6 +64,7 @@ export const EVENT_TYPES = {
   // DomainEvent outbox and dispatched to authorized sockets by the realtime
   // dispatcher. NO frontend code may emit these.
   NOTIFICATION_CREATED: "NOTIFICATION_CREATED",
+  NOTIFICATION_READ: "NOTIFICATION_READ",
   COMPLAINT_UPDATED: "COMPLAINT_UPDATED",
   WORK_ORDER_CREATED: "WORK_ORDER_CREATED",
   WORK_ORDER_UPDATED: "WORK_ORDER_UPDATED",

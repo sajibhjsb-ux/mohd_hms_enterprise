@@ -2,10 +2,11 @@
 // accept | start | hold | resume | complete | cancel
 // On completion: recompute totals and deduct inventoried material stock inside a
 // single $transaction (idempotent — the from-status guard rejects double runs).
-import type { NextRequest, NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { handler, ok, parseBody, Errors, ApiError } from "@/lib/hms/api";
+import { handler, ok, parseBody, Errors } from "@/lib/hms/api";
 import { roleCan } from "@/lib/hms/rbac";
 import { audit, notify, notifyRole } from "@/lib/hms/services";
 import { WO_TRANSITIONS, PERMISSIONS } from "@/lib/hms/constants";
@@ -89,12 +90,14 @@ export const POST = withId(
         const missing: string[] = [];
 
         const beforePhotosMin = await automationNumber("start_work_before_photos_min", 1);
+        let photoCount = 0;
         if (beforePhotosMin > 0) {
           // At start time every photo on the work order IS a before-work photo
           // (DURING/AFTER evidence only becomes possible after start). Count the
           // actual persisted rows — metadata created only after the bytes landed.
-          const photoCount = await db.document.count({
-            where: { resourceType: "WORK_ORDER", resourceId: id, category: "WORK_ORDER" },
+          // Only IMAGES satisfy the photo requirement (videos are media, not photos).
+          photoCount = await db.document.count({
+            where: { resourceType: "WORK_ORDER", resourceId: id, category: "WORK_ORDER", mimeType: { startsWith: "image/" } },
           });
           if (photoCount < beforePhotosMin) {
             missing.push(`Before-work photo evidence (${photoCount}/${beforePhotosMin} required)`);
@@ -106,16 +109,47 @@ export const POST = withId(
           select: { label: true, done: true, required: true, responseType: true, response: true },
         });
         const unanswered = checklist.filter((c) => !c.done || (c.required && c.responseType !== "CHECKBOX" && c.response.trim() === ""));
-        if (unanswered.length > 0) {
+        // §16/§18 — a pre-work checklist must EXIST, not merely be empty-complete:
+        // a work order with zero checklist items has no verifiable pre-work
+        // evidence, so Start stays blocked (AI/template/manual paths remain available).
+        if (checklist.length === 0) {
+          missing.push("No pre-work checklist attached — generate one with AI, use a template, or add items manually");
+        } else if (unanswered.length > 0) {
           missing.push(`Mandatory checklist result: ${unanswered[0].label}${unanswered.length > 1 ? ` (+${unanswered.length - 1} more)` : ""}`);
         }
 
         if (missing.length > 0) {
-          throw new ApiError(
-            422,
-            "PREWORK_REQUIREMENTS",
-            `Cannot start work. Missing: ${missing.slice(0, 3).join("; ")}${missing.length > 3 ? ` (+${missing.length - 3} more)` : ""}.`,
-            { missing }
+          // §29 — structured response, NOT a generic error. Built here directly
+          // (not via ApiError) so the full payload reaches non-admin callers too:
+          // handler()'s safeErrorMessage strips `details` for everyone except
+          // SUPER_ADMIN, and the assigned technician is exactly who needs it.
+          // `requirements` mirrors the §29 contract; `missing` carries the human
+          // per-requirement list the UI renders.
+          const requirements = {
+            before_work_photos: {
+              required: beforePhotosMin > 0,
+              completed: beforePhotosMin === 0 || photoCount >= beforePhotosMin,
+              current: photoCount,
+              minimum: beforePhotosMin,
+            },
+            checklist: {
+              required: true,
+              completed: checklist.length > 0 && unanswered.length === 0,
+              requiredTotal: checklist.filter((c) => c.required).length,
+              requiredDone: checklist.filter((c) => c.required && c.done && (c.responseType === "CHECKBOX" || c.response.trim() !== "")).length,
+            },
+          };
+          return NextResponse.json(
+            {
+              ok: false,
+              error: {
+                code: "WORK_ORDER_START_REQUIREMENTS_NOT_MET",
+                message: `Cannot start work. Missing: ${missing.slice(0, 3).join("; ")}${missing.length > 3 ? ` (+${missing.length - 3} more)` : ""}.`,
+                requirements,
+                details: { missing, requirements },
+              },
+            },
+            { status: 422 },
           );
         }
 

@@ -97,7 +97,7 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
   const [labourHours, setLabourHours] = useState("0");
   const [labourRate, setLabourRate] = useState("0");
   const [confirmCancel, setConfirmCancel] = useState(false);
-  // §15/§18 — Start Work gate: backend's 422 PREWORK_REQUIREMENTS surfaces the
+  // §15/§18 — Start Work gate: backend's 422 WORK_ORDER_START_REQUIREMENTS_NOT_MET surfaces the
   // exact missing evidence (before-work photos / required checklist items).
   const [gateMissing, setGateMissing] = useState<string[]>([]);
 
@@ -144,7 +144,7 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
       await refreshDetail();
       setCompleteNote("");
     } catch (e) {
-      if (e instanceof ClientApiError && e.code === "PREWORK_REQUIREMENTS") {
+      if (e instanceof ClientApiError && e.code === "WORK_ORDER_START_REQUIREMENTS_NOT_MET") {
         const missing = Array.isArray((e.details as { missing?: unknown } | undefined)?.missing)
           ? (e.details as { missing: string[] }).missing
           : [];

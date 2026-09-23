@@ -93,6 +93,17 @@ export function fmtDateTime(d: string | Date | null | undefined): string {
   });
 }
 
+export function fmtTime(d: string | Date | null | undefined): string {
+  if (!d) return "—";
+  const date = typeof d === "string" ? new Date(d) : d;
+  if (isNaN(date.getTime())) return "—";
+  return date.toLocaleTimeString("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: CURRENCY.timezone,
+  });
+}
+
 export function toDateInput(d: string | Date | null | undefined): string {
   if (!d) return "";
   const date = typeof d === "string" ? new Date(d) : d;
