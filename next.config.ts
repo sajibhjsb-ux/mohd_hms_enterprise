@@ -2,6 +2,11 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  // Pin Turbopack's root to this project so stray lockfiles in parent dirs
+  // (e.g. /home/hasan/package-lock.json) can never hijack the build — otherwise
+  // the standalone server.js lands nested under .next/standalone/<rel-app>/
+  // instead of .next/standalone/server.js and release slots cannot start.
+  turbopack: { root: process.cwd() },
   /* config options here */
   typescript: {
     ignoreBuildErrors: true,
