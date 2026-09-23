@@ -2187,3 +2187,42 @@ Work Log:
 
 Stage Summary:
 - ONE central AI configuration (Settings → AI, settings.manage) now governs every AI feature; the key is AES-256-GCM encrypted at rest, never returned/logged/audited/exposed, rotation is test-gated, and Google Gemini is first-class via REST with the credential only in the x-goog-api-key header. All 3 prior direct-provider call sites were consolidated behind AIService with usage logging + feature identification; AI disabled/unconfigured states are honest everywhere (no fake output); QA suite scripts/ai-config-qa.ts (49 checks) added. Known limits: real-Gemini E2E success path requires the administrator to paste a REAL credential (invalid-key + all failure paths verified); rate limiting is in-memory (sandbox has no Redis) and protective-only.
+
+---
+Task ID: 16-realtime
+Agent: Z.ai Code (main orchestrator)
+Task: FIX AND HARDEN THE REALTIME WEBSOCKET, PRESENCE & EVENT DISPATCH SYSTEM — dashboard showed "Connected clients: 0 / Service: unreachable" with 2 devices online; trace the full chain (Browser → socket.io client → gateway → realtime-service → auth → connection manager → presence → dispatcher → PostgreSQL outbox → broadcast), fix the root cause, verify with a real two-device test.
+
+Work Log:
+- ROOT CAUSE (traced, evidence-backed):
+  (1) PROCESS LAYER: the realtime-service (ports 3003/3004) and the Next.js server (3000) were BOTH dead — the kernel OOM-killer had killed next-server (14 kills on 2026-09-23, RSS 2.2–3.3 GB each on the 4 GB box; dmesg evidence). With nothing on :3004, /api/v1/realtime/health returned service:null → dashboard rendered "unreachable" + zeros (its ?? 0 fallbacks made API-failure indistinguishable from real zeros — spec §27/§31 violation).
+  (2) SANDBOX OPS: setsid-launched processes are reaped between tool calls; the working pattern is the double-fork subshell `(cmd </dev/null >log 2>&1 &)` (worklog line 902).
+  (3) BELL BUG: GET /api/v1/notifications never implemented its own documented meta.unread → the header badge was pinned at 0 forever, so realtime notification delivery was invisible even when events flowed.
+  (4) SHUTDOWN BUG: realtime-service SIGTERM handler used httpServer.close(cb) which waits for open sockets → zombie process (accepts nothing, holds live sockets forever, never exits).
+  (5) ADJACENT: email worker tick threw `ReferenceError: smtpReady is not defined` every 10s tick (variable renamed providerReady elsewhere) — same scheduler hosts the realtime dispatch loop.
+- FIXES (all in existing architecture, no new systems):
+  mini-services/realtime-service/index.ts — (a) session-revocation sweep: every socket's session re-verified against /api/v1/auth/session at most once/45s (15s sweep); DEFINITIVE unauthenticated → emit realtime:session-invalid + force-disconnect (single-active-device/idle/logout enforcement); transient app outage NEVER disconnects (restart tolerance §26); (b) per-user lastSeenAt tracked via socket.use middleware; (c) internal health gained status:"healthy" + lastSeen; (d) graceful shutdown: io.close() + internalServer.close() + 3s force-exit timer.
+  src/lib/hms/realtime/socket.ts — client handles realtime:session-invalid: publishes DISCONNECTED and tears the singleton down cleanly (no infinite backoff loop against a dead session; next login reconnects).
+  src/app/api/v1/realtime/health/route.ts — top-level status (healthy/degraded — never hardcoded), websocket, redis:"n/a (postgresql-outbox)" (spec §15 compliance: PostgreSQL stays authoritative), dispatcher running flag, connected_clients/events_broadcast/outbox_pending/awaiting_broadcast/last_broadcast_at/last_dispatch_at aliases; backward-compatible service/outbox keys; still SUPER_ADMIN-only.
+  src/components/hms/modules/settings/automation-tab.tsx — dashboard honesty: health-API failure → "—" + red "diagnostics unavailable"; service down → socket metrics "—" while DB-backed outbox numbers stay real; healthy → live values; data-testids realtime-connected-clients/-events-broadcast/-service-state.
+  src/app/api/v1/notifications/route.ts — implemented meta.unread (global unread count for the user; contract comment already promised it) → bell badge shows the real backlog and ticks on NOTIFICATION_CREATED.
+  src/lib/hms/email/service.ts — smtpReady → providerReady (one-word ReferenceError fix in the shared scheduler loop).
+  next.config.ts — experimental.turbopackMemoryLimit 1.2 GB (dev only) to stop the recurring OOM kills (default 8 GB let RSS balloon to 2.4+ GB).
+- LIVE TWO-DEVICE VERIFICATION (real sockets, real events, no page reloads):
+  T1 connect: browser d1=operations(ADMIN) + browser d2=admin(SUPER_ADMIN) via gateway /?XTransformPort=3003 → health: clients=2, presence [Operations Manager:1, MohdAdmin:1], Service online; header indicators "Realtime connection: Live".
+  T2 d2→d1: complaint created from d2 session → d1 bell 41→42 LIVE (no reload); d2 dashboard Events 0→3 live, Last broadcast COMPLAINT_CREATED.
+  T3 d1→d2: complaint created from d1 browser session → scripted supervisor socket (gateway path) received NOTIFICATION_CREATED + COMPLAINT_CREATED; d1 bell 42→43.
+  T4 refresh: reload d1 → clients 1→1 (old socket closed on unload, new connected, no duplicates).
+  T5 network interruption: set offline on → clients 0; offline off → auto-reconnect (socket.io backoff), clients 1, indicator Live. No duplicates.
+  T6 revocation: d1's session revoked server-side (logout API with the live cookie, browser left open) → sweep logged session-revoked-disconnect within ~45s; indicator "Realtime connection: Offline" with NO reconnect loop (client teardown handler). Also organically verified: agent-browser sessions generate no real user activity → 300s idle revocation → 401 → app sign-out → socket closed (§12 chain works end-to-end).
+  T7 logout: UI Sign out → clients 1→0, presence [] instantly (no dashboard refresh).
+  T8 service restart: SIGTERM (exposes+fixed the shutdown bug) → service restart → browser auto-reconnected WITHOUT reload → clients settled to exactly 1 (stale engine session reaped by ping timeout ~85s — §13 detection).
+  T9 RBAC + final state: ADMIN → 403 on /api/v1/realtime/health (§28); SUPER_ADMIN dashboard showed Connected clients: 2, Service: online, Online now: both users; final cross-device event CPT-2026-0044: d2 dashboard Events 0→3 LIVE, Last broadcast COMPLAINT_CREATED · 2:00 PM, d1 bell 43→44.
+  REST APIs remained functional throughout (logins, complaints, health polls).
+- Ops notes: services restarted via double-fork subshell; dev server pre-warmed (/,/settings) after each restart (~20s cold compile); browser keepalive (synthetic pointerdown → app's own activity endpoint) used to survive the 300s idle policy during tests; both browser sessions closed afterwards to relieve memory.
+
+Stage Summary:
+- Realtime system VERIFIED end-to-end with two simultaneous devices: real connection counts, real presence, live event delivery BOTH directions, notification bell increments live, outbox+dispatcher+service health all real (no hardcoded values anywhere).
+- Root causes fixed: dead processes (OOM) + OOM itself bounded (turbopackMemoryLimit), dashboard honesty (§27/§31), session revocation enforcement on live sockets (§12) incl. clean client teardown, graceful shutdown zombie fix, notifications meta.unread contract implementation, email worker ReferenceError.
+- provider = "postgresql" always: honored — the DomainEvent outbox remains the authoritative relational queue (Prisma DB; PostgreSQL in production per schema flip procedure); no Redis in this stack (health reports "n/a (postgresql-outbox)"), no business data moved to cache.
+- Changed files: mini-services/realtime-service/index.ts, src/lib/hms/realtime/socket.ts, src/app/api/v1/realtime/health/route.ts, src/components/hms/modules/settings/automation-tab.tsx, src/app/api/v1/notifications/route.ts, src/lib/hms/email/service.ts, next.config.ts.

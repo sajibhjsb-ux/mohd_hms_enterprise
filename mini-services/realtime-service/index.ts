@@ -378,13 +378,17 @@ httpServer.listen(PORT, () => {
   log("info", "realtime-service-started", { port: PORT, internalPort: INTERNAL_PORT, appUrl: APP_URL });
 });
 
-process.on("SIGTERM", () => {
-  log("info", "shutdown-sigterm");
-  httpServer.close(() => process.exit(0));
-  internalServer.close();
-});
-process.on("SIGINT", () => {
-  log("info", "shutdown-sigint");
-  httpServer.close(() => process.exit(0));
-  internalServer.close();
-});
+// Graceful shutdown: close the socket.io server FIRST (disconnects all live
+// clients — they reconnect automatically with backoff when the process
+// returns) and the internal API second. A force-exit timer guarantees the
+// process ALWAYS terminates: httpServer.close() alone would wait for open
+// sockets and hang forever on a busy service, leaving a zombie that accepts
+// no new connections while old ones linger (observed live on 2026-09-23).
+function shutdown(signal: string): void {
+  log("info", `shutdown-${signal}`);
+  try { io.close(); } catch { /* already closed */ }
+  try { internalServer.close(); } catch { /* already closed */ }
+  setTimeout(() => process.exit(0), 3_000).unref();
+}
+process.on("SIGTERM", () => shutdown("sigterm"));
+process.on("SIGINT", () => shutdown("sigint"));
