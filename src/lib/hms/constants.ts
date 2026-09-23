@@ -65,6 +65,9 @@ export const PERMISSIONS = {
   complaints_assign: "complaints.assign",
   complaints_update: "complaints.update",
   complaints_close: "complaints.close",
+  // Complaint Work Catalogue master data (§12/§13) — manage catalogues + their
+  // catalogue-specific issue lists. Read side is public to complaints_create holders.
+  catalogue_manage: "catalogue.manage",
   // work orders
   work_orders_read: "work_orders.read",
   work_orders_create: "work_orders.create",
@@ -184,6 +187,7 @@ const SUPERVISOR_PERMS: Permission[] = [
   // Email client — mailbox members only (assignment enforced per-user)
   PERMISSIONS.email_client,
   PERMISSIONS.complaints_read, PERMISSIONS.complaints_create, PERMISSIONS.complaints_assign, PERMISSIONS.complaints_update, PERMISSIONS.complaints_close,
+  PERMISSIONS.catalogue_manage,
   PERMISSIONS.work_orders_read, PERMISSIONS.work_orders_create, PERMISSIONS.work_orders_assign, PERMISSIONS.work_orders_update, PERMISSIONS.work_orders_complete,
   PERMISSIONS.pm_read, PERMISSIONS.pm_manage, PERMISSIONS.pm_approve, PERMISSIONS.pm_report,
   // Checklist engine — supervisors generate/review/approve; templates are managed here too

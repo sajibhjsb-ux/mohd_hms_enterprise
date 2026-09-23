@@ -51,6 +51,10 @@ export const AUTOMATION_SETTING_DEFAULTS = {
   checklist_require_approval: "on",
   /** §59: maximum number of tasks the AI may produce (configurable, not hardcoded). */
   checklist_max_tasks: "50",
+  /** §15/§18: minimum mandatory before-work photo records a work order must have
+   *  before the assigned technician can START work (backend-enforced gate).
+   *  Verified against REAL document rows in object storage — never a boolean. */
+  start_work_before_photos_min: "1",
 } as const;
 
 export type AutomationSettingKey = keyof typeof AUTOMATION_SETTING_DEFAULTS;

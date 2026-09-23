@@ -10,7 +10,7 @@ import {
   Wrench, CalendarClock, Boxes, ShoppingCart, FileText, Receipt, Wallet, IdCard,
   SearchCheck, BarChart3, Settings, History, Truck, QrCode, CircleUserRound,
   ScrollText, ShieldCheck, MessageCircle, ScanLine, Mail, Mailbox, FolderClosed,
-  Search as SearchIcon,
+  Search as SearchIcon, ListTodo,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -54,6 +54,7 @@ import { ProfileModule } from "./modules/profile";
 import { SearchModule } from "./modules/search";
 import { TermsModule, PrivacyModule } from "./legal/legal-module";
 import { ScanModule } from "./modules/scan";
+import { ChecklistsModule } from "./modules/checklists";
 
 export const MODULES: ModuleDef[] = [
   // NOTE: the mobile bottom navigation layout (Dashboard · Complaints · QR
@@ -62,6 +63,7 @@ export const MODULES: ModuleDef[] = [
   { key: "dashboard", label: "Dashboard", icon: LayoutDashboard, component: DashboardModule },
   { key: "complaints", label: "Complaints", shortLabel: "Complaints", icon: AlertTriangle, permissions: ["complaints.read"], component: ComplaintsModule },
   { key: "work-orders", label: "Work Orders", shortLabel: "Work", icon: ClipboardList, permissions: ["work_orders.read"], component: WorkOrdersModule },
+  { key: "checklists", label: "Checklists", shortLabel: "Checklists", icon: ListTodo, permissions: ["checklist.view"], component: ChecklistsModule },
   { key: "equipment", label: "Equipment", icon: QrCode, permissions: ["equipment.read"], component: EquipmentModule },
   { key: "pm", label: "Preventive Maintenance", shortLabel: "PM", icon: CalendarClock, permissions: ["pm.read"], component: PmModule },
   { key: "customers", label: "Customers", icon: Building2, permissions: ["customers.read"], component: CustomersModule },

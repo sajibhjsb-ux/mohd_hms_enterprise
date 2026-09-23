@@ -9,6 +9,7 @@ import { isStaff } from "@/lib/hms/rbac";
 import { audit, nextNumber, notify, notifyRole } from "@/lib/hms/services";
 import { PERMISSIONS, PRIORITIES } from "@/lib/hms/constants";
 import { COMPLAINT_INCLUDE, complaintScopeWhere } from "./_lib";
+import { ensureDefaultCatalogues } from "@/lib/hms/catalogue";
 import { assertCustomerProfileComplete } from "@/lib/hms/customer-profile";
 import { assertTermsAccepted } from "@/lib/hms/legal/legal";
 import { dedupeSubmission } from "@/lib/hms/workflows/idempotency";
@@ -21,6 +22,9 @@ const createSchema = z.object({
   priority: z.enum(PRIORITIES).default("MEDIUM"),
   customerId: z.string().min(1).optional(),
   equipmentId: z.string().min(1).optional(),
+  // Complaint Work Catalogue (§12/§13) — backend-required service taxonomy.
+  workCatalogue: z.string().min(2, "Work catalogue is required.").max(20),
+  catalogueIssue: z.string().min(2, "Catalogue issue is required.").max(200),
 });
 
 export const GET = handler(
@@ -50,6 +54,8 @@ export const GET = handler(
             { code: term },
             { title: term },
             { description: term },
+            { workCatalogue: term },
+            { catalogueIssue: term },
           ],
         },
       ];
@@ -102,6 +108,20 @@ export const POST = handler(
       if (equipment.customerId !== customerId) throw Errors.badRequest("Equipment does not belong to the selected customer.");
     }
 
+    // §12/§13 — Work Catalogue is BACKEND-required: the catalogue must exist and
+    // the issue must belong to that catalogue (catalogue-specific dynamic list).
+    // Bootstraps defaults on an empty catalogue table so taxonomy always exists.
+    await ensureDefaultCatalogues();
+    const catalogue = await db.workCatalogue.findUnique({
+      where: { code: body.workCatalogue },
+      include: { issues: { where: { active: true }, select: { name: true } } },
+    });
+    if (!catalogue) throw Errors.badRequest(`Work catalogue "${body.workCatalogue}" is not available.`);
+    const issueMatch = catalogue.issues.find((i) => i.name.toLowerCase() === body.catalogueIssue.toLowerCase());
+    if (!issueMatch) {
+      throw Errors.badRequest(`"${body.catalogueIssue}" is not a valid issue for the ${catalogue.name} catalogue.`);
+    }
+
     const code = await nextNumber("CPT");
     const created = await db.complaint.create({
       data: {
@@ -111,6 +131,8 @@ export const POST = handler(
         description: body.description,
         priority: body.priority,
         equipmentId: body.equipmentId ?? null,
+        workCatalogue: catalogue.code,
+        catalogueIssue: issueMatch.name,
         status: "NEW",
         createdById: user.id,
         statusHistory: {
@@ -123,7 +145,7 @@ export const POST = handler(
     await audit({
       actorId: user.id, actorEmail: user.email, action: "COMPLAINT_CREATED",
       resourceType: "COMPLAINT", resourceId: created.id,
-      metadata: { code, priority: body.priority, customerId },
+      metadata: { code, priority: body.priority, customerId, workCatalogue: catalogue.code, catalogueIssue: issueMatch.name },
     });
     await Promise.all([
       notifyRole("SUPERVISOR", { title: "New complaint", message: `New complaint ${code}: ${body.title}`, type: "INFO", resourceType: "COMPLAINT", resourceId: created.id }),

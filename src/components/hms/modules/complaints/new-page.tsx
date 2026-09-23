@@ -53,9 +53,28 @@ type CreateForm = {
   priority: string;
   customerId: string;
   equipmentId: string;
+  workCatalogue: string;
+  catalogueIssue: string;
 };
 
-const EMPTY_CREATE: CreateForm = { title: "", description: "", priority: "MEDIUM", customerId: "", equipmentId: "" };
+const EMPTY_CREATE: CreateForm = {
+  title: "",
+  description: "",
+  priority: "MEDIUM",
+  customerId: "",
+  equipmentId: "",
+  workCatalogue: "",
+  catalogueIssue: "",
+};
+
+// §12/§13 — master-data catalogue pulls its OWN issue list (catalogue-specific
+// dynamic lists — never a flat global list).
+type CatalogueOpt = {
+  id: string;
+  code: string;
+  name: string;
+  issues: { id: string; name: string }[];
+};
 const TITLE_MAX = 200;
 const DESC_MAX = 5000;
 
@@ -192,6 +211,32 @@ export function ComplaintNewPage() {
     [equipment, draft.value.equipmentId]
   );
 
+  // ── Work Catalogue (§12/§13) — master data with catalogue-specific issue lists ──
+  const [catalogues, setCatalogues] = useState<CatalogueOpt[]>([]);
+  const [catLoading, setCatLoading] = useState(false);
+  const [catError, setCatError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    setCatLoading(true);
+    api.get<CatalogueOpt[]>("/api/v1/work-catalogues")
+      .then((r) => { if (alive) setCatalogues(Array.isArray(r.data) ? r.data : []); })
+      .catch(() => { if (alive) setCatError("Could not load the work catalogue. Please retry."); })
+      .finally(() => { if (alive) setCatLoading(false); });
+    return () => { alive = false; };
+  }, []);
+
+  const selectedCatalogue = useMemo(
+    () => catalogues.find((c) => c.code === draft.value.workCatalogue) ?? null,
+    [catalogues, draft.value.workCatalogue]
+  );
+  const catalogueIssues = useMemo(() => selectedCatalogue?.issues ?? [], [selectedCatalogue]);
+
+  function pickCatalogue(code: string) {
+    draft.setValue({ workCatalogue: code, catalogueIssue: "" });
+    setErrors((p) => { const { workCatalogue: _a, catalogueIssue: _b, ...rest } = p; return rest; });
+  }
+
   // ── Dirty-state wiring (central router guard + data protection) ──
   useEffect(() => {
     setPageDirty(draft.dirty);
@@ -231,6 +276,8 @@ export function ComplaintNewPage() {
     if (!d) errs.description = "Description is required.";
     else if (d.length < 3) errs.description = "Description must be at least 3 characters.";
     if (isStaffUser && !draft.value.customerId) errs.customerId = "Please select a customer.";
+    if (!draft.value.workCatalogue) errs.workCatalogue = "Please select a work catalogue.";
+    if (!draft.value.catalogueIssue) errs.catalogueIssue = "Please select the catalogue issue.";
     return errs;
   }
 
@@ -248,6 +295,8 @@ export function ComplaintNewPage() {
         title: draft.value.title.trim(),
         description: draft.value.description.trim(),
         priority: draft.value.priority,
+        workCatalogue: draft.value.workCatalogue,
+        catalogueIssue: draft.value.catalogueIssue,
         ...(isStaffUser && draft.value.customerId ? { customerId: draft.value.customerId } : {}),
         ...(draft.value.equipmentId ? { equipmentId: draft.value.equipmentId } : {}),
       };
@@ -442,6 +491,48 @@ export function ComplaintNewPage() {
               </Select>
               <p className="text-[11px] text-muted-foreground">Defaults to Medium — the server enforces the same priority scale.</p>
             </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="nc-catalogue">Work catalogue *</Label>
+                <Select value={draft.value.workCatalogue} onValueChange={pickCatalogue} disabled={catLoading}>
+                  <SelectTrigger id="nc-catalogue" aria-label="Work catalogue">
+                    <SelectValue placeholder={catLoading ? "Loading catalogue…" : "Select catalogue"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {catalogues.map((c) => (
+                      <SelectItem key={c.code} value={c.code}>{c.name} ({c.code})</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {errors.workCatalogue ? <p className="text-xs text-destructive">{errors.workCatalogue}</p> : null}
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="nc-issue">Catalogue issue *</Label>
+                <Select
+                  value={draft.value.catalogueIssue}
+                  onValueChange={(v) => { draft.setValue({ catalogueIssue: v }); setErrors((p) => { const { catalogueIssue: _d, ...rest } = p; return rest; }); }}
+                  disabled={!draft.value.workCatalogue}
+                >
+                  <SelectTrigger id="nc-issue" aria-label="Catalogue issue">
+                    <SelectValue placeholder={
+                      catLoading ? "Loading…"
+                        : !draft.value.workCatalogue ? "Select a catalogue first"
+                          : catalogueIssues.length === 0 ? "No issues configured" : "Select issue"
+                    } />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {catalogueIssues.map((i) => (
+                      <SelectItem key={i.id || i.name} value={i.name}>{i.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {errors.catalogueIssue ? <p className="text-xs text-destructive">{errors.catalogueIssue}</p> : null}
+              </div>
+            </div>
+            {catError ? <p className="text-xs text-destructive">{catError}</p> : null}
+            <p className="text-[11px] text-muted-foreground">The catalogue classifies the work; the issue is specific to the selected catalogue.</p>
           </CardContent>
         </Card>
 

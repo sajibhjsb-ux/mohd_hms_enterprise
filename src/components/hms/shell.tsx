@@ -253,7 +253,7 @@ export function AppShell() {
   }, []);
 
   const navigateFromSearch = useCallback((t: SearchNavigateTarget) => {
-    navigateTo(t.module, t.id ? [t.id] : []);
+    navigateTo(t.module, t.seg ?? (t.id ? [t.id] : []));
   }, []);
 
   const navigateFromQr = useCallback((module: string, token: string) => {

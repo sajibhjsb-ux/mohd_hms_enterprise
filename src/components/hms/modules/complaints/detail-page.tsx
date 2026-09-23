@@ -23,6 +23,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { ComplaintMediaPanel } from "./media-panel";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -49,6 +50,8 @@ type ComplaintDetail = {
   status: string;
   createdAt: string;
   customerId: string;
+  workCatalogue: string;
+  catalogueIssue: string;
   resolutionNotes?: string;
   customerFeedback?: string;
   assignedTechnician?: { id: string; user?: { id: string; name: string } | null } | null;
@@ -252,6 +255,15 @@ export function ComplaintDetailPage({ id }: { id: string }) {
                 <p className="text-muted-foreground text-xs uppercase tracking-wide">Reported</p>
                 <p>{fmtDateTime(detail.createdAt)}</p>
               </div>
+              {detail.workCatalogue ? (
+                <div className="space-y-1 sm:col-span-2">
+                  <p className="text-muted-foreground text-xs uppercase tracking-wide">Work catalogue</p>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <Badge variant="secondary" className="font-mono text-[11px]">{detail.workCatalogue}</Badge>
+                    <span className="text-sm">{detail.catalogueIssue}</span>
+                  </div>
+                </div>
+              ) : null}
             </div>
             <div className="text-sm space-y-1">
               <p className="text-muted-foreground text-xs uppercase tracking-wide">Description</p>
@@ -398,9 +410,16 @@ export function ComplaintDetailPage({ id }: { id: string }) {
         </AlertDialogContent>
       </AlertDialog>
 
-      <WorkflowTimeline resourceType="COMPLAINT" resourceId={detail.id} className="mt-6" />
+<WorkflowTimeline resourceType="COMPLAINT" resourceId={detail.id} className="mt-6" />
 
-      <Separator className="opacity-0" />
+          <div className="mt-4">
+            <ComplaintMediaPanel
+              complaintId={detail.id}
+              canUpload={isAssignedTech || canUpdate || isPortalOwner}
+            />
+          </div>
+
+          <Separator className="opacity-0" />
     </PageShell>
   );
 }

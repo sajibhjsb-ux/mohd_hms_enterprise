@@ -154,6 +154,9 @@ export const RESOURCE_ROUTES: Record<string, { module: string; seg: (id: string)
   PURCHASE_ORDER: { module: "purchases", seg: (id) => [id] },
   INVENTORY_ITEM: { module: "inventory", seg: (id) => [id] },
   INSPECTION_REPORT: { module: "irms", seg: (id) => ["reports", id] },
+  // Checklist engine — generation/approval notifications deep-link to the
+  // instance review page (§54 notifications spec).
+  CHECKLIST_INSTANCE: { module: "checklists", seg: (id) => [id] },
   // Files module — notification deep links (§27: clicks open the relevant
   // file/folder page). FOLDER routes into the owner's browser; share
   // notifications carry the same resource types (target resolved on arrival).

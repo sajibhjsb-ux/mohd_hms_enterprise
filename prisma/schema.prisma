@@ -753,6 +753,10 @@ model Complaint {
   resolutionNotes      String             @default("")
   customerFeedback     String             @default("")
   customerRating       Int?
+  // §12/§13 — Work Catalogue classification (catalogue code + catalogue-
+  // specific issue name). Additive defaults — existing rows remain valid.
+  workCatalogue        String             @default("")
+  catalogueIssue       String             @default("")
   createdAt            DateTime           @default(now())
   updatedAt            DateTime           @updatedAt
 
@@ -773,6 +777,34 @@ model ComplaintStatusHistory {
   changedById String?
   note        String    @default("")
   createdAt   DateTime  @default(now())
+}
+
+// ─────────────────────── COMPLAINT WORK CATALOGUE (§12/§13) ───────────────────────
+// Master data for classifying complaint work. Each catalogue carries its OWN
+// issue list — never a flat global list. Seeded by ensureDefaultCatalogues().
+
+model WorkCatalogue {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  name        String
+  description String   @default("")
+  active      Boolean  @default(true)
+  sortOrder   Int      @default(0)
+
+  issues CatalogueIssue[]
+
+  @@index([active])
+}
+
+model CatalogueIssue {
+  id          String        @id @default(cuid())
+  catalogueId String
+  catalogue   WorkCatalogue @relation(fields: [catalogueId], references: [id], onDelete: Cascade)
+  name        String
+  active      Boolean       @default(true)
+  sortOrder   Int           @default(0)
+
+  @@index([catalogueId])
 }
 
 // ─────────────────────────── WORK ORDERS ───────────────────────────

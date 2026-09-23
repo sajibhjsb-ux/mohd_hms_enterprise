@@ -17,12 +17,15 @@ export class ClientApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<ApiEnvelope<T>> {
+  const isForm = typeof FormData !== "undefined" && init?.body instanceof FormData;
   let res: Response;
   try {
     res = await fetch(path, {
       ...init,
       credentials: "same-origin",
-      headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+      // JSON is the default payload; multipart forms send their own Content-Type
+      // (with boundary) — overriding it would silently break the upload.
+      headers: { ...(isForm ? {} : { "Content-Type": "application/json" }), ...(init?.headers ?? {}) },
     });
   } catch {
     throw new ClientApiError("Network error. Check your connection and try again.", "NETWORK", 0);
@@ -52,6 +55,8 @@ export const api = {
   patch: <T>(path: string, data?: unknown) => request<T>(path, { method: "PATCH", body: JSON.stringify(data ?? {}) }),
   put: <T>(path: string, data?: unknown) => request<T>(path, { method: "PUT", body: JSON.stringify(data ?? {}) }),
   del: <T>(path: string) => request<T>(path, { method: "DELETE" }),
+  /** Multipart upload — the browser sets the boundary automatically. */
+  postForm: <T>(path: string, form: FormData) => request<T>(path, { method: "POST", body: form }),
 };
 
 export function qs(params: Record<string, string | number | undefined | null>): string {

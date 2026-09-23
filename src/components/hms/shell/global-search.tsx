@@ -27,24 +27,39 @@ import { customerLabel } from "@/lib/hms/format";
 import { cn } from "@/lib/utils";
 import {
   Search, X, Loader2, AlertTriangle, Building2, QrCode, ClipboardList,
-  ArrowRight, RotateCcw,
+  ArrowRight, RotateCcw, Boxes, FileText, Receipt, SearchCheck, IdCard, CalendarClock,
 } from "lucide-react";
 
 type ComplaintHit = { id: string; code: string; title: string; status: string };
 type WorkOrderHit = { id: string; code: string; title: string };
 type CustomerHit = { id: string; companyName?: string; code?: string; contactPerson?: string };
 type EquipmentHit = { id: string; name?: string; assetTag?: string; customer?: { companyName?: string } | null };
+type InventoryHit = { id: string; sku?: string | null; name?: string; brand?: string | null; model?: string | null };
+type QuotationHit = { id: string; code: string; status?: string; customer?: { companyName?: string } | null };
+type InvoiceHit = { id: string; code: string; status?: string; customer?: { companyName?: string } | null };
+type IrmsHit = { id: string; code: string; title?: string; status?: string };
+type EmployeeHit = { id: string; employeeNo?: string | null; firstName?: string; lastName?: string; user?: { name?: string } | null };
+type PmHit = { id: string; code?: string | null; name?: string; status?: string; equipment?: { name?: string } | null };
 
-export type SearchNavigateTarget = { module: string; id?: string };
+export type SearchNavigateTarget = { module: string; id?: string; seg?: string[] };
 
 type Results = {
   complaints: ComplaintHit[];
   workOrders: WorkOrderHit[];
   customers: CustomerHit[];
   equipment: EquipmentHit[];
+  inventory: InventoryHit[];
+  quotations: QuotationHit[];
+  invoices: InvoiceHit[];
+  irms: IrmsHit[];
+  employees: EmployeeHit[];
+  pmPlans: PmHit[];
 };
 
-const EMPTY_RESULTS: Results = { complaints: [], workOrders: [], customers: [], equipment: [] };
+const EMPTY_RESULTS: Results = {
+  complaints: [], workOrders: [], customers: [], equipment: [],
+  inventory: [], quotations: [], invoices: [], irms: [], employees: [], pmPlans: [],
+};
 const DEBOUNCE_MS = 250;
 
 type Props = {
@@ -82,6 +97,12 @@ export function GlobalSearch({ onNavigate, variant, autoFocus, onClose }: Props)
   const canWorkOrders = hasPerm(user, PERMISSIONS.work_orders_read);
   const canCustomers = hasPerm(user, PERMISSIONS.customers_read);
   const canEquipment = hasPerm(user, PERMISSIONS.equipment_read);
+  const canInventory = hasPerm(user, PERMISSIONS.inventory_read);
+  const canQuotations = hasPerm(user, PERMISSIONS.quotations_read);
+  const canInvoices = hasPerm(user, PERMISSIONS.invoices_read);
+  const canIrms = hasPerm(user, PERMISSIONS.irms_read);
+  const canEmployees = hasPerm(user, PERMISSIONS.employees_read);
+  const canPm = hasPerm(user, PERMISSIONS.pm_read);
 
   // Debounced, permission-gated, real API search. The debounce timer lives in
   // a callback so no state is set synchronously in the effect body. The seq
@@ -103,6 +124,12 @@ export function GlobalSearch({ onNavigate, variant, autoFocus, onClose }: Props)
         if (canWorkOrders) endpoints.push({ path: `/api/v1/work-orders${qs({ search: query, pageSize: 5 })}`, key: "workOrders" });
         if (canCustomers) endpoints.push({ path: `/api/v1/customers${qs({ search: query, pageSize: 5 })}`, key: "customers" });
         if (canEquipment) endpoints.push({ path: `/api/v1/equipment${qs({ search: query, pageSize: 5 })}`, key: "equipment" });
+        if (canInventory) endpoints.push({ path: `/api/v1/inventory/search${qs({ q: query, take: 5 })}`, key: "inventory" });
+        if (canQuotations) endpoints.push({ path: `/api/v1/quotations${qs({ search: query, pageSize: 5 })}`, key: "quotations" });
+        if (canInvoices) endpoints.push({ path: `/api/v1/invoices${qs({ search: query, pageSize: 5 })}`, key: "invoices" });
+        if (canIrms) endpoints.push({ path: `/api/v1/irms/reports${qs({ search: query, pageSize: 5 })}`, key: "irms" });
+        if (canEmployees) endpoints.push({ path: `/api/v1/employees${qs({ search: query, pageSize: 5 })}`, key: "employees" });
+        if (canPm) endpoints.push({ path: `/api/v1/pm/plans${qs({ search: query, pageSize: 5 })}`, key: "pmPlans" });
 
         setLoading(true);
         setResults(EMPTY_RESULTS);
@@ -132,7 +159,7 @@ export function GlobalSearch({ onNavigate, variant, autoFocus, onClose }: Props)
       return () => clearTimeout(t);
     });
     return () => cancelAnimationFrame(raf);
-  }, [query, valid, open, runId, canComplaints, canWorkOrders, canCustomers, canEquipment]);
+  }, [query, valid, open, runId, canComplaints, canWorkOrders, canCustomers, canEquipment, canInventory, canQuotations, canInvoices, canIrms, canEmployees, canPm]);
 
   // Global shortcut: Ctrl/⌘ + K focuses the header search bar (desktop). It
   // never opens a dialog and never steals focus from rich-text fields.
@@ -187,7 +214,9 @@ export function GlobalSearch({ onNavigate, variant, autoFocus, onClose }: Props)
     [query]
   );
 
-  const entityHits = (results.complaints.length + results.workOrders.length + results.customers.length + results.equipment.length) > 0;
+  const entityHits = (results.complaints.length + results.workOrders.length + results.customers.length + results.equipment.length
+      + results.inventory.length + results.quotations.length + results.invoices.length + results.irms.length
+      + results.employees.length + results.pmPlans.length) > 0;
   const anyHits = entityHits || moduleHits.length > 0;
 
   type FlatItem = { key: string; id: string; node: ReactNode; run: () => void };
@@ -245,6 +274,72 @@ export function GlobalSearch({ onNavigate, variant, autoFocus, onClose }: Props)
           <QrCode className="h-4 w-4 shrink-0 text-primary" aria-hidden />
           <span className="truncate">{highlight(e.name ?? e.id, query)}</span>
           <span className="ml-auto shrink-0 font-mono text-xs text-muted-foreground">{highlight(e.assetTag ?? "", query)}</span>
+        </>
+      ),
+    }));
+    byExactCode(results.inventory, (i) => i.sku ?? "").forEach((i) => out.push({
+      key: `inv-${i.id}`, id: `hms-gs-inv-${i.id}`,
+      run: () => go({ module: "inventory", id: i.id }),
+      node: (
+        <>
+          <Boxes className="h-4 w-4 shrink-0 text-blue-600" aria-hidden />
+          <span className="truncate">{highlight(i.name ?? i.id, query)}</span>
+          {i.sku ? <span className="ml-auto shrink-0 font-mono text-xs text-muted-foreground">{highlight(i.sku, query)}</span> : null}
+        </>
+      ),
+    }));
+    byExactCode(results.quotations, (q) => q.code).forEach((q) => out.push({
+      key: `qtn-${q.id}`, id: `hms-gs-qtn-${q.id}`,
+      run: () => go({ module: "quotations", id: q.id }),
+      node: (
+        <>
+          <FileText className="h-4 w-4 shrink-0 text-violet-600" aria-hidden />
+          <span className="font-mono text-xs text-muted-foreground shrink-0">{highlight(q.code, query)}</span>
+          <span className="truncate">{highlight(q.customer?.companyName ?? "", query)}</span>
+        </>
+      ),
+    }));
+    byExactCode(results.invoices, (v) => v.code).forEach((v) => out.push({
+      key: `inv-${v.id}`, id: `hms-gs-inv-${v.id}`,
+      run: () => go({ module: "invoices", id: v.id }),
+      node: (
+        <>
+          <Receipt className="h-4 w-4 shrink-0 text-emerald-600" aria-hidden />
+          <span className="font-mono text-xs text-muted-foreground shrink-0">{highlight(v.code, query)}</span>
+          <span className="truncate">{highlight(v.customer?.companyName ?? "", query)}</span>
+        </>
+      ),
+    }));
+    byExactCode(results.irms, (r) => r.code).forEach((r) => out.push({
+      key: `irms-${r.id}`, id: `hms-gs-irms-${r.id}`,
+      run: () => go({ module: "irms", seg: ["reports", r.id] }),
+      node: (
+        <>
+          <SearchCheck className="h-4 w-4 shrink-0 text-orange-600" aria-hidden />
+          <span className="font-mono text-xs text-muted-foreground shrink-0">{highlight(r.code, query)}</span>
+          <span className="truncate">{highlight(r.title ?? "", query)}</span>
+        </>
+      ),
+    }));
+    byExactCode(results.employees, (e) => e.employeeNo ?? "").forEach((e) => out.push({
+      key: `emp-${e.id}`, id: `hms-gs-emp-${e.id}`,
+      run: () => go({ module: "employees", id: e.id }),
+      node: (
+        <>
+          <IdCard className="h-4 w-4 shrink-0 text-cyan-600" aria-hidden />
+          <span className="truncate">{highlight((`${e.firstName ?? ""} ${e.lastName ?? ""}`.trim() || e.user?.name) ?? "", query)}</span>
+          {e.employeeNo ? <span className="ml-auto shrink-0 font-mono text-xs text-muted-foreground">{highlight(e.employeeNo, query)}</span> : null}
+        </>
+      ),
+    }));
+    byExactCode(results.pmPlans, (p) => p.code ?? "").forEach((p) => out.push({
+      key: `pm-${p.id}`, id: `hms-gs-pm-${p.id}`,
+      run: () => go({ module: "pm", id: p.id }),
+      node: (
+        <>
+          <CalendarClock className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+          <span className="truncate">{highlight(p.name ?? p.id, query)}</span>
+          {p.code ? <span className="ml-auto shrink-0 text-xs text-muted-foreground">{highlight(p.code, query)}</span> : null}
         </>
       ),
     }));
@@ -460,6 +555,84 @@ export function GlobalSearch({ onNavigate, variant, autoFocus, onClose }: Props)
                       const idx = items.findIndex((it) => it.key === `eq-${eq.id}`);
                       return (
                         <PanelItem key={eq.id} id={items[idx].id} active={idx === active} onHover={() => setActive(idx)} onClick={() => items[idx].run()}>
+                          {items[idx].node}
+                        </PanelItem>
+                      );
+                    })}
+                  </PanelGroup>
+                ) : null}
+
+                {results.inventory.length > 0 ? (
+                  <PanelGroup heading="Inventory">
+                    {byExactCode(results.inventory, (i) => i.sku ?? "").map((i) => {
+                      const idx = items.findIndex((it) => it.key === `inv-${i.id}`);
+                      return (
+                        <PanelItem key={i.id} id={items[idx].id} active={idx === active} onHover={() => setActive(idx)} onClick={() => items[idx].run()}>
+                          {items[idx].node}
+                        </PanelItem>
+                      );
+                    })}
+                  </PanelGroup>
+                ) : null}
+
+                {results.quotations.length > 0 ? (
+                  <PanelGroup heading="Quotations">
+                    {byExactCode(results.quotations, (q) => q.code).map((q) => {
+                      const idx = items.findIndex((it) => it.key === `qtn-${q.id}`);
+                      return (
+                        <PanelItem key={q.id} id={items[idx].id} active={idx === active} onHover={() => setActive(idx)} onClick={() => items[idx].run()}>
+                          {items[idx].node}
+                        </PanelItem>
+                      );
+                    })}
+                  </PanelGroup>
+                ) : null}
+
+                {results.invoices.length > 0 ? (
+                  <PanelGroup heading="Invoices">
+                    {byExactCode(results.invoices, (v) => v.code).map((v) => {
+                      const idx = items.findIndex((it) => it.key === `inv-${v.id}`);
+                      return (
+                        <PanelItem key={v.id} id={items[idx].id} active={idx === active} onHover={() => setActive(idx)} onClick={() => items[idx].run()}>
+                          {items[idx].node}
+                        </PanelItem>
+                      );
+                    })}
+                  </PanelGroup>
+                ) : null}
+
+                {results.irms.length > 0 ? (
+                  <PanelGroup heading="IRMS Inspections">
+                    {byExactCode(results.irms, (r) => r.code).map((r) => {
+                      const idx = items.findIndex((it) => it.key === `irms-${r.id}`);
+                      return (
+                        <PanelItem key={r.id} id={items[idx].id} active={idx === active} onHover={() => setActive(idx)} onClick={() => items[idx].run()}>
+                          {items[idx].node}
+                        </PanelItem>
+                      );
+                    })}
+                  </PanelGroup>
+                ) : null}
+
+                {results.employees.length > 0 ? (
+                  <PanelGroup heading="Employees">
+                    {byExactCode(results.employees, (e) => e.employeeNo ?? "").map((e) => {
+                      const idx = items.findIndex((it) => it.key === `emp-${e.id}`);
+                      return (
+                        <PanelItem key={e.id} id={items[idx].id} active={idx === active} onHover={() => setActive(idx)} onClick={() => items[idx].run()}>
+                          {items[idx].node}
+                        </PanelItem>
+                      );
+                    })}
+                  </PanelGroup>
+                ) : null}
+
+                {results.pmPlans.length > 0 ? (
+                  <PanelGroup heading="PM Plans">
+                    {byExactCode(results.pmPlans, (p) => p.code ?? "").map((p) => {
+                      const idx = items.findIndex((it) => it.key === `pm-${p.id}`);
+                      return (
+                        <PanelItem key={p.id} id={items[idx].id} active={idx === active} onHover={() => setActive(idx)} onClick={() => items[idx].run()}>
                           {items[idx].node}
                         </PanelItem>
                       );

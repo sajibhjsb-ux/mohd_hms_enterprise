@@ -5,10 +5,11 @@
 import type { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { handler, ok, parseBody, Errors } from "@/lib/hms/api";
+import { handler, ok, parseBody, Errors, ApiError } from "@/lib/hms/api";
 import { roleCan } from "@/lib/hms/rbac";
 import { audit, notify, notifyRole } from "@/lib/hms/services";
 import { WO_TRANSITIONS, PERMISSIONS } from "@/lib/hms/constants";
+import { automationNumber } from "@/lib/hms/workflows/settings";
 import type { SessionUser } from "@/lib/hms/auth";
 import { WO_DETAIL_INCLUDE, assertViewWorkOrder, isAssignedTechnician, assertWoTransition } from "../../_lib";
 import { EVENT_TYPES } from "@/lib/hms/workflows/types";
@@ -77,6 +78,47 @@ export const POST = withId(
 
       case "start": {
         assertWoTransition("IN_PROGRESS", from, WO_TRANSITIONS);
+
+        // ── §15/§18 — PRE-WORK GATE (backend-authoritative, never UI-only) ──
+        // Starting work requires: (1) a configurable minimum number of REAL
+        // before-work media records persisted in object storage (verified by
+        // counting Document rows — a `photoUploaded` boolean is never trusted),
+        // and (2) every required checklist item answered (rich required
+        // responses recorded). Failures block the transition with a structured
+        // `missing` details array the UI surfaces per requirement.
+        const missing: string[] = [];
+
+        const beforePhotosMin = await automationNumber("start_work_before_photos_min", 1);
+        if (beforePhotosMin > 0) {
+          // At start time every photo on the work order IS a before-work photo
+          // (DURING/AFTER evidence only becomes possible after start). Count the
+          // actual persisted rows — metadata created only after the bytes landed.
+          const photoCount = await db.document.count({
+            where: { resourceType: "WORK_ORDER", resourceId: id, category: "WORK_ORDER" },
+          });
+          if (photoCount < beforePhotosMin) {
+            missing.push(`Before-work photo evidence (${photoCount}/${beforePhotosMin} required)`);
+          }
+        }
+
+        const checklist = await db.workOrderChecklistItem.findMany({
+          where: { workOrderId: id },
+          select: { label: true, done: true, required: true, responseType: true, response: true },
+        });
+        const unanswered = checklist.filter((c) => !c.done || (c.required && c.responseType !== "CHECKBOX" && c.response.trim() === ""));
+        if (unanswered.length > 0) {
+          missing.push(`Mandatory checklist result: ${unanswered[0].label}${unanswered.length > 1 ? ` (+${unanswered.length - 1} more)` : ""}`);
+        }
+
+        if (missing.length > 0) {
+          throw new ApiError(
+            422,
+            "PREWORK_REQUIREMENTS",
+            `Cannot start work. Missing: ${missing.slice(0, 3).join("; ")}${missing.length > 3 ? ` (+${missing.length - 3} more)` : ""}.`,
+            { missing }
+          );
+        }
+
         const updated = await db.$transaction(async (tx) => {
           const row = await tx.workOrder.update({
             where: { id }, data: { status: "IN_PROGRESS", startedAt: now }, include: WO_DETAIL_INCLUDE,

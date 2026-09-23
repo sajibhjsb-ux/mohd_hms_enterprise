@@ -25,6 +25,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { BeforeWorkPanel } from "@/components/hms/modules/work-orders/before-work-panel";
+import { ClientApiError } from "@/lib/hms/api-client";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -95,6 +97,9 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
   const [labourHours, setLabourHours] = useState("0");
   const [labourRate, setLabourRate] = useState("0");
   const [confirmCancel, setConfirmCancel] = useState(false);
+  // §15/§18 — Start Work gate: backend's 422 PREWORK_REQUIREMENTS surfaces the
+  // exact missing evidence (before-work photos / required checklist items).
+  const [gateMissing, setGateMissing] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -134,10 +139,17 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
     try {
       await api.post<WODetail>(`/api/v1/work-orders/${detail.id}/transition`, { action, ...extra });
       toast({ title: "Success", description: `Work order ${detail.code} — ${humanize(action)} done.` });
+      setGateMissing([]);
       // Stay on the detail page — refresh with the authoritative server record.
       await refreshDetail();
       setCompleteNote("");
     } catch (e) {
+      if (e instanceof ClientApiError && e.code === "PREWORK_REQUIREMENTS") {
+        const missing = Array.isArray((e.details as { missing?: unknown } | undefined)?.missing)
+          ? (e.details as { missing: string[] }).missing
+          : [];
+        setGateMissing(missing);
+      }
       toast({ title: "Action failed", description: e instanceof Error ? e.message : "Please try again.", variant: "destructive" });
     } finally {
       setBusy(false);
@@ -358,6 +370,11 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
             </div>
           </div>
 
+          {/* §15/§18 — before-work evidence (feeds the Start Work gate) */}
+          {woEditable ? (
+            <BeforeWorkPanel workOrderId={detail.id} canUpload={canOperate} />
+          ) : null}
+
           {/* Checklist */}
           <Card className="shadow-sm">
             <CardHeader className="pb-3">
@@ -496,13 +513,23 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
             ) : null}
 
             {woStatus === "ACCEPTED" && (isAssignedTech || canUpdate) ? (
-              <div className="flex flex-wrap gap-2">
-                <Button disabled={busy} onClick={() => runTransition("start")}>
-                  <Wrench className="h-4 w-4 mr-1.5" /> Start Work
-                </Button>
-                <Button variant="outline" disabled={busy} onClick={() => runTransition("hold")}>
-                  <PauseCircle className="h-4 w-4 mr-1.5" /> Put On Hold
-                </Button>
+              <div className="space-y-3">
+                {gateMissing.length > 0 ? (
+                  <div className="rounded-lg border border-amber-500/40 bg-amber-50 p-3 text-xs text-amber-800">
+                    <p className="font-semibold mb-1.5">Start Work is blocked until the pre-work requirements are met:</p>
+                    <ul className="list-disc pl-4 space-y-0.5">
+                      {gateMissing.map((m) => <li key={m}>{m}</li>)}
+                    </ul>
+                  </div>
+                ) : null}
+                <div className="flex flex-wrap gap-2">
+                  <Button disabled={busy} onClick={() => runTransition("start")}>
+                    <Wrench className="h-4 w-4 mr-1.5" /> Start Work
+                  </Button>
+                  <Button variant="outline" disabled={busy} onClick={() => runTransition("hold")}>
+                    <PauseCircle className="h-4 w-4 mr-1.5" /> Put On Hold
+                  </Button>
+                </div>
               </div>
             ) : null}
 

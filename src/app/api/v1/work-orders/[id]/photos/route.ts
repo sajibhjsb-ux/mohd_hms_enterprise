@@ -98,6 +98,15 @@ export const POST = withId(
       if (!item || item.workOrderId !== id) throw Errors.badRequest("itemId does not belong to this work order.");
     }
 
+    // Optional phase — BEFORE | DURING | AFTER evidence label (§15/§18).
+    // The Start Work gate counts real BEFORE records, never a boolean flag.
+    const phaseRaw = form.get("phase");
+    const validPhases = new Set(["BEFORE", "DURING", "AFTER"]);
+    const phase = typeof phaseRaw === "string" && validPhases.has(phaseRaw) ? phaseRaw : "CHECKLIST";
+    if (phase !== "CHECKLIST" && itemId) {
+      throw Errors.badRequest("A checklist-linked photo cannot also carry an evidence phase. Upload it twice with separate fields.");
+    }
+
     const buf = Buffer.from(await file.arrayBuffer());
     const sniffed = sniffMediaType(buf);
     if (!sniffed) {
@@ -126,7 +135,7 @@ export const POST = withId(
         category: "WORK_ORDER",
         resourceType: "WORK_ORDER",
         resourceId: wo.id,
-        label: itemId || "CHECKLIST",
+        label: itemId || phase,
         uploadedById: user.id,
       },
     });
