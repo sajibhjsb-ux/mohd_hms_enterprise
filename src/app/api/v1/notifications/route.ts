@@ -32,7 +32,7 @@ export const GET = handler(async ({ req, user }) => {
     ];
   }
 
-  const [items, total] = await Promise.all([
+  const [items, total, unread] = await Promise.all([
     db.notification.findMany({
       where,
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
@@ -40,6 +40,11 @@ export const GET = handler(async ({ req, user }) => {
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
     }),
     db.notification.count({ where }),
+    // Global unread count for the CURRENT USER (independent of any filter) —
+    // the header bell badge reads meta.unread and must reflect the real
+    // unread backlog on every load AND on every NOTIFICATION_CREATED event
+    // (realtime refetch). Contract documented above.
+    db.notification.count({ where: { userId: user.id, readAt: null } }),
   ]);
 
   const hasMore = items.length > take;
@@ -47,6 +52,7 @@ export const GET = handler(async ({ req, user }) => {
   const nextCursor = hasMore && page.length > 0 ? page[page.length - 1].id : undefined;
 
   return okList(page, {
+    unread,
     total,
     hasMore,
     nextCursor: nextCursor ?? null,

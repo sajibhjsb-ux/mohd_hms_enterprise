@@ -26,6 +26,11 @@ const INTERNAL_PORT = Number(process.env.REALTIME_INTERNAL_PORT ?? 3004); // loo
 const APP_URL = process.env.HMS_APP_URL ?? "http://127.0.0.1:3000";
 const SECRET = process.env.REALTIME_INTERNAL_SECRET ?? "hms-realtime-internal-secret-v1";
 const SESSION_CACHE_TTL_MS = 60_000;
+// Session-revocation enforcement (single-active-device policy): every socket's
+// session is re-verified against the app's session store at most this often.
+// A DEFINITIVE unauthenticated answer (logout / idle revoke / admin revoke)
+// force-disconnects the socket; transient app unavailability never does.
+const SESSION_REVERIFY_MS = 45_000;
 
 type SessionInfo = {
   id: string;
@@ -41,6 +46,10 @@ const g = globalThis as unknown as {
   __hmsSeenEvents?: Set<string>;
   __hmsStats?: { broadcast: number; lastEventAt: number; lastEvent: string; startedAt: number };
 };
+
+/** Per-socket session liveness bookkeeping (revocation sweep + last seen). */
+type SocketMeta = { token: string | null; lastVerifiedAt: number; lastSeenAt: number };
+const socketMeta = new Map<string, SocketMeta>();
 const sessionCache = (g.__hmsSessionCache ??= new Map());
 const seenEvents = (g.__hmsSeenEvents ??= new Set());
 const stats = (g.__hmsStats ??= { broadcast: 0, lastEventAt: 0, lastEvent: "", startedAt: Date.now() });
@@ -48,7 +57,7 @@ const stats = (g.__hmsStats ??= { broadcast: 0, lastEventAt: 0, lastEvent: "", s
 // ─── Presence (STEP 18) ──────────────────────────────────────────────────────
 // "record exists" is never used as an online signal — presence = live sockets.
 
-type PresenceEntry = { name: string; role: string; sockets: number; since: number };
+type PresenceEntry = { name: string; role: string; sockets: number; since: number; lastSeenAt: number };
 const presence = new Map<string, PresenceEntry>(); // userId → entry
 
 function log(level: "info" | "warn" | "error", msg: string, extra: Record<string, unknown> = {}) {
@@ -70,21 +79,34 @@ function readCookie(cookieHeader: string | undefined, name: string): string | nu
   return null;
 }
 
-async function verifySession(cookieHeader: string | undefined): Promise<SessionInfo | null> {
-  const token = readCookie(cookieHeader, "hms_session");
-  if (!token) return null;
+type VerifyResult =
+  | { state: "authenticated"; user: SessionInfo }
+  | { state: "unauthenticated" } // DEFINITIVE: logout / revoked / expired
+  | { state: "unknown" }; // transient: app restarting, network, timeout
 
+/**
+ * Verify a session token against the app's session store.
+ * Distinguishes a DEFINITIVE revocation (the app answered "no session") from a
+ * transient app outage — only the former may ever disconnect a live socket
+ * (server-restart tolerance: sockets must survive an app restart, §26).
+ */
+async function verifyToken(token: string): Promise<VerifyResult> {
   const cached = sessionCache.get(token);
-  if (cached && cached.expires > Date.now()) return cached.user;
+  if (cached && cached.expires > Date.now()) return { state: "authenticated", user: cached.user };
 
   try {
     const res = await fetch(`${APP_URL}/api/v1/auth/session`, {
       headers: { cookie: `hms_session=${encodeURIComponent(token)}` },
       signal: AbortSignal.timeout(5000),
     });
-    if (!res.ok) return null;
+    if (!res.ok) return { state: "unknown" };
     const json = (await res.json()) as { ok: boolean; data?: { authenticated: boolean; user?: SessionInfo } };
-    if (!json.ok || !json.data?.authenticated || !json.data.user) return null;
+    if (!json.ok) return { state: "unknown" };
+    if (!json.data?.authenticated || !json.data.user) {
+      // Definitive answer from the authoritative session store — drop any cache.
+      sessionCache.delete(token);
+      return { state: "unauthenticated" };
+    }
     const user: SessionInfo = {
       id: json.data.user.id,
       name: json.data.user.name,
@@ -101,11 +123,19 @@ async function verifySession(cookieHeader: string | undefined): Promise<SessionI
         sessionCache.delete(k);
       }
     }
-    return user;
+    return { state: "authenticated", user };
   } catch (e) {
     log("warn", "session-verify-failed", { err: e instanceof Error ? e.message : String(e) });
-    return null;
+    return { state: "unknown" };
   }
+}
+
+/** Handshake-shaped wrapper used by the connection middleware. */
+async function verifySession(cookieHeader: string | undefined): Promise<SessionInfo | null> {
+  const token = readCookie(cookieHeader, "hms_session");
+  if (!token) return null;
+  const result = await verifyToken(token);
+  return result.state === "authenticated" ? result.user : null;
 }
 
 /** Room membership derives ONLY from the verified session (STEP 9). */
@@ -196,6 +226,7 @@ const internalServer = createServer((req, res) => {
       JSON.stringify({
         ok: true,
         data: {
+          status: "healthy",
           connectedClients: io.engine.clientsCount,
           byRole,
           presence: Array.from(presence.entries()).map(([userId, p]) => ({ userId, ...p })),
@@ -233,19 +264,39 @@ const io = new Server(httpServer, {
 
 io.use(async (socket, next) => {
   try {
+    const token = readCookie(socket.handshake.headers.cookie, "hms_session");
     const user = await verifySession(socket.handshake.headers.cookie);
     if (!user) return next(new Error("unauthorized"));
     socket.data.user = user;
+    socket.data.token = token; // kept in-memory only — never logged, never emitted
+    socketMeta.set(socket.id, { token, lastVerifiedAt: Date.now(), lastSeenAt: Date.now() });
     return next();
   } catch {
     return next(new Error("unauthorized"));
   }
 });
 
+// Last-seen tracking (STEP 13): every received socket packet refreshes the
+// user's liveness timestamp. Transport-level dead-connection detection stays
+// with socket.io's own ping/pong (25s interval / 60s timeout) — an idle but
+// healthy client is NEVER disconnected for not generating business events.
+io.use((socket, next) => {
+  const meta = socketMeta.get(socket.id);
+  if (meta) meta.lastSeenAt = Date.now();
+  const p = presence.get((socket.data.user as SessionInfo | undefined)?.id ?? "");
+  if (p) p.lastSeenAt = Date.now();
+  next();
+});
+
 io.on("connection", (socket: Socket) => {
   const user = socket.data.user as SessionInfo;
   const rooms = roomsFor(user);
   for (const room of rooms) socket.join(room);
+  socketMeta.set(socket.id, {
+    token: socket.data.token ?? null,
+    lastVerifiedAt: Date.now(),
+    lastSeenAt: Date.now(),
+  });
 
   // Presence (STEP 18): connect → online, disconnect → offline. Broadcast to
   // staff so admins see real presence; never derived from DB records.
@@ -255,6 +306,7 @@ io.on("connection", (socket: Socket) => {
     role: user.role,
     sockets: (prev?.sockets ?? 0) + 1,
     since: prev?.since ?? Date.now(),
+    lastSeenAt: Date.now(),
   });
   broadcastPresence();
 
@@ -281,6 +333,7 @@ io.on("connection", (socket: Socket) => {
       entry.sockets -= 1;
       if (entry.sockets <= 0) presence.delete(user.id);
     }
+    socketMeta.delete(socket.id);
     broadcastPresence();
     log("info", "client-disconnected", { socketId: socket.id, userId: user.id, reason });
   });
@@ -295,6 +348,31 @@ function broadcastPresence() {
     presence: Array.from(presence.entries()).map(([userId, p]) => ({ userId, ...p })),
   });
 }
+
+// ─── Session-revocation sweep (single-active-device policy) ─────────────────
+// A socket authenticated at handshake must NOT stay connected after its session
+// is revoked (logout, idle timeout, admin revocation). Every socket is
+// re-verified at most once per SESSION_REVERIFY_MS; only a DEFINITIVE
+// "unauthenticated" answer from the app's session store disconnects it — a
+// transient app restart/error never drops live clients.
+setInterval(() => {
+  const now = Date.now();
+  for (const [socketId, meta] of socketMeta) {
+    if (now - meta.lastVerifiedAt < SESSION_REVERIFY_MS) continue;
+    meta.lastVerifiedAt = now;
+    if (!meta.token) continue;
+    void verifyToken(meta.token).then((result) => {
+      if (result.state !== "unauthenticated") return;
+      const socket = io.sockets.sockets.get(socketId);
+      if (!socket) return;
+      // Tell the client WHY it is being cut (it stops its reconnect loop and
+      // lets the shell session flow re-authenticate), then force-close.
+      socket.emit("realtime:session-invalid", { reason: "session_revoked" });
+      socket.disconnect(true);
+      log("info", "session-revoked-disconnect", { socketId, userId: (socket.data.user as SessionInfo)?.id });
+    });
+  }
+}, 15_000).unref();
 
 httpServer.listen(PORT, () => {
   log("info", "realtime-service-started", { port: PORT, internalPort: INTERNAL_PORT, appUrl: APP_URL });

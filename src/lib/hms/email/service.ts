@@ -601,7 +601,7 @@ export async function tickEmailWorker(): Promise<number> {
     // not claim/requeue in a hot loop — that starves SQLite for every other
     // writer. QUEUED rows keep their honest CONFIG lastError and are picked up
     // the moment SMTP becomes ready.
-    if (!smtpReady) return 0;
+    if (!providerReady) return 0;
 
     const due = await db.emailLog.findMany({
       where: { status: "QUEUED", scheduledAt: { lte: new Date() } },

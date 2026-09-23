@@ -74,6 +74,15 @@ export function connectRealtime(): void {
   // Server asks us to reconcile (reply to realtime:sync).
   socket.on("realtime:resync", () => publishRealtimeResync("server-resync"));
 
+  // Server-enforced session revocation (logout / idle revoke / admin revoke /
+  // single-device policy). The session is gone server-side — reconnecting with
+  // the same cookie can only fail, so tear the singleton down cleanly instead
+  // of burning an infinite backoff loop. A later login re-runs connectRealtime().
+  socket.on("realtime:session-invalid", () => {
+    publishRealtimeState("DISCONNECTED");
+    disconnectRealtime();
+  });
+
   // The one true event channel — small targeted envelopes only (STEP 48).
   socket.on("realtime:event", (raw: RealtimeEvent) => {
     if (!raw?.event_id || !raw?.event_type) return;

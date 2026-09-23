@@ -62,17 +62,20 @@ function whenMs(ms: number | null | undefined): string {
 }
 
 type RealtimeHealth = {
+  status?: "healthy" | "degraded" | string;
+  websocket?: "available" | "unavailable" | string;
   service: {
+    status?: string;
     connectedClients: number;
     byRole: Record<string, number>;
-    presence: { userId: string; name: string; role: string; sockets: number; since: number }[];
+    presence: { userId: string; name: string; role: string; sockets: number; since: number; lastSeenAt?: number }[];
     eventsBroadcast: number;
     lastEventAt: string | null;
     lastEvent: string;
     startedAt: string;
     uptimeS: number;
   } | null;
-  dispatcher: { lastDispatchAt: number; lastBroadcastAt: number; lastError: string; dispatching: boolean; serviceUrl: string };
+  dispatcher: { lastDispatchAt: number; lastBroadcastAt: number; lastError: string; dispatching: boolean; serviceUrl: string; running?: boolean };
   outbox: { pendingEvents: number; broadcastPending: number };
 };
 
@@ -109,15 +112,19 @@ export function AutomationTab() {
 
   // Realtime health visibility (STEP 49): SUPER_ADMIN-only live diagnostics —
   // connected sockets, presence, broadcast stats, dispatcher/outbox status.
+  // rt === null means the diagnostics API ITSELF failed — metrics then render
+  // as "—" (unknown), never as a fabricated 0 (spec §27/§31: the dashboard is
+  // a monitoring surface, not a simulated UI).
   const [rt, setRt] = useState<RealtimeHealth | null>(null);
+  const [rtFailed, setRtFailed] = useState(false);
   useEffect(() => {
     if (!isSuper) return;
     let alive = true;
     const loadRt = async () => {
       try {
         const res = await api.get<RealtimeHealth>("/api/v1/realtime/health");
-        if (alive) setRt(res.data);
-      } catch { /* diagnostics are best-effort */ }
+        if (alive) { setRt(res.data); setRtFailed(false); }
+      } catch { /* diagnostics are best-effort */ if (alive) { setRt(null); setRtFailed(true); } }
     };
     void loadRt();
     const t = setInterval(loadRt, 10_000);
@@ -189,26 +196,30 @@ export function AutomationTab() {
           <CardContent className="space-y-3">
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
               {[
-                { label: "Connected clients", value: rt?.service?.connectedClients ?? 0 },
-                { label: "Events broadcast", value: rt?.service?.eventsBroadcast ?? 0 },
+                // Health-API failure → "—" (unknown); service down → DB-backed
+                // outbox numbers stay real, socket metrics render "—".
+                { label: "Connected clients", value: rt?.service ? rt.service.connectedClients : "—" },
+                { label: "Events broadcast", value: rt?.service ? rt.service.eventsBroadcast : "—" },
                 { label: "Outbox pending (workflow)", value: rt?.outbox.pendingEvents ?? data.events.pending },
                 { label: "Awaiting broadcast", value: rt?.outbox.broadcastPending ?? 0 },
               ].map((c) => (
                 <div key={c.label} className="rounded-lg border bg-muted/30 px-3 py-2">
                   <p className="text-xs text-muted-foreground">{c.label}</p>
-                  <p className="text-xl font-semibold tabular-nums">{c.value}</p>
+                  <p className="text-xl font-semibold tabular-nums" data-testid={`realtime-${c.label.toLowerCase().replace(/[^a-z]+/g, "-")}`}>{c.value}</p>
                 </div>
               ))}
             </div>
             <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
               <div>
                 Service:{" "}
-                {rt?.service ? (
-                  <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">
+                {rtFailed ? (
+                  <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200" data-testid="realtime-service-state">diagnostics unavailable</Badge>
+                ) : rt?.service ? (
+                  <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200" data-testid="realtime-service-state">
                     online · uptime {Math.round((rt.service.uptimeS ?? 0) / 60)}m
                   </Badge>
                 ) : (
-                  <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">unreachable</Badge>
+                  <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200" data-testid="realtime-service-state">unreachable</Badge>
                 )}
               </div>
               <div>Last broadcast: {rt?.service?.lastEventAt ? `${rt.service.lastEvent} · ${when(rt.service.lastEventAt)}` : "—"}</div>
