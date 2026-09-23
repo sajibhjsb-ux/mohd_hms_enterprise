@@ -210,8 +210,10 @@ const TECHNICIAN_PERMS: Permission[] = [
   PERMISSIONS.complaints_read, PERMISSIONS.complaints_update,
   PERMISSIONS.work_orders_read, PERMISSIONS.work_orders_update, PERMISSIONS.work_orders_complete,
   PERMISSIONS.pm_read, PERMISSIONS.pm_execute, PERMISSIONS.pm_report,
-  // Checklist engine — technicians see assigned checklists and execute them (spec §53)
-  PERMISSIONS.checklist_view,
+  // Checklist engine — technicians see assigned checklists and execute them (spec §53);
+  // §19/§32 — assigned technicians ALSO generate (AI/template) and edit their
+  // drafts for their work orders; approval stays with supervisors/admins.
+  PERMISSIONS.checklist_view, PERMISSIONS.checklist_generate, PERMISSIONS.checklist_edit,
   PERMISSIONS.inventory_read,
   PERMISSIONS.irms_read, PERMISSIONS.irms_create,
   // Email client — mailbox members only (assignment enforced per-user)

@@ -1,7 +1,7 @@
-// MOHD.HMS ENTERPRISE — Complaint media file stream (§14).
+// MOHD.HMS ENTERPRISE — Complaint media file stream (§10/§13/§14).
 // GET /api/v1/complaints/[id]/media/[mediaId]/file
 // Private object-store serving: authenticated + RBAC-scoped (complaints_read +
-// business scope via assertViewComplaint — no URL/ID guessing, §issue disclosure).
+// business scope via assertViewComplaint — no URL/ID guessing, no IDOR).
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { handler, Errors } from "@/lib/hms/api";
@@ -13,7 +13,9 @@ import { assertViewComplaint, technicianProfileIdFor } from "../../../../_lib";
 export const GET = async (req: NextRequest, ctx: { params: Promise<{ id: string; mediaId: string }> }) => {
   const { id, mediaId } = await ctx.params;
   return handler(
-    async ({ user }) => {
+    async ({ req, user }) => {
+      // §3 — explicit download action: ?download=1 forces attachment disposition.
+      const forceDownload = new URL(req.url).searchParams.get("download") === "1";
       const complaint = await db.complaint.findUnique({
         where: { id },
         select: { id: true, customerId: true, createdById: true, assignedTechnicianId: true },
@@ -34,7 +36,9 @@ export const GET = async (req: NextRequest, ctx: { params: Promise<{ id: string;
       const file = await storage.get(doc.storagePath);
       if (!file) throw Errors.notFound("Media file not found.");
 
-      const inline = file.contentType.startsWith("image/");
+      // Images/videos preview inline (play/pause/seek in <video>); ?download=1
+      // or unknown binaries download as attachments.
+      const inline = !forceDownload && (file.contentType.startsWith("image/") || file.contentType.startsWith("video/"));
       return new NextResponse(Buffer.from(file.buffer), {
         status: 200,
         headers: {
@@ -43,6 +47,7 @@ export const GET = async (req: NextRequest, ctx: { params: Promise<{ id: string;
           "Content-Disposition": `${inline ? "inline" : "attachment"}; filename="${doc.safeName.replace(/["\\]/g, "")}"`,
           "Cache-Control": "private, max-age=3600",
           "X-Content-Type-Options": "nosniff",
+          "Accept-Ranges": "none",
         },
       });
     },

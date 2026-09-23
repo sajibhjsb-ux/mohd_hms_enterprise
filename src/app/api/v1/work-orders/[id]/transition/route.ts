@@ -108,7 +108,9 @@ export const POST = withId(
           where: { workOrderId: id },
           select: { label: true, done: true, required: true, responseType: true, response: true },
         });
-        const unanswered = checklist.filter((c) => !c.done || (c.required && c.responseType !== "CHECKBOX" && c.response.trim() === ""));
+        // §16/§31 — ONLY required items block the start; optional items stay
+        // advisory (the UI shows completion counts either way).
+        const unanswered = checklist.filter((c) => c.required && (!c.done || (c.responseType !== "CHECKBOX" && c.response.trim() === "")));
         // §16/§18 — a pre-work checklist must EXIST, not merely be empty-complete:
         // a work order with zero checklist items has no verifiable pre-work
         // evidence, so Start stays blocked (AI/template/manual paths remain available).

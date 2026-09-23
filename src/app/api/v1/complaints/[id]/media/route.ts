@@ -5,7 +5,9 @@
 //   (portal users may attach supporting evidence). Files live in MinIO under
 //   complaints/{id}/media/ (private bucket — never browser-direct); PostgreSQL
 //   stores the metadata reference only. Validation by magic bytes: images
-//   jpeg/png/webp ≤ 15 MB, videos mp4/webm ≤ 50 MB. phase = BEFORE|DURING|AFTER.
+//   jpeg/png/webp ≤ 15 MB, videos mp4/mov/webm ≤ 50 MB. phase = BEFORE|DURING|AFTER.
+//   Uploads are allowed AFTER complaint creation too — the list is served in
+//   chronological order so the detail page can render an evidence timeline.
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { db } from "@/lib/db";
@@ -37,6 +39,9 @@ function sniffMediaType(buf: Buffer): SniffedMedia | null {
   if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return { mime: "image/jpeg", ext: "jpg", kind: "image" };
   if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return { mime: "image/png", ext: "png", kind: "image" };
   if (buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WEBP") return { mime: "image/webp", ext: "webp", kind: "image" };
+  // QuickTime .MOV carries an ftyp box too — detect its brand BEFORE the
+  // generic ftyp/mp4 check so the stored mime type is accurate.
+  if (buf.toString("ascii", 4, 8) === "ftyp" && buf.toString("ascii", 8, 12) === "qt  ") return { mime: "video/quicktime", ext: "mov", kind: "video" };
   if (buf.toString("ascii", 4, 8) === "ftyp") return { mime: "video/mp4", ext: "mp4", kind: "video" };
   if (buf[0] === 0x1a && buf[1] === 0x45 && buf[2] === 0xdf && buf[3] === 0xa3) return { mime: "video/webm", ext: "webm", kind: "video" };
   return null;
@@ -58,12 +63,19 @@ export const GET = withId(
     if (!complaint) throw Errors.notFound("Complaint not found.");
     const profileId = user.role === "TECHNICIAN" ? await technicianProfileIdFor(user.id) : null;
     assertViewComplaint(user, complaint, profileId);
+    // Chronological order (§14 evidence timeline). Uploader names resolved in
+    // one batched query — Document stores only the uploader id.
     const media = await db.document.findMany({
       where: { resourceType: "COMPLAINT", resourceId: id, category: "COMPLAINT" },
-      orderBy: { createdAt: "desc" },
+      orderBy: { createdAt: "asc" },
       select: { id: true, name: true, mimeType: true, sizeBytes: true, label: true, uploadedById: true, createdAt: true },
     });
-    return ok(media);
+    const uploaderIds = [...new Set(media.map((m) => m.uploadedById).filter((v): v is string => !!v))];
+    const uploaders = uploaderIds.length
+      ? await db.user.findMany({ where: { id: { in: uploaderIds } }, select: { id: true, name: true, email: true } })
+      : [];
+    const nameById = new Map(uploaders.map((u) => [u.id, u.name || u.email]));
+    return ok(media.map((m) => ({ ...m, uploadedByName: m.uploadedById ? nameById.get(m.uploadedById) ?? null : null })));
   },
   PERMISSIONS.complaints_read
 );
@@ -106,7 +118,7 @@ export const POST = withId(
     const buf = Buffer.from(await file.arrayBuffer());
     const sniffed = sniffMediaType(buf);
     if (!sniffed) {
-      throw Errors.badRequest("Unsupported file type. Upload a JPEG, PNG or WebP image, or an MP4/WebM video.");
+      throw Errors.badRequest("Unsupported file type. Upload a JPEG, PNG or WebP image, or an MP4/MOV/WebM video.");
     }
     const maxBytes = sniffed.kind === "image" ? IMAGE_MAX_BYTES : VIDEO_MAX_BYTES;
     if (buf.length > maxBytes) {

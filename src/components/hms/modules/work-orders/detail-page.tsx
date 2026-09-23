@@ -32,7 +32,7 @@ import {
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
-  ArrowUpRight, CircleDollarSign, Hammer, PauseCircle, PlayCircle, Plus, Trash2, Wrench,
+  ArrowUpRight, CircleDollarSign, Hammer, ListChecks, PauseCircle, PlayCircle, Plus, Sparkles, Trash2, Wrench,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -53,7 +53,22 @@ type WORow = {
   complaint?: { id: string; code: string } | null;
 };
 
-type ChecklistItem = { id: string; label: string; done: boolean; doneAt: string | null; sortOrder: number };
+type ChecklistItem = {
+  id: string;
+  label: string;
+  done: boolean;
+  doneAt: string | null;
+  sortOrder: number;
+  required: boolean;
+  responseType: string; // CHECKBOX | PASSFAIL | YESNO | NUMERIC | TEXT
+  response: string;
+  notes: string;
+  failRequiresFinding: boolean;
+  unit: string;
+  expectedResult: string;
+  origin: string;
+  priority: string;
+};
 type MaterialRow = {
   id: string; name: string; quantity: number; unit: string; unitCostCents: number; totalCents: number;
   inventoryItemId: string | null; inventoryItem?: { id: string; name: string; unit: string } | null;
@@ -156,17 +171,21 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
     }
   }, [detail, refreshDetail, toast]);
 
-  async function toggleChecklist(item: ChecklistItem, done: boolean) {
+  async function patchChecklist(item: ChecklistItem, patch: { done?: boolean; response?: string; notes?: string }) {
     if (!detail) return;
     setBusy(true);
     try {
-      await api.patch(`/api/v1/work-orders/${detail.id}/checklist`, { itemId: item.id, done });
+      await api.patch(`/api/v1/work-orders/${detail.id}/checklist`, { itemId: item.id, ...patch });
       await refreshDetail();
     } catch (e) {
       toast({ title: "Could not update checklist", description: e instanceof Error ? e.message : undefined, variant: "destructive" });
     } finally {
       setBusy(false);
     }
+  }
+
+  async function toggleChecklist(item: ChecklistItem, done: boolean) {
+    await patchChecklist(item, { done });
   }
 
   async function addChecklistItem() {
@@ -249,6 +268,9 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
   const woEditable = !!woStatus && !["COMPLETED", "CANCELLED"].includes(woStatus);
   const canEditLabour = woStatus === "IN_PROGRESS" && canOperate;
   const checklistDone = (detail?.checklist ?? []).filter((c) => c.done).length;
+  const requiredPending = (detail?.checklist ?? []).filter(
+    (c) => c.required && (!c.done || (c.responseType !== "CHECKBOX" && c.response.trim() === ""))
+  ).length;
 
   if (loading && !detail) {
     return (
@@ -375,31 +397,155 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
             <BeforeWorkPanel workOrderId={detail.id} canUpload={canOperate} />
           ) : null}
 
-          {/* Checklist */}
+          {/* Checklist — §17/§20/§30: generated AFTER work-order creation from
+              approved templates or AI (draft → review → approve → materialize);
+              this card is the execution surface. */}
           <Card className="shadow-sm">
             <CardHeader className="pb-3">
-              <CardTitle className="text-base flex items-center justify-between gap-2">
-                <span>Checklist ({checklistDone}/{detail.checklist.length} done)</span>
+              <CardTitle className="text-base flex flex-wrap items-center justify-between gap-2">
+                <span className="flex items-center gap-2">
+                  <ListChecks className="h-4 w-4 text-muted-foreground" aria-hidden />
+                  Checklist ({checklistDone}/{detail.checklist.length} done)
+                  {requiredPending > 0 ? (
+                    <Badge variant="destructive" className="text-[10px]">{requiredPending} required pending</Badge>
+                  ) : detail.checklist.length > 0 ? (
+                    <Badge className="bg-emerald-600 text-[10px] text-white">Required complete</Badge>
+                  ) : null}
+                </span>
                 {canOperate && woEditable ? (
-                  <Badge variant="outline" className="text-[10px]">You can edit</Badge>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline" className="text-[10px]">You can edit</Badge>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => navigateTo("checklists", ["generate"], { sourceType: "WORK_ORDER", sourceId: detail.id })}
+                    >
+                      <Sparkles className="h-4 w-4 mr-1.5" aria-hidden /> Generate Checklist
+                    </Button>
+                  </div>
                 ) : null}
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
               {detail.checklist.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No checklist items yet.</p>
+                <div className="rounded-lg border border-dashed p-4 space-y-2">
+                  <p className="text-sm text-muted-foreground">
+                    No checklist attached yet. Work cannot start until a checklist is generated (AI or approved template) and its required items are completed.
+                  </p>
+                  {canOperate && woEditable ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => navigateTo("checklists", ["generate"], { sourceType: "WORK_ORDER", sourceId: detail.id })}
+                    >
+                      <Sparkles className="h-4 w-4 mr-1.5" aria-hidden /> Generate Checklist
+                    </Button>
+                  ) : null}
+                </div>
               ) : (
                 <ul className="space-y-1.5">
                   {detail.checklist.map((item) => (
-                    <li key={item.id} className="flex items-center gap-2.5 rounded-lg border p-2.5">
-                      <Checkbox
-                        checked={item.done}
-                        disabled={busy || !canOperate || !woEditable}
-                        onCheckedChange={(checked) => toggleChecklist(item, checked === true)}
-                        aria-label={`Toggle ${item.label}`}
-                      />
-                      <span className={cn("text-sm flex-1", item.done && "line-through text-muted-foreground")}>{item.label}</span>
-                      {item.doneAt ? <span className="text-[11px] text-muted-foreground whitespace-nowrap">{fmtDateTime(item.doneAt)}</span> : null}
+                    <li key={item.id} className="rounded-lg border p-2.5 space-y-2">
+                      <div className="flex items-center gap-2.5">
+                        {item.responseType === "CHECKBOX" ? (
+                          <Checkbox
+                            checked={item.done}
+                            disabled={busy || !canOperate || !woEditable}
+                            onCheckedChange={(checked) => toggleChecklist(item, checked === true)}
+                            aria-label={`Toggle ${item.label}`}
+                          />
+                        ) : (
+                          <span
+                            className={cn(
+                              "flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px] font-semibold",
+                              item.done ? "border-emerald-600 bg-emerald-600 text-white" : "border-muted-foreground/40 text-muted-foreground"
+                            )}
+                            aria-hidden
+                          >
+                            {item.done ? "✓" : ""}
+                          </span>
+                        )}
+                        <span className={cn("text-sm flex-1", item.done && item.responseType === "CHECKBOX" && "line-through text-muted-foreground")}>
+                          {item.label}
+                          {item.required ? <span className="ml-1.5 text-[10px] font-semibold uppercase text-destructive">required</span> : null}
+                          {item.unit ? <span className="ml-1 text-[11px] text-muted-foreground">({item.unit})</span> : null}
+                        </span>
+                        {item.doneAt ? <span className="text-[11px] text-muted-foreground whitespace-nowrap">{fmtDateTime(item.doneAt)}</span> : null}
+                      </div>
+                      {/* §30 — rich recording for non-checkbox items (mirror of the
+                          backend PATCH validation: PASSFAIL/YESNO segmented, NUMERIC
+                          reading, TEXT observation; FAIL/NO demands a finding note). */}
+                      {item.responseType !== "CHECKBOX" && canOperate && woEditable ? (
+                        <div className="flex flex-wrap items-center gap-2 pl-7">
+                          {item.responseType === "PASSFAIL" || item.responseType === "YESNO" ? (
+                            <div className="flex items-center gap-1">
+                              {(item.responseType === "PASSFAIL" ? ["PASS", "FAIL"] : ["YES", "NO"]).map((opt) => (
+                                <button
+                                  key={opt}
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={() => patchChecklist(item, { response: opt })}
+                                  className={cn(
+                                    "rounded-full border px-3 py-1 text-xs font-medium transition-colors min-h-[32px]",
+                                    item.response === opt
+                                      ? opt === "PASS" || opt === "YES"
+                                        ? "bg-emerald-600 text-white border-emerald-600"
+                                        : "bg-destructive text-white border-destructive"
+                                      : "border-input text-muted-foreground hover:bg-accent"
+                                  )}
+                                  aria-pressed={item.response === opt}
+                                >
+                                  {opt}
+                                </button>
+                              ))}
+                            </div>
+                          ) : item.responseType === "NUMERIC" ? (
+                            <Input
+                              type="number"
+                              inputMode="decimal"
+                              defaultValue={item.response}
+                              placeholder={`Reading${item.unit ? ` in ${item.unit}` : ""}`}
+                              className="h-9 max-w-[12rem]"
+                              onBlur={(e) => {
+                                const v = e.target.value.trim();
+                                if (v !== "" && v !== item.response) void patchChecklist(item, { response: v });
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                              }}
+                              aria-label={`Reading for ${item.label}`}
+                            />
+                          ) : (
+                            <Input
+                              defaultValue={item.response}
+                              placeholder="Record observation…"
+                              className="h-9 max-w-md"
+                              onBlur={(e) => {
+                                const v = e.target.value.trim();
+                                if (v !== item.response) void patchChecklist(item, { response: v });
+                              }}
+                              aria-label={`Observation for ${item.label}`}
+                            />
+                          )}
+                          {item.failRequiresFinding || item.expectedResult ? (
+                            <Input
+                              defaultValue={item.notes}
+                              placeholder={item.expectedResult ? `Expected: ${item.expectedResult}` : "Finding note (required on FAIL/NO)…"}
+                              className="h-9 max-w-md flex-1"
+                              onBlur={(e) => {
+                                const v = e.target.value.trim();
+                                if (v !== item.notes) void patchChecklist(item, { notes: v });
+                              }}
+                              aria-label={`Notes for ${item.label}`}
+                            />
+                          ) : null}
+                        </div>
+                      ) : item.responseType !== "CHECKBOX" && item.response ? (
+                        <p className="pl-7 text-xs text-muted-foreground">
+                          Recorded: <span className="font-medium text-foreground">{item.response}</span>
+                          {item.notes ? ` — ${item.notes}` : ""}
+                        </p>
+                      ) : null}
                     </li>
                   ))}
                 </ul>

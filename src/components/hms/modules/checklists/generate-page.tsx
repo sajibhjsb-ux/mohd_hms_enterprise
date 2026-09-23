@@ -4,7 +4,7 @@
 // Pick a source (complaint / work order / PM plan / IRMS report) and either
 // generate with AI or pull deterministically from an approved template.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, qs } from "@/lib/hms/api-client";
 import { PageShell } from "@/components/hms/shared/page-shell";
 import { CHECKLIST_SOURCE_TYPES, humanize } from "@/lib/hms/constants";
@@ -44,6 +44,18 @@ export function GenerateChecklistPage() {
   const [templateId, setTemplateId] = useState<string>("");
   const [busy, setBusy] = useState(false);
 
+  // §20 — deep-link preselect: the work-order page sends technicians here with
+  // ?sourceType=WORK_ORDER&sourceId=… so the source context is already correct.
+  const preselectIdRef = useRef<string>("");
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const sp = new URLSearchParams(window.location.search);
+    const st = sp.get("sourceType");
+    const sid = sp.get("sourceId");
+    if (st && (CHECKLIST_SOURCE_TYPES as readonly string[]).includes(st)) setSourceType(st);
+    if (sid) preselectIdRef.current = sid;
+  }, []);
+
   useEffect(() => {
     let alive = true;
     if (!sourceType) return;
@@ -51,7 +63,12 @@ export function GenerateChecklistPage() {
     setSourcesError(null);
     setSourceId("");
     loadSources(sourceType)
-      .then((rows) => { if (alive) setSources(rows); })
+      .then((rows) => {
+        if (!alive) return;
+        setSources(rows);
+        const wanted = preselectIdRef.current;
+        if (wanted && rows.some((r) => r.id === wanted)) setSourceId(wanted);
+      })
       .catch(() => { if (alive) setSourcesError("Could not load sources."); })
       .finally(() => { if (alive) setSourcesLoading(false); });
     return () => { alive = false; };
