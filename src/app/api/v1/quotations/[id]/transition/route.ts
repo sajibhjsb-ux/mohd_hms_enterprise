@@ -16,6 +16,7 @@ import type { SessionUser } from "@/lib/hms/auth";
 import { emit } from "@/lib/hms/workflows/bus";
 import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 import { createReservation, reservationOnQuotationApproval } from "@/lib/hms/inventory";
+import { ensureQr } from "@/lib/hms/qr/service";
 
 const bodySchema = z.object({
   action: z.enum(["send", "approve", "reject", "expire"]),
@@ -49,6 +50,12 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     }
 
     const updated = await db.quotation.update({ where: { id }, data: { status: TARGET[body.action] } });
+
+    // Central QR identity on finalization (ch.35 §60/§61) — infrastructure
+    // only, never mutates the quotation (§59); failure is isolated.
+    if (body.action === "send") {
+      await ensureQr("QUOTATION", id, { issuedById: user.id, auditContext: "quotation-sent" });
+    }
 
     if (body.action === "approve") {
       // §15 — OPTIONAL reservation on approval, governed by a Setting (default OFF).

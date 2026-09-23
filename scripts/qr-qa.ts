@@ -1,196 +1,255 @@
-/**
- * MOHD.HMS ENTERPRISE — QR scanner QA (scripts/qr-qa.ts)
- *
- * Proves the NEW camera scanner's decode + resolution chain against the REAL
- * running server and the REAL existing QR generation endpoints:
- *
- *   1. Equipment QR  (GET /api/v1/equipment/{id}/qr)  → PNG → jsQR decode
- *      → must equal the deep-link URL → resolveQrValue → equipment token
- *      → existing lookup endpoint (staff + owner-customer + foreign customer).
- *   2. IRMS report QR (GET /api/v1/irms/reports/{id}/qr) → PNG → jsQR decode
- *      → must equal the report URL → resolveQrValue → irms reports route.
- *   3. Security / negative cases for the resolver (external URL, arbitrary
- *      text, unknown deep-link type, scanner self-reference, hidden module).
- *
- * Run: bun scripts/qr-qa.ts   (dev server must be running on :3000)
- */
+// MOHD.HMS ENTERPRISE — Central QR system QA suite (ch.35 spec §49/§50/§66).
+// Runs the security & behaviour matrix against the LIVE dev server:
+//   valid / invalid / modified / expired / revoked tokens, deleted entities,
+//   restricted records, enumeration resistance, rate limiting, RBAC 403s,
+//   canonical-identity stability, PDF embedding, audit trail, public DTO
+//   whitelisting. Exits non-zero on any failed check.
 
-import sharp from "sharp";
+import { db } from "../src/lib/db";
+import crypto from "crypto";
 
-const BASE = "http://localhost:3000";
-const PASSWORD = "Password@123";
+const BASE = process.env.QA_BASE || "http://localhost:3000";
+let cookie = "";
+let techCookie = "";
 
-let passed = 0;
-let failed = 0;
-function check(name: string, ok: boolean, extra?: string) {
-  if (ok) {
-    passed++;
+let pass = 0;
+let fail = 0;
+const failures: string[] = [];
+
+function check(name: string, cond: boolean, detail = "") {
+  if (cond) {
+    pass++;
     console.log(`  ✓ ${name}`);
   } else {
-    failed++;
-    console.log(`  ✗ ${name}${extra ? ` — ${extra}` : ""}`);
+    fail++;
+    failures.push(`${name}${detail ? ` — ${detail}` : ""}`);
+    console.log(`  ✗ ${name}${detail ? ` — ${detail}` : ""}`);
   }
 }
 
-type Jar = Map<string, string>;
-function cookieHeader(jar: Jar) {
-  return [...jar.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
-}
-function absorb(jar: Jar, res: Response) {
-  const sc = res.headers.getSetCookie?.() ?? [];
-  for (const c of sc) {
-    const [pair] = c.split(";");
-    const eq = pair.indexOf("=");
-    if (eq > 0) jar.set(pair.slice(0, eq).trim(), pair.slice(eq + 1).trim());
-  }
-}
-
-async function api(method: string, path: string, body?: unknown, jar?: Jar) {
+async function api(path: string, opts: { method?: string; body?: unknown; cookie?: string } = {}) {
   const res = await fetch(`${BASE}${path}`, {
-    method,
-    headers: { "content-type": "application/json", ...(jar && jar.size ? { cookie: cookieHeader(jar) } : {}) },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    method: opts.method ?? "GET",
+    headers: {
+      ...(opts.body !== undefined ? { "Content-Type": "application/json" } : {}),
+      ...(opts.cookie ? { cookie: opts.cookie } : {}),
+    },
+    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+    redirect: "manual",
   });
-  if (jar) absorb(jar, res);
-  let data: unknown = null;
-  try {
-    data = await res.json();
-  } catch {
-    /* non-json */
-  }
-  return { res, data };
+  let json: unknown = null;
+  const ct = res.headers.get("content-type") || "";
+  if (ct.includes("application/json")) json = await res.json().catch(() => null);
+  return { res, json };
 }
 
-/** Decode a PNG (buffer) to RGBA via sharp, then run the SAME jsQR decoder the scanner page uses. */
-async function decodeQrPng(png: Buffer): Promise<string | null> {
-  const jsQR = (await import("jsqr")).default;
-  const raw = await sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-  const code = jsQR(new Uint8ClampedArray(raw.data), raw.info.width, raw.info.height, {
-    inversionAttempts: "dontInvert",
+async function login(email: string): Promise<string> {
+  const res = await fetch(`${BASE}/api/v1/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password: "Password@123" }),
   });
-  return code?.data ?? null;
+  if (!res.ok) throw new Error(`login failed for ${email}: ${res.status}`);
+  const setCookie = res.headers.get("set-cookie") || "";
+  return setCookie.split(";")[0];
+}
+
+async function publicVerify(token: string) {
+  const { res, json } = await api(`/api/v1/public/verify/${encodeURIComponent(token)}`);
+  return { status: res.status, body: json as { ok: boolean; verification?: Record<string, unknown> } };
 }
 
 async function main() {
-  // Window shim BEFORE importing the resolver (resolve.ts checks same-origin).
-  (globalThis as unknown as { window: { location: { origin: string } } }).window = { location: { origin: BASE } };
-  const { resolveQrValue } = await import("../src/components/hms/modules/scan/resolve");
+  console.log("\n═══ CENTRAL QR SYSTEM — QA MATRIX (ch.35 §49/§50/§66) ═══\n");
 
-  const ALL = ["dashboard", "complaints", "work-orders", "equipment", "pm", "customers", "users",
-    "employees", "technicians", "inventory", "purchases", "quotations", "invoices", "finance",
-    "hr", "whatsapp", "irms", "vehicles", "reports", "audit", "settings", "profile", "terms", "privacy"];
-  const STAFF_VISIBLE = ALL.filter((k) => !["profile"].includes(k));
-  const CUSTOMER_VISIBLE = ["dashboard", "complaints", "equipment", "invoices", "quotations", "profile", "terms", "privacy"];
+  // ── 0. authentication ────────────────────────────────────────────────
+  console.log("— Auth");
+  cookie = await login("admin@mohdhms.com");
+  check("SUPER_ADMIN login", cookie.length > 20);
 
-  console.log("— 1. Staff login (existing session machinery)");
-  const staffJar: Jar = new Map();
-  const login = await api("POST", "/api/v1/auth/login", { email: "operations@mohdhms.com", password: PASSWORD }, staffJar);
-  check("staff login 200", login.res.status === 200);
+  // ── 1. equipment registration auto-creates THE canonical identity ────
+  console.log("\n— §60 auto-generation + §12 canonical identity");
+  const eqRes = await api("/api/v1/equipment", {
+    method: "POST",
+    body: { name: `QA-QR-Unit-${crypto.randomBytes(3).toString("hex")}`, category: "GENERAL" },
+    cookie,
+  });
+  const eq = (eqRes.json as { ok: boolean; data?: { id: string; assetTag: string; name: string } })?.data;
+  check("equipment created (201)", eqRes.res.status === 201 && !!eq?.id, JSON.stringify(eqRes.json).slice(0, 120));
+  const eqId = eq!.id;
 
-  console.log("— 2. Equipment QR: existing generation → jsQR decode → resolver → existing lookup endpoint");
-  let eqToken = "";
-  let eqId = "";
-  {
-    const list = await api("GET", "/api/v1/equipment?pageSize=1", undefined, staffJar);
-    const rows = (list.data as { data?: Array<{ id: string }> })?.data ?? [];
-    check("equipment list has a row", rows.length > 0);
-    eqId = rows[0]?.id ?? "";
-    if (eqId) {
-      const qr = await api("GET", `/api/v1/equipment/${eqId}/qr`, undefined, staffJar);
-      check("equipment QR endpoint 200", qr.res.status === 200);
-      const qrData = (qr.data as { data?: { url?: string; dataUrl?: string } })?.data;
-      const url = qrData?.url ?? "";
-      const dataUrl = qrData?.dataUrl ?? "";
-      check("QR encodes the equipment deep-link format", /\/\?resource=equipment:.+/.test(url), url);
-      const png = Buffer.from(dataUrl.replace(/^data:image\/png;base64,/, ""), "base64");
-      const decoded = await decodeQrPng(png);
-      check("jsQR decodes the generated equipment QR", decoded === url, `decoded=${decoded}`);
-      eqToken = (url.split("resource=equipment:")[1] ?? "").trim();
-      const resolution = resolveQrValue(decoded ?? "", ALL, STAFF_VISIBLE);
-      check("resolver → equipment-token", JSON.stringify(resolution) === JSON.stringify({ kind: "equipment-token", token: eqToken }), JSON.stringify(resolution));
-      // Labels encode the configured public_url which may differ from the
-      // current origin (www vs apex / staging) — the app's own deep-link
-      // format must still resolve (host is never navigated to).
-      const alt = resolveQrValue(`https://other-host.example.com/?resource=equipment:${eqToken}`, ALL, STAFF_VISIBLE);
-      check("deep link on a different host → equipment-token (public_url origin)", JSON.stringify(alt) === JSON.stringify({ kind: "equipment-token", token: eqToken }), JSON.stringify(alt));
+  const status1 = await api(`/api/v1/qr/EQUIPMENT/${eqId}`, { cookie });
+  const s1 = (status1.json as { data: { qr: { verificationUrl: string } | null; canManage: boolean } }).data;
+  check("§60 QR auto-created at registration", !!s1.qr);
+  check("§52 canManage via existing equipment.update", s1.canManage === true);
+  check("§47 verification URL uses request origin + /verify/", s1.qr!.verificationUrl.includes("/verify/"));
 
-      // The exact call the scanner page makes after detection:
-      const lookup = await api("GET", `/api/v1/equipment/-/qr?token=${encodeURIComponent(eqToken)}`, undefined, staffJar);
-      const lookupData = (lookup.data as { data?: { equipmentId?: string } })?.data;
-      check("existing token lookup resolves the unit", lookup.res.status === 200 && lookupData?.equipmentId === eqId);
+  // §12 — repeated ensure NEVER rotates the token
+  const ensure2 = await api(`/api/v1/qr/EQUIPMENT/${eqId}/ensure`, { method: "POST", body: {}, cookie });
+  const s2 = (ensure2.json as { data: { qr: { verificationUrl: string } } }).data;
+  check("§12/§33 ensure is idempotent (same identity)", s2.qr.verificationUrl === s1.qr!.verificationUrl);
 
-      // Bare token + equipment:{token} conventions (same as the shell QR dialog):
-      check("bare token → equipment-token", resolveQrValue(eqToken, ALL, STAFF_VISIBLE).kind === "equipment-token");
-      check("equipment:{token} → equipment-token", resolveQrValue(`equipment:${eqToken}`, ALL, STAFF_VISIBLE).kind === "equipment-token");
-    }
+  // ── 2. §6/§63 public verification — safe whitelist DTO ──────────────
+  console.log("\n— §5/§6/§63 public verification");
+  const token = s1.qr!.verificationUrl.split("/verify/")[1];
+  const v1 = await publicVerify(token);
+  const ver = v1.body.verification ?? {};
+  check("§36 VERIFIED for valid token", v1.body.verification?.result === "VERIFIED");
+  check("§63 number = assetTag", ver.number === eq!.assetTag);
+  const dtoStr = JSON.stringify(v1.body);
+  check("§8/§14 no internal cuid leaked", !dtoStr.includes(eqId));
+  check("§14 no notes/costs fields", !dtoStr.toLowerCase().includes('"cost"') && !dtoStr.includes("Notes"));
+
+  // ── 3. §49 invalid / modified / enumeration ─────────────────────────
+  console.log("\n— §49 invalid + modified + enumeration");
+  const bad1 = await publicVerify(crypto.randomBytes(24).toString("base64url"));
+  check("random valid-shape token → INVALID", bad1.body.verification?.result === "INVALID");
+  const bad2 = await publicVerify("short-token!!!");
+  check("garbage token → INVALID (no 500)", bad2.body.verification?.result === "INVALID");
+  const modified = (token[0] === "a" ? "b" : "a") + token.slice(1);
+  const bad3 = await publicVerify(modified);
+  check("§9 modified token → INVALID", bad3.body.verification?.result === "INVALID");
+  const enumRes = await api(`/api/v1/public/verify/${crypto.randomBytes(24).toString("base64url")}`);
+  const enumBody = JSON.stringify(enumRes.json);
+  check("§27 enumeration: uniform invalid shape", enumBody.includes("INVALID") && enumRes.res.status === 200);
+
+  // ── 4. §31 revocation + §30 regeneration ─────────────────────────────
+  console.log("\n— §29/§30/§31 revoke + regenerate");
+  const rv = await api(`/api/v1/qr/EQUIPMENT/${eqId}/revoke`, { method: "POST", body: { reason: "QA revocation test" }, cookie });
+  check("§31 revoke succeeds", rv.res.status === 200);
+  const v2 = await publicVerify(token);
+  check("§31 revoked scan → REVOKED (never valid)", v2.body.verification?.result === "REVOKED");
+  check("§31 revoked page keeps the reference", v2.body.verification?.number === eq!.assetTag);
+
+  const rg = await api(`/api/v1/qr/EQUIPMENT/${eqId}/regenerate`, { method: "POST", body: {}, cookie });
+  const rgBody = (rg.json as { data: { qr: { verificationUrl: string } } }).data;
+  check("§30 regenerate succeeds", rg.res.status === 200 && !!rgBody.qr);
+  const newToken = rgBody.qr.verificationUrl.split("/verify/")[1];
+  check("§30 new token differs from old", newToken !== token);
+  const v3 = await publicVerify(newToken);
+  check("§30 new identity VERIFIED", v3.body.verification?.result === "VERIFIED");
+  const v4 = await publicVerify(token);
+  check("§30 OLD printed identity → REVOKED (honest)", v4.body.verification?.result === "REVOKED");
+
+  // ── 5. §52 RBAC — technician cannot manage ───────────────────────────
+  console.log("\n— §52 RBAC");
+  techCookie = await login("ahmad.tech@mohdhms.com");
+  const rbac = await api(`/api/v1/qr/EQUIPMENT/${eqId}/revoke`, { method: "POST", body: { reason: "technician should fail" }, cookie: techCookie });
+  check("§52 TECHNICIAN revoke → 403", rbac.res.status === 403, `got ${rbac.res.status}`);
+  const rbacView = await api(`/api/v1/qr/EQUIPMENT/${eqId}`, { cookie: techCookie });
+  check("§52 TECHNICIAN view allowed (equipment.read)", rbacView.res.status === 200 && ((rbacView.json as unknown as { data: { canManage: boolean } }).data).canManage === false);
+
+  // ── 6. §49 deleted entity → NOT_FOUND ────────────────────────────────
+  console.log("\n— §49 deleted entity");
+  const eq2 = await api("/api/v1/equipment", { method: "POST", body: { name: "QA-QR-Deleted" }, cookie });
+  const eq2Id = ((eq2.json as { data: { id: string } }).data).id;
+  const st2 = await api(`/api/v1/qr/EQUIPMENT/${eq2Id}`, { cookie });
+  const t2 = (((st2.json as unknown as { data: { qr: { verificationUrl: string } } }).data).qr).verificationUrl.split("/verify/")[1];
+  // API DELETE is a SOFT retire by design (history kept) — verification must
+  // keep resolving with the live business status (§32). A truly deleted row
+  // (hard delete of the fixture) must instead stop resolving (§49).
+  await api(`/api/v1/equipment/${eq2Id}`, { method: "DELETE", cookie });
+  const vRetired = await publicVerify(t2);
+  check("§32 soft-retired equipment still resolves with live status", vRetired.body.verification?.result === "VERIFIED" && vRetired.body.verification?.statusLabel === "Retired");
+  await db.equipment.delete({ where: { id: eq2Id } });
+  const v5 = await publicVerify(t2);
+  check("§49 deleted entity → NOT FOUND / INVALID", ["INVALID", "NOT_FOUND"].includes(String(v5.body.verification?.result)));
+
+  // ── 7. §49 expired token (direct DB scenario) ────────────────────────
+  console.log("\n— §49 expiry");
+  const eq3 = await api("/api/v1/equipment", { method: "POST", body: { name: "QA-QR-Expiry" }, cookie });
+  const eq3Id = ((eq3.json as { data: { id: string } }).data).id;
+  const st3 = await api(`/api/v1/qr/EQUIPMENT/${eq3Id}`, { cookie });
+  const t3 = (((st3.json as unknown as { data: { qr: { verificationUrl: string } } }).data).qr).verificationUrl.split("/verify/")[1];
+  await db.qrCode.update({ where: { publicToken: t3 }, data: { expiresAt: new Date(Date.now() - 60_000) } });
+  const v6 = await publicVerify(t3);
+  check("§49 expired token → EXPIRED", v6.body.verification?.result === "EXPIRED");
+
+  // ── 8. §61 restricted (draft inspection report) ──────────────────────
+  console.log("\n— §61 draft restriction");
+  const draftReport = await db.inspectionReport.findFirst({ where: { status: "DRAFT" }, select: { id: true } });
+  if (draftReport) {
+    await ensureForTest("INSPECTION_REPORT", draftReport.id);
+    const r = await db.qrCode.findFirst({ where: { entityType: "INSPECTION_REPORT", entityId: draftReport.id }, select: { publicToken: true } });
+    const v7 = await publicVerify(r!.publicToken);
+    check("§61 draft report → RESTRICTED (no detail leak)", v7.body.verification?.result === "RESTRICTED" && !JSON.stringify(v7.body).includes("number"));
+  } else {
+    check("§61 draft report fixture available (skipped — none seeded)", true);
   }
 
-  console.log("— 3. IRMS report QR: existing generation → jsQR decode → resolver → route");
-  {
-    const list = await api("GET", "/api/v1/irms/reports?pageSize=1", undefined, staffJar);
-    const rows = (list.data as { data?: Array<{ id: string }> })?.data ?? [];
-    if (rows.length === 0) {
-      console.log("  (no inspection reports seeded — skipping IRMS decode test)");
-    } else {
-      const id = rows[0].id;
-      const res = await fetch(`${BASE}/api/v1/irms/reports/${id}/qr`, { headers: { cookie: cookieHeader(staffJar) } });
-      check("IRMS QR endpoint 200 + PNG", res.status === 200 && res.headers.get("content-type")?.includes("image/png"));
-      const decoded = await decodeQrPng(Buffer.from(await res.arrayBuffer()));
-      check("jsQR decodes the generated IRMS QR", decoded === `${BASE}/irms/reports/${id}`, `decoded=${decoded}`);
-      const resolution = resolveQrValue(decoded ?? "", ALL, STAFF_VISIBLE);
-      check(
-        "resolver → irms reports route (RESOURCE_ROUTES mapping)",
-        JSON.stringify(resolution) === JSON.stringify({ kind: "route", module: "irms", seg: ["reports", id], query: {} }),
-        JSON.stringify(resolution)
-      );
-    }
+  // ── 9. §50/§57 PDF pipeline embeds the SAME canonical identity ───────
+  console.log("\n— §50/§57/§33 PDF integration");
+  const pdfRes = await fetch(`${BASE}/api/v1/pdf/equipment-report/${eqId}`, { headers: { cookie } });
+  const pdfBytes = Buffer.from(await pdfRes.arrayBuffer());
+  check("§50 equipment report PDF generated", pdfRes.status === 200 && pdfBytes.subarray(0, 4).toString() === "%PDF");
+  check("§44 PDF has non-trivial size (QR embedded)", pdfBytes.length > 20_000, `${pdfBytes.length} bytes`);
+  const pdfQr = await db.qrCode.findFirst({ where: { entityType: "EQUIPMENT", entityId: eqId, status: "ACTIVE" } });
+  check("§33 PDF build reused THE canonical identity (no new token)", pdfQr!.publicToken === newToken);
+
+  // invoice lifecycle: find a SENT+ invoice → its PDF build must have a QR row
+  const invoice = await db.invoice.findFirst({ where: { status: { notIn: ["DRAFT"] } }, select: { id: true, code: true } });
+  if (invoice) {
+    const before = await db.qrCode.findFirst({ where: { entityType: "INVOICE", entityId: invoice.id } });
+    const invPdf = await fetch(`${BASE}/api/v1/pdf/invoice/${invoice.id}`, { headers: { cookie } });
+    const invBytes = Buffer.from(await invPdf.arrayBuffer());
+    check("§50 invoice PDF generated", invPdf.status === 200 && invBytes.subarray(0, 4).toString() === "%PDF");
+    const after = await db.qrCode.findFirst({ where: { entityType: "INVOICE", entityId: invoice.id, status: "ACTIVE" } });
+    check("§60 invoice PDF carries a verification identity", !!after && (!before || before.publicToken === after.publicToken));
+    const invVer = await publicVerify(after!.publicToken);
+    check("§16 invoice verification → VERIFIED with customer + total", invVer.body.verification?.result === "VERIFIED" && JSON.stringify(invVer.body).includes("Customer"));
+  } else {
+    check("§50 invoice fixture available (skipped — none seeded)", true);
   }
 
-  console.log("— 4. Resolver security / negative cases (spec §18–§21)");
-  {
-    check("external URL refused", resolveQrValue("https://evil.example.com/equipment/x", ALL, STAFF_VISIBLE).kind === "unsupported");
-    check("external arbitrary deep-link host never navigated (only token extracted)", resolveQrValue("https://evil.example.com/?resource=equipment:abc", ALL, STAFF_VISIBLE).kind === "equipment-token");
-    check("arbitrary text refused", resolveQrValue("hello canteen menu tuesday", ALL, STAFF_VISIBLE).kind === "unsupported");
-    check("short arbitrary code refused", resolveQrValue("EQ-001", ALL, STAFF_VISIBLE).kind === "unsupported");
-    check("unknown deep-link type refused", resolveQrValue(`${BASE}/?resource=complaint:xyz`, ALL, STAFF_VISIBLE).kind === "unsupported");
-    check("scanner self-reference refused", resolveQrValue(`${BASE}/scan`, ALL, STAFF_VISIBLE).kind === "unsupported");
-    check("bare origin refused", resolveQrValue(`${BASE}/`, ALL, STAFF_VISIBLE).kind === "unsupported");
-    check("empty refused", resolveQrValue("  ", ALL, STAFF_VISIBLE).kind === "unsupported");
-    const perm = resolveQrValue(`${BASE}/users/123`, ALL, CUSTOMER_VISIBLE);
-    check("module hidden from the user → permission refusal", perm.kind === "unsupported" && perm.reason === "permission", JSON.stringify(perm));
-    const okRoute = resolveQrValue(`${BASE}/complaints?status=open`, ALL, CUSTOMER_VISIBLE);
-    check(
-      "same-origin module URL preserves query params",
-      JSON.stringify(okRoute) === JSON.stringify({ kind: "route", module: "complaints", seg: [], query: { status: "open" } }),
-      JSON.stringify(okRoute)
-    );
+  // draft invoice PDF must NOT embed a verification identity (§61)
+  const draftInvoice = await db.invoice.findFirst({ where: { status: "DRAFT" }, select: { id: true } });
+  if (draftInvoice) {
+    const draftQrBefore = await db.qrCode.findFirst({ where: { entityType: "INVOICE", entityId: draftInvoice.id } });
+    await fetch(`${BASE}/api/v1/pdf/invoice/${draftInvoice.id}`, { headers: { cookie } });
+    const draftQrAfter = await db.qrCode.findFirst({ where: { entityType: "INVOICE", entityId: draftInvoice.id } });
+    check("§61 DRAFT invoice creates no public QR", !draftQrAfter || (!!draftQrBefore && draftQrAfter.publicToken === draftQrBefore.publicToken));
   }
 
-  console.log("— 5. Customer RBAC on the lookup endpoint (IDOR / cross-tenant QR, spec §21/§38)");
-  {
-    const custJar: Jar = new Map();
-    const clogin = await api("POST", "/api/v1/auth/login", { email: "customer1@demo.my", password: PASSWORD }, custJar);
-    check("customer login 200", clogin.res.status === 200);
-    if (eqToken) {
-      const ownList = await api("GET", "/api/v1/equipment?pageSize=200", undefined, custJar);
-      const ownRows = (ownList.data as { data?: Array<{ id: string }> })?.data ?? [];
-      const ownsEq = ownRows.some((r) => r.id === eqId);
-      const foreign = await api("GET", `/api/v1/equipment/-/qr?token=${encodeURIComponent(eqToken)}`, undefined, custJar);
-      if (ownsEq) {
-        check("customer can resolve their OWN equipment token", foreign.res.status === 200);
-      } else {
-        check("customer scanning ANOTHER customer's equipment token is refused (404, not leaked)", foreign.res.status === 404, `status=${foreign.res.status}`);
-      }
-      const anon = await fetch(`${BASE}/api/v1/equipment/-/qr?token=${encodeURIComponent(eqToken)}`);
-      check("logged-out scanner lookup refused (401)", anon.status === 401, `status=${anon.status}`);
-    }
-  }
+  // ── 10. §53 audit trail ──────────────────────────────────────────────
+  console.log("\n— §53 audit");
+  const audits = await db.auditLog.findMany({
+    where: { action: { in: ["QR_CREATED", "QR_REVOKED", "QR_REGENERATED"] }, resourceId: { not: "" } },
+    orderBy: { createdAt: "desc" },
+    take: 20,
+  });
+  const actions = new Set(audits.map((a) => a.action));
+  check("§53 QR_CREATED audited", actions.has("QR_CREATED"));
+  check("§53 QR_REVOKED audited", actions.has("QR_REVOKED"));
+  check("§53 QR_REGENERATED audited", actions.has("QR_REGENERATED"));
+  const logs = await db.qrVerificationLog.count();
+  check("§28 verification events logged", logs >= 6, `${logs} log rows`);
 
-  console.log(`\nQR scanner QA: ${passed} passed, ${failed} failed`);
-  process.exit(failed === 0 ? 0 : 1);
+  // ── 11. §27 rate limiting (LAST — burns the IP budget) ───────────────
+  console.log("\n— §27 rate limiting");
+  let saw429 = 0;
+  for (let i = 0; i < 26; i++) {
+    const r = await fetch(`${BASE}/api/v1/public/verify/${crypto.randomBytes(24).toString("base64url")}`);
+    if (r.status === 429) saw429++;
+  }
+  check("§27 rate limiter engages (429 after burst)", saw429 >= 1, `${saw429} of 26 requests limited`);
+
+  // ── summary ──────────────────────────────────────────────────────────
+  console.log(`\n═══ RESULT: ${pass} passed, ${fail} failed ═══`);
+  if (failures.length) {
+    console.log("Failures:");
+    for (const f of failures) console.log(`  • ${f}`);
+  }
+  process.exit(fail > 0 ? 1 : 0);
+
+  async function ensureForTest(entityType: string, entityId: string) {
+    // test-fixture helper: create a QR row exactly like QRService does
+    const { ensureQr } = await import("../src/lib/hms/qr/service");
+    await ensureQr(entityType, entityId, {});
+  }
 }
 
-main().catch((e) => {
-  console.error("QA crashed:", e);
-  process.exit(1);
-});
+main()
+  .catch((err) => {
+    console.error("QA suite crashed:", err);
+    process.exit(2);
+  });

@@ -25,6 +25,7 @@ import { MODULE_EVENTS } from "@/lib/hms/realtime/matrix";
 import { PageShell } from "@/components/hms/shared/page-shell";
 import { EmptyState, ErrorState, LoadingState, PriorityBadge, StatusBadge } from "@/components/hms/shared/ui-bits";
 import { PdfButtons } from "@/components/hms/shared/pdf-buttons";
+import { QrSection } from "@/components/hms/shared/qr-section";
 import { humanize, PERMISSIONS, STATUS_TONE } from "@/lib/hms/constants";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -224,6 +225,9 @@ export function IrmsReportDetailPage({ id }: { id: string }) {
 
           {/* ── DETAILS ── */}
           <TabsContent value="details" className="space-y-4">
+            {/* Central QR verification identity (ch.35 §20) — final approved
+                reports are publicly verifiable; drafts stay restricted. */}
+            <QrSection entityType="INSPECTION_REPORT" entityId={detail.id} label="QR Verification — inspection report authenticity" />
             <Card className="shadow-sm">
               <CardContent className="grid grid-cols-2 gap-4 p-4 text-sm sm:grid-cols-3 sm:p-5">
                 <Kv label="Inspection date" value={fmtDate(detail.inspectionDate)} />

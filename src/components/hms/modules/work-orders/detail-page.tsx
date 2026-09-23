@@ -12,6 +12,7 @@ import { PageShell } from "@/components/hms/shared/page-shell";
 import { PriorityBadge, StatusBadge, LoadingState, EmptyState, ErrorState } from "@/components/hms/shared/ui-bits";
 import { WorkflowTimeline } from "@/components/hms/shared/workflow-timeline";
 import { PdfButtons } from "@/components/hms/shared/pdf-buttons";
+import { QrSection } from "@/components/hms/shared/qr-section";
 import { PERMISSIONS, humanize } from "@/lib/hms/constants";
 import { navigateTo } from "@/lib/hms/router";
 import { customerLabel, money, fmtDate, fmtDateTime, toCents } from "@/lib/hms/format";
@@ -314,6 +315,9 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
       <div className="grid gap-4 lg:grid-cols-3">
         {/* ── Main column ── */}
         <div className="lg:col-span-2 space-y-4">
+          {/* Central QR verification identity (ch.35 §18) */}
+          <QrSection entityType="WORK_ORDER" entityId={detail.id} label="QR Verification — work order authenticity" />
+
           {/* §19 — the originating complaint (real PostgreSQL relationship,
               never a fake linked value) with an in-router View Complaint. */}
           {detail.complaint ? (

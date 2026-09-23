@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { HistorySection, type EquipmentDetail, type HistoryItem } from "./shared";
 import { PdfButtons } from "@/components/hms/shared/pdf-buttons";
+import { QrSection } from "@/components/hms/shared/qr-section";
 
 type PmPlanLite = { id: string; code: string; name: string; frequency: string; priority: string | null; active: boolean; nextDueDate: string | null };
 
@@ -172,6 +173,15 @@ export function EquipmentDetailPage({ id }: { id: string }) {
             </div>
           ) : null}
         </div>
+
+        {/* Central QR verification identity (ch.35 §14/§15/§29) — view, download,
+            print the physical label, regenerate/revoke for authorized roles. */}
+        <QrSection
+          entityType="EQUIPMENT"
+          entityId={detail.id}
+          label="QR Verification — physical asset label"
+          printLabel={{ title: detail.name, subtitle: detail.location?.name ?? undefined, reference: detail.assetTag }}
+        />
 
         {/* §58 — Preventive maintenance schedule (linked plans + next due) */}
         {pmPlans ? (

@@ -13,6 +13,7 @@ import { PageShell } from "@/components/hms/shared/page-shell";
 import { PriorityBadge, StatusBadge, LoadingState, EmptyState, ErrorState } from "@/components/hms/shared/ui-bits";
 import { WorkflowTimeline } from "@/components/hms/shared/workflow-timeline";
 import { PdfButtons } from "@/components/hms/shared/pdf-buttons";
+import { QrSection } from "@/components/hms/shared/qr-section";
 import { PERMISSIONS, humanize } from "@/lib/hms/constants";
 import { customerLabel, fmtDateTime } from "@/lib/hms/format";
 import { useRealtimeEvent } from "@/lib/hms/realtime/hooks";
@@ -174,6 +175,9 @@ export function ComplaintDetailPage({ id }: { id: string }) {
       <div className="grid gap-4 lg:grid-cols-3">
         {/* Main column */}
         <div className="lg:col-span-2 space-y-4">
+          {/* Central QR verification identity (ch.35 §19) */}
+          <QrSection entityType="COMPLAINT" entityId={detail.id} label="QR Verification — complaint record" />
+
           {/* ── Chapter 12 — conversion display. The linked Work Order itself is
               the conversion indicator — there is intentionally NO "Converted:
               YES" flag anywhere. The WO code opens the REAL work order detail

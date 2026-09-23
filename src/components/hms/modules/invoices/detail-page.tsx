@@ -16,6 +16,7 @@ import { PageShell } from "@/components/hms/shared/page-shell";
 import { StatusBadge, LoadingState, EmptyState, ErrorState } from "@/components/hms/shared/ui-bits";
 import { WorkflowTimeline } from "@/components/hms/shared/workflow-timeline";
 import { PdfButtons } from "@/components/hms/shared/pdf-buttons";
+import { QrSection } from "@/components/hms/shared/qr-section";
 import { PERMISSIONS } from "@/lib/hms/constants";
 import { customerLabel, fmtDate, money } from "@/lib/hms/format";
 import { useRealtimeEvent } from "@/lib/hms/realtime/hooks";
@@ -157,6 +158,10 @@ export function InvoiceDetailPage({ id }: { id: string }) {
         <div className="rounded-xl border bg-card shadow-sm p-4 sm:p-6">
           <DocumentPreview inv={detail} company={company} />
         </div>
+
+        {/* Central QR verification identity (ch.35 §16) — scans resolve the
+            live invoice against PostgreSQL; revoke for cancelled documents. */}
+        <QrSection entityType="INVOICE" entityId={detail.id} label="QR Verification — online invoice authenticity" />
 
         {detail.quotation || detail.workOrders.length > 0 ? (
           <div className="rounded-xl border bg-card shadow-sm p-4 sm:p-5 text-sm">

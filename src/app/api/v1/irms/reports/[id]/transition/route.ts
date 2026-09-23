@@ -9,6 +9,7 @@ import { audit, notify, notifyRole } from "@/lib/hms/services";
 import { emit } from "@/lib/hms/workflows/bus";
 import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 import { buildSnapshot, type TxClient } from "@/lib/hms/irms/storage";
+import { ensureQr } from "@/lib/hms/qr/service";
 
 function withId(fn: (id: string, ctx: { req: NextRequest; user: SessionUser; requestId: string }) => Promise<NextResponse>) {
   return async (req: NextRequest, ctx: { params: Promise<{ id: string }> }) => {
@@ -122,6 +123,13 @@ export const POST = withId(
         }
         return row;
       });
+
+      // Central QR identity on final approval (ch.35 §20/§60/§61) — drafts are
+      // never publicly verifiable; failure is isolated from the business op.
+      if (input.to === "APPROVED") {
+        await ensureQr("INSPECTION_REPORT", id, { issuedById: user.id, auditContext: "report-approved" });
+      }
+
       return updated;
     };
 

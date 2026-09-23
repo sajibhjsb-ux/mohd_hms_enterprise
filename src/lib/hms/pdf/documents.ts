@@ -17,7 +17,7 @@ import { fmtDate, fmtDateTime, money, customerLabel } from "@/lib/hms/format";
 import { PdfDoc, safeFilename, type DocHeaderInfo, type TableCol, type TableCell } from "./engine";
 import { canonicalPhotoOrder, readVariantFile } from "@/lib/hms/irms/storage";
 import type { Branding } from "./branding";
-import QRCode from "qrcode";
+import { pdfQrBadge } from "@/lib/hms/qr/service";
 
 export type PdfRequestUser = { id: string; role: string; customerId: string | null };
 
@@ -70,7 +70,7 @@ const workOrder: DocumentDef = {
   docTitle: "Work Order",
   permission: PERMISSIONS.work_orders_read,
   filenameLabel: "Work-Order",
-  async load(id, user, branding) {
+  async load(id, user, branding, origin) {
     const wo = await db.workOrder.findUnique({
       where: { id },
       include: {
@@ -85,6 +85,10 @@ const workOrder: DocumentDef = {
     if (!wo) throw Errors.notFound("Work order not found.");
     assertVisible(wo.customerId, user, "Work order");
 
+    // Central verification QR (ch.35 §16-§21) — ONE hook, identity created
+    // once and reused across every regeneration (§12/§33).
+    const qr = await pdfQrBadge("WORK_ORDER", id, { status: wo.status, origin, reference: wo.code });
+
     return {
       header: {
         company: branding.company,
@@ -95,7 +99,7 @@ const workOrder: DocumentDef = {
         meta: [["Status", humanize(wo.status)], ["Priority", humanize(wo.priority)]],
       },
       filename: safeFilename(`MOHD-HMS-Work-Order-${wo.code}.pdf`),
-      render: (d) => {
+      render: async (d) => {
         d.kvGrid([
           ["Work Order", wo.code],
           ["Status", humanize(wo.status)],
@@ -179,6 +183,7 @@ const workOrder: DocumentDef = {
         if (wo.notes?.trim()) d.notesBlock("Notes", wo.notes);
         d.banner(wo.customerConfirmed ? `Customer confirmed on ${fmtDate(wo.confirmedAt)}` : "Customer confirmation pending", wo.customerConfirmed ? "green" : "muted");
         d.signatures([{ caption: "Technician signature" }, { caption: "Customer signature" }]);
+        if (qr) await d.qr(qr.png, { reference: qr.reference });
       },
     };
   },
@@ -191,7 +196,7 @@ const complaint: DocumentDef = {
   docTitle: "Complaint Report",
   permission: PERMISSIONS.complaints_read,
   filenameLabel: "Complaint",
-  async load(id, user, branding) {
+  async load(id, user, branding, origin) {
     const c = await db.complaint.findUnique({
       where: { id },
       include: {
@@ -204,6 +209,8 @@ const complaint: DocumentDef = {
     });
     if (!c) throw Errors.notFound("Complaint not found.");
     assertVisible(c.customerId, user, "Complaint");
+
+    const qr = await pdfQrBadge("COMPLAINT", id, { status: c.status, origin, reference: c.code });
 
     // Resolve timeline actor names in one query (changedById is a bare string).
     const actorIds = [...new Set(c.statusHistory.map((h) => h.changedById).filter((v): v is string => !!v))];
@@ -220,7 +227,7 @@ const complaint: DocumentDef = {
         meta: [["Status", humanize(c.status)], ["Priority", humanize(c.priority)]],
       },
       filename: safeFilename(`MOHD-HMS-Complaint-${c.code}.pdf`),
-      render: (d) => {
+      render: async (d) => {
         d.kvGrid([
           ["Complaint", c.code],
           ["Status", humanize(c.status)],
@@ -272,6 +279,7 @@ const complaint: DocumentDef = {
             ])
           );
         }
+        if (qr) await d.qr(qr.png, { reference: qr.reference });
       },
     };
   },
@@ -329,14 +337,11 @@ const inspectionReport: DocumentDef = {
       signatureItems.push({ caption: "Inspector signature", name: r.inspector?.user.name }, { caption: "Approved by" });
     }
 
-    // QR — same absolute URL as the QR endpoint (§16).
-    const qrUrl = `${origin || "http://localhost:3000"}/irms/reports/${id}`;
-    let qrPng: Buffer | null = null;
-    try {
-      qrPng = await QRCode.toBuffer(qrUrl, { width: 256, margin: 1, errorCorrectionLevel: "M" });
-    } catch {
-      qrPng = null; // QR must never fail the document
-    }
+    // QR — centralized verification identity (ch.35 §20): the SAME canonical
+    // token the public verifier resolves, replacing the previous inline
+    // deep-link QR (§67: no separate QR logic inside IRMS). Created only for
+    // final APPROVED/ARCHIVED reports (§61).
+    const qr = await pdfQrBadge("INSPECTION_REPORT", id, { status: r.status, origin, reference: r.code });
 
     return {
       header: {
@@ -348,7 +353,7 @@ const inspectionReport: DocumentDef = {
         meta: [["Status", humanize(r.status)], ["Overall", humanize(r.overallCondition)], ["Revision", `Rev ${r.revision}`]],
       },
       filename: safeFilename(`MOHD-HMS-Inspection-Report-${r.code}.pdf`),
-      render: (d) => {
+      render: async (d) => {
         // Job information (actual DB fields — §17).
         d.kvGrid([
           ["Job Order No", r.jobOrderNo || "—"],
@@ -443,7 +448,7 @@ const inspectionReport: DocumentDef = {
             { emptyHint: "No approval history recorded yet." }
           );
           d.para(`Revision: Rev ${r.revision}${r.clientComment ? ` — Client comment: ${r.clientComment}` : ""}`, { size: 8.2, color: "muted" });
-          if (qrPng) await d.qr(qrPng, { caption: `Scan to open ${r.code}` });
+          if (qr) await d.qr(qr.png, { reference: qr.reference });
         })();
       },
     };
@@ -457,7 +462,7 @@ const quotation: DocumentDef = {
   docTitle: "Quotation",
   permission: PERMISSIONS.quotations_read,
   filenameLabel: "Quotation",
-  async load(id, user, branding) {
+  async load(id, user, branding, origin) {
     const q = await db.quotation.findUnique({
       where: { id },
       include: {
@@ -467,6 +472,8 @@ const quotation: DocumentDef = {
     });
     if (!q) throw Errors.notFound("Quotation not found.");
     assertVisible(q.customerId, user, "Quotation");
+
+    const qr = await pdfQrBadge("QUOTATION", id, { status: q.status, origin, reference: q.code });
 
     return {
       header: {
@@ -478,7 +485,7 @@ const quotation: DocumentDef = {
         meta: [["Status", humanize(q.status)], ["Valid Until", fmtDate(q.validUntil)]],
       },
       filename: safeFilename(`MOHD-HMS-Quotation-${q.code}.pdf`),
-      render: (d) => {
+      render: async (d) => {
         d.kvGrid([
           ["Quotation", q.code],
           ["Date", fmtDate(q.quotationDate)],
@@ -512,6 +519,7 @@ const quotation: DocumentDef = {
         if (q.notes?.trim()) d.notesBlock("Notes", q.notes);
         if (q.terms?.trim()) d.notesBlock("Terms & Conditions", q.terms);
         d.signatures([{ caption: "For MOHD.HMS Enterprise" }, { caption: "Customer acceptance" }]);
+        if (qr) await d.qr(qr.png, { reference: qr.reference });
       },
     };
   },
@@ -524,7 +532,7 @@ const invoice: DocumentDef = {
   docTitle: "Invoice",
   permission: PERMISSIONS.invoices_read,
   filenameLabel: "Invoice",
-  async load(id, user, branding) {
+  async load(id, user, branding, origin) {
     const inv = await db.invoice.findUnique({
       where: { id },
       include: {
@@ -538,6 +546,8 @@ const invoice: DocumentDef = {
     if (!inv) throw Errors.notFound("Invoice not found.");
     assertVisible(inv.customerId, user, "Invoice");
 
+    const qr = await pdfQrBadge("INVOICE", id, { status: inv.status, origin, reference: inv.code });
+
     return {
       header: {
         company: branding.company,
@@ -548,7 +558,7 @@ const invoice: DocumentDef = {
         meta: [["Status", humanize(inv.status)], ["Due", fmtDate(inv.dueDate)]],
       },
       filename: safeFilename(`MOHD-HMS-Invoice-${inv.code}.pdf`),
-      render: (d) => {
+      render: async (d) => {
         d.kvGrid([
           ["Invoice", inv.code],
           ["Invoice Date", fmtDate(inv.invoiceDate)],
@@ -604,6 +614,7 @@ const invoice: DocumentDef = {
         d.banner("Currency: BND (Brunei Darussalam). All amounts in Brunei Dollars.");
         if (inv.notes?.trim()) d.notesBlock("Notes", inv.notes);
         if (inv.terms?.trim()) d.notesBlock("Terms", inv.terms);
+        if (qr) await d.qr(qr.png, { reference: qr.reference });
       },
     };
   },
@@ -616,7 +627,7 @@ const purchaseOrder: DocumentDef = {
   docTitle: "Purchase Order",
   permission: PERMISSIONS.purchases_read,
   filenameLabel: "Purchase-Order",
-  async load(id, user, branding) {
+  async load(id, user, branding, origin) {
     const po = await db.purchaseOrder.findUnique({
       where: { id },
       include: {
@@ -625,6 +636,8 @@ const purchaseOrder: DocumentDef = {
       },
     });
     if (!po) throw Errors.notFound("Purchase order not found.");
+
+    const qr = await pdfQrBadge("PURCHASE_ORDER", id, { status: po.status, origin, reference: po.code });
 
     return {
       header: {
@@ -636,7 +649,7 @@ const purchaseOrder: DocumentDef = {
         meta: [["Status", humanize(po.status)]],
       },
       filename: safeFilename(`MOHD-HMS-Purchase-Order-${po.code}.pdf`),
-      render: (d) => {
+      render: async (d) => {
         d.kvGrid([
           ["Purchase Order", po.code],
           ["Order Date", fmtDate(po.orderDate)],
@@ -677,6 +690,7 @@ const purchaseOrder: DocumentDef = {
         if (po.approvedAt) d.para(`Approved on ${fmtDateTime(po.approvedAt)}`, { size: 8.5, color: "muted" });
         if (po.notes?.trim()) d.notesBlock("Notes", po.notes);
         d.signatures([{ caption: "Approved by" }, { caption: "Received by" }]);
+        if (qr) await d.qr(qr.png, { reference: qr.reference });
       },
     };
   },
@@ -689,7 +703,7 @@ const equipmentReport: DocumentDef = {
   docTitle: "Equipment Report",
   permission: PERMISSIONS.equipment_read,
   filenameLabel: "Equipment-Report",
-  async load(id, user, branding) {
+  async load(id, user, branding, origin) {
     const e = await db.equipment.findUnique({
       where: { id },
       include: {
@@ -703,6 +717,10 @@ const equipmentReport: DocumentDef = {
     if (!e) throw Errors.notFound("Equipment not found.");
     assertVisible(e.customerId, user, "Equipment");
 
+    // The equipment report carries the SAME canonical EQUIPMENT identity as
+    // the physical label (§12/§14) — one asset, one QR identity.
+    const qr = await pdfQrBadge("EQUIPMENT", id, { status: e.status, origin, reference: e.assetTag });
+
     return {
       header: {
         company: branding.company,
@@ -713,7 +731,7 @@ const equipmentReport: DocumentDef = {
         meta: [["Status", humanize(e.status)]],
       },
       filename: safeFilename(`MOHD-HMS-Equipment-Report-${e.assetTag}.pdf`),
-      render: (d) => {
+      render: async (d) => {
         d.kvGrid([
           ["Asset Tag", e.assetTag],
           ["Name", e.name],
@@ -766,6 +784,7 @@ const equipmentReport: DocumentDef = {
             e.complaints.map((c) => [c.code, c.title, humanize(c.status), fmtDate(c.createdAt)])
           );
         }
+        if (qr) await d.qr(qr.png, { reference: qr.reference });
       },
     };
   },
@@ -778,7 +797,7 @@ const pmTask: DocumentDef = {
   docTitle: "PM Service Sheet",
   permission: PERMISSIONS.pm_read,
   filenameLabel: "PM-Task",
-  async load(id, user, branding) {
+  async load(id, user, branding, origin) {
     const t = await db.pmTask.findUnique({
       where: { id },
       include: {
@@ -789,6 +808,8 @@ const pmTask: DocumentDef = {
       },
     });
     if (!t) throw Errors.notFound("PM task not found.");
+
+    const qr = await pdfQrBadge("PM_TASK", id, { status: t.status, origin, reference: t.code });
 
     const done = t.checklist.filter((c) => c.done).length;
     return {
@@ -801,7 +822,7 @@ const pmTask: DocumentDef = {
         meta: [["Status", humanize(t.status)]],
       },
       filename: safeFilename(`MOHD-HMS-PM-Task-${t.code}.pdf`),
-      render: (d) => {
+      render: async (d) => {
         d.kvGrid([
           ["Task", t.code],
           ["Status", humanize(t.status)],
@@ -828,6 +849,7 @@ const pmTask: DocumentDef = {
         }
         if (t.notes?.trim()) d.notesBlock("Technician Notes", t.notes);
         d.signatures([{ caption: "Technician signature", name: t.technician?.user.name }, { caption: "Supervisor review" }]);
+        if (qr) await d.qr(qr.png, { reference: qr.reference });
       },
     };
   },
@@ -840,7 +862,7 @@ const paymentReceipt: DocumentDef = {
   docTitle: "Payment Receipt",
   permission: PERMISSIONS.payments_read,
   filenameLabel: "Payment-Receipt",
-  async load(id, user, branding) {
+  async load(id, user, branding, origin) {
     const p = await db.payment.findUnique({
       where: { id },
       include: {
@@ -861,6 +883,7 @@ const paymentReceipt: DocumentDef = {
       : null;
 
     const inv = p.invoice;
+    const qr = await pdfQrBadge("PAYMENT_RECEIPT", id, { status: p.status, origin, reference: p.code });
     return {
       header: {
         company: branding.company,
@@ -871,7 +894,7 @@ const paymentReceipt: DocumentDef = {
         meta: [["Method", humanize(p.method)]],
       },
       filename: safeFilename(`MOHD-HMS-Payment-Receipt-${p.code}.pdf`),
-      render: (d) => {
+      render: async (d) => {
         d.banner(`Payment received with thanks — ${money(p.amountCents)}`, "green");
         d.kvGrid([
           ["Receipt", p.code],
@@ -895,6 +918,7 @@ const paymentReceipt: DocumentDef = {
         if (p.note?.trim()) d.notesBlock("Remarks", p.note);
         d.banner("Currency: BND (Brunei Darussalam). All amounts in Brunei Dollars.");
         d.signatures([{ caption: "For MOHD.HMS Enterprise" }, { caption: "Payer acknowledgement" }]);
+        if (qr) await d.qr(qr.png, { reference: qr.reference });
       },
     };
   },

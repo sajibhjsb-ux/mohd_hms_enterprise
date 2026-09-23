@@ -11,6 +11,7 @@ import type { SessionUser } from "@/lib/hms/auth";
 import { emit } from "@/lib/hms/workflows/bus";
 import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 import { formatCurrency } from "@/lib/hms/format";
+import { ensureQr } from "@/lib/hms/qr/service";
 
 const bodySchema = z.object({
   action: z.enum(["send", "cancel"]),
@@ -52,6 +53,10 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     });
 
     if (body.action === "send") {
+      // Central QR identity on finalization (ch.35 §60/§61) — infrastructure
+      // only, never mutates the invoice (§59); failure is isolated.
+      await ensureQr("INVOICE", id, { issuedById: user.id, auditContext: "invoice-sent" });
+
       const portalUserId = invoice.customer.portalUser?.id;
       if (portalUserId) {
         await notify({

@@ -2990,3 +2990,65 @@ model AiUsageLog {
   @@index([feature])
   @@index([userId])
 }
+
+// ─────────────────────── CENTRAL QR SYSTEM (ch.35) ───────────────────────
+// ONE canonical QR identity per verifiable record (spec §3/§10/§12). Modules
+// never create QR codes themselves — everything flows through QRService
+// (src/lib/hms/qr/service.ts). Superseded tokens remain as REVOKED rows so a
+// printed label/PDF always resolves to an honest "revoked" state — never to a
+// different record (§30/§31). publicToken is an opaque 32-char url-safe random
+// value: no business data ever lives inside a QR (§8); unique + indexed for a
+// single-lookup verification (§54).
+
+model QrCode {
+  id               String    @id @default(cuid())
+  publicToken      String    @unique
+  // EQUIPMENT | INVOICE | QUOTATION | WORK_ORDER | COMPLAINT |
+  // INSPECTION_REPORT | PAYMENT_RECEIPT | PURCHASE_ORDER | PM_TASK
+  entityType       String
+  entityId         String
+  documentVersion  Int       @default(1)
+  // DOCUMENT | EQUIPMENT (drives the public DTO shape §6)
+  verificationType String    @default("DOCUMENT")
+  // ACTIVE | REVOKED (expiry derived from expiresAt at verification time §7)
+  status           String    @default("ACTIVE")
+  issuedAt         DateTime  @default(now())
+  expiresAt        DateTime?
+  revokedAt        DateTime?
+  revokedById      String?
+  revokedReason    String    @default("")
+  // HMAC-SHA256 over the canonical payload (§9) — server-side secret only.
+  signature        String    @default("")
+  verifyCount      Int       @default(0)
+  lastVerifiedAt   DateTime?
+  createdById      String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  logs QrVerificationLog[]
+
+  @@index([entityType, entityId])
+  @@index([status])
+  @@map("qr_codes")
+}
+
+// §28 — verification audit trail. Privacy-conscious: IP stored as a short
+// hash only (never the raw address), user-agent kept as a bounded snippet.
+model QrVerificationLog {
+  id             String   @id @default(cuid())
+  qrCodeId       String?
+  qrCode         QrCode?  @relation(fields: [qrCodeId], references: [id], onDelete: SetNull)
+  entityType     String   @default("")
+  entityId       String   @default("")
+  // VERIFIED | REVOKED | EXPIRED | CANCELLED | SUPERSEDED | RESTRICTED |
+  // NOT_FOUND | INVALID_TOKEN | INVALID_SIGNATURE | RATE_LIMITED | ERROR
+  result         String
+  requestContext String   @default("")
+  userId         String?
+  createdAt      DateTime @default(now())
+
+  @@index([qrCodeId])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("qr_verification_logs")
+}

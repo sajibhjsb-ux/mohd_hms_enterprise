@@ -606,21 +606,35 @@ export class PdfDoc {
     }
   }
 
-  /** Embed a QR PNG at the footer area of the FIRST page (contract §17). */
-  async qr(png: Buffer | Uint8Array, opts?: { caption?: string }): Promise<void> {
+  /** Central PDF QR component (ch.35 spec §21/§22/§23/§24/§43/§44) — THE one
+   *  QR placement used by EVERY document renderer (§67: no per-renderer QR
+   *  logic). Bottom-right of the last page by default (§24 — one QR per
+   *  document), or page 1 with placement:"first". The verification band is
+   *  reserved through the page-break floor, so totals, signatures, tables and
+   *  footers can never be overlapped (§23). Print-grade sizing (78pt) with
+   *  ECC-H source images stays readable after A4 printing and photocopying. */
+  async qr(png: Buffer | Uint8Array, opts?: { caption?: string; reference?: string; placement?: "first" | "last"; size?: number }): Promise<void> {
     if (!png || png.length === 0) return;
     const img = await this.embed(png);
     if (!img) return;
-    const size = 54;
-    const page = this.pages[0];
+    const size = Math.min(110, Math.max(54, opts?.size ?? 78));
+    const caption = singleLine(opts?.caption ?? "Scan to Verify").slice(0, 44);
+    const ref = opts?.reference ? singleLine(opts.reference).slice(0, 30) : "";
+
+    // Last-page placement (default): reserve the band — a fresh final page
+    // carries the QR alone when the document fills its last content page.
+    if (opts?.placement !== "first" && this.y < 50 + size + 10) this.addPage();
+    const page = opts?.placement === "first" ? this.pages[0] : this.page;
     const x = A4W - MARGIN - size;
     const y = 50;
-    page.drawRectangle({ x: x - 3, y: y - 3, width: size + 6, height: size + 6, color: WHITE, borderColor: LINE, borderWidth: 0.6 });
+    // white plate + hairline border guarantees contrast on any paper (§44)
+    page.drawRectangle({ x: x - 3, y: y - 3, width: size + 6, height: size + 6, color: WHITE, borderColor: LINE, borderWidth: 0.8 });
     page.drawImage(img, { x, y, width: size, height: size });
-    if (opts?.caption) {
-      const caption = singleLine(opts.caption).slice(0, 44);
-      const tw = this.font.widthOfTextAtSize(caption, 7);
-      page.drawText(caption, { x: x - 8 - tw, y: y + 22, size: 7, font: this.font, color: FAINT });
+    const capW = this.bold.widthOfTextAtSize(caption, 7.5);
+    page.drawText(caption, { x: x - 12 - capW, y: y + size / 2 + (ref ? 8 : 0), size: 7.5, font: this.bold, color: GREEN_INK });
+    if (ref) {
+      const refW = this.font.widthOfTextAtSize(ref, 7);
+      page.drawText(ref, { x: x - 12 - refW, y: y + size / 2 - 7, size: 7, font: this.font, color: MUTED });
     }
   }
 

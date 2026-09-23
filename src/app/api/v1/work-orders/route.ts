@@ -12,6 +12,7 @@ import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 import { dedupeSubmission } from "@/lib/hms/workflows/idempotency";
 import { PERMISSIONS, PRIORITIES } from "@/lib/hms/constants";
 import { WO_INCLUDE, WO_DETAIL_INCLUDE } from "./_lib";
+import { ensureQr } from "@/lib/hms/qr/service";
 
 const materialSchema = z.object({
   inventoryItemId: z.string().min(1).optional(),
@@ -220,6 +221,9 @@ export const POST = handler(
     }
     // Realtime (STEP 13/39): technician + staff + customer see the new WO live.
     await emit({ type: EVENT_TYPES.WORK_ORDER_CREATED, resourceType: "WORK_ORDER", resourceId: created.id, payload: { code, workOrderId: created.id, customerId: body.customerId }, actorType: "USER", actorId: user.id });
+
+    // Central QR identity at creation (ch.35 §60) — infrastructure only (§59).
+    await ensureQr("WORK_ORDER", created.id, { issuedById: user.id, auditContext: "work-order-created" });
 
     return ok(detailed ?? created, 201);
   },

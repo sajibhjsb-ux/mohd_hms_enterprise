@@ -15,6 +15,7 @@ import { assertTermsAccepted } from "@/lib/hms/legal/legal";
 import { dedupeSubmission } from "@/lib/hms/workflows/idempotency";
 import { emit } from "@/lib/hms/workflows/bus";
 import { EVENT_TYPES } from "@/lib/hms/workflows/types";
+import { ensureQr } from "@/lib/hms/qr/service";
 
 const createSchema = z.object({
   title: z.string().min(3, "Title must be at least 3 characters.").max(200),
@@ -153,6 +154,9 @@ export const POST = handler(
     ]);
     // Outbox: downstream workflows (urgency escalations, SLA tracking) key off this event.
     await emit({ type: EVENT_TYPES.COMPLAINT_CREATED, resourceType: "COMPLAINT", resourceId: created.id, payload: { code, priority: body.priority, customerId }, actorType: "USER", actorId: user.id });
+
+    // Central QR identity at creation (ch.35 §60) — infrastructure only (§59).
+    await ensureQr("COMPLAINT", created.id, { issuedById: user.id, auditContext: "complaint-created" });
 
     return ok(created, 201);
   },

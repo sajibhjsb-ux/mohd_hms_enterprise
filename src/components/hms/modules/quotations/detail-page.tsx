@@ -24,6 +24,7 @@ import {
 import { Check, Clock, Printer, Repeat, Send, Trash2, X } from "lucide-react";
 import { DocumentPreview, loadCompanyIdentity, type CompanyIdentity, type QuotationDetail, type QuotationRow } from "./shared";
 import { PdfButtons } from "@/components/hms/shared/pdf-buttons";
+import { QrSection } from "@/components/hms/shared/qr-section";
 
 function errMessage(e: unknown): string {
   return e instanceof ClientApiError ? e.message : "Something went wrong. Please try again.";
@@ -153,6 +154,11 @@ export function QuotationDetailPage({ id }: { id: string }) {
       <div className="lg:col-span-2">
         <div className="rounded-xl border bg-card shadow-sm p-4 sm:p-6">
           <DocumentPreview q={detail} company={company} />
+        </div>
+
+        {/* Central QR verification identity (ch.35 §17) */}
+        <div className="mt-4">
+          <QrSection entityType="QUOTATION" entityId={detail.id} label="QR Verification — online quotation authenticity" />
         </div>
       </div>
 

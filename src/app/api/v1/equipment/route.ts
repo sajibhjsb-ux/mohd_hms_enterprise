@@ -14,6 +14,7 @@ import { nextNumber, audit, notifyRole } from "@/lib/hms/services";
 import { emit } from "@/lib/hms/workflows/bus";
 import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 import { clientIp } from "@/lib/hms/rate-limit";
+import { ensureQr } from "@/lib/hms/qr/service";
 
 const EQUIPMENT_SELECT = {
   id: true,
@@ -162,6 +163,11 @@ export const POST = handler(
 
     // Realtime (STEP 10): equipment lists update live for staff + owning customer.
     await emit({ type: EVENT_TYPES.EQUIPMENT_UPDATED, resourceType: "EQUIPMENT", resourceId: equipment.id, payload: { assetTag: equipment.assetTag, name: equipment.name }, actorType: "USER", actorId: user.id });
+
+    // Central QR identity at registration (ch.35 §60) — infrastructure-only,
+    // never mutates the business record (§59); failure is isolated.
+    await ensureQr("EQUIPMENT", equipment.id, { verificationType: "EQUIPMENT", issuedById: user.id, auditContext: "equipment-registered" });
+
     return ok(equipment, 201);
   },
   { permission: PERMISSIONS.equipment_create }
