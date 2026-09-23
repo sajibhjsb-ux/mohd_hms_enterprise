@@ -344,8 +344,20 @@ io.on("connection", (socket: Socket) => {
 });
 
 function broadcastPresence() {
+  // Detailed presence stays staff-scoped (existing RBAC policy): names/roles
+  // are never pushed to customer sockets.
   io.to("staff").emit("presence:update", {
     presence: Array.from(presence.entries()).map(([userId, p]) => ({ userId, ...p })),
+  });
+  // Count-only presence for EVERY authenticated socket (the header's
+  // "● N Online" indicator). `io.emit` reaches only sockets that passed the
+  // authenticated handshake middleware — anonymous clients do not exist here.
+  // The count is UNIQUE USERS (presence.size), not raw sockets: multiple
+  // tabs/devices of one user (and the single-active-device policy) always
+  // collapse to one online user.
+  io.emit("presence:count", {
+    count: presence.size,
+    timestamp: new Date().toISOString(),
   });
 }
 

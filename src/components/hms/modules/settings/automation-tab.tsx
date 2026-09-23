@@ -133,6 +133,16 @@ export function AutomationTab() {
 
   const dirty = data ? Object.entries(draft).filter(([k, v]) => (data.settings[k] ?? "") !== v) : [];
 
+  // Same canonical presence calculation as the header pill: service.presence
+  // = unique online users (server-deduped). Header "● N Online" and the
+  // "Online now" diagnostic below are ONE source of truth (spec §22/§23).
+  const onlineNow = rt?.service
+    ? rt.service.presence.length === 0
+      ? "0 users"
+      : `${rt.service.presence.length} user${rt.service.presence.length === 1 ? "" : "s"} — ` +
+        rt.service.presence.map((p) => `${p.name} (${p.role.replace("_", " ").toLowerCase()})`).join(", ")
+    : null;
+
   const save = async () => {
     if (!dirty.length) return;
     setSaving(true);
@@ -224,11 +234,8 @@ export function AutomationTab() {
               </div>
               <div>Last broadcast: {rt?.service?.lastEventAt ? `${rt.service.lastEvent} · ${when(rt.service.lastEventAt)}` : "—"}</div>
               <div>Dispatcher tick: {whenMs(rt?.dispatcher.lastDispatchAt ?? null)}{rt?.dispatcher.lastError ? ` · error: ${rt.dispatcher.lastError}` : ""}</div>
-              <div>
-                Online now:{" "}
-                {rt?.service?.presence?.length
-                  ? rt.service.presence.map((p) => `${p.name} (${p.role.replace("_", " ").toLowerCase()})`).join(", ")
-                  : "—"}
+              <div data-testid="realtime-online-now">
+                Online now: {onlineNow ?? "—"}
               </div>
             </div>
           </CardContent>

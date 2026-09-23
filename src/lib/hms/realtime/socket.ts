@@ -20,6 +20,7 @@
 import { io, type Socket } from "socket.io-client";
 import {
   publishRealtimeEvent, publishRealtimeState, publishRealtimeResync,
+  publishPresenceCount,
   type RealtimeEvent, type RealtimeState,
 } from "./bus";
 
@@ -74,6 +75,14 @@ export function connectRealtime(): void {
   // Server asks us to reconcile (reply to realtime:sync).
   socket.on("realtime:resync", () => publishRealtimeResync("server-resync"));
 
+  // Backend-authoritative ONLINE USER COUNT (unique users, server-deduped —
+  // presence manager, never raw sockets). Pushed on every connect/disconnect
+  // and after revocations; the connection handler broadcasts it to every
+  // freshly connected socket, so the count arrives immediately on (re)connect.
+  socket.on("presence:count", (p: { count?: number }) => {
+    publishPresenceCount(typeof p?.count === "number" && Number.isFinite(p.count) ? p.count : null);
+  });
+
   // Server-enforced session revocation (logout / idle revoke / admin revoke /
   // single-device policy). The session is gone server-side — reconnecting with
   // the same cookie can only fail, so tear the singleton down cleanly instead
@@ -106,5 +115,9 @@ export function disconnectRealtime(): void {
   if (!socket) return;
   g.__hmsRealtimeSocket = undefined;
   socket.disconnect();
+  // The count belongs to a live socket — without one it is no longer current
+  // (§13: never present a stale count as fresh). Consumers decide how to
+  // render the null ("status unavailable"), never a fabricated 0.
+  publishPresenceCount(null);
   publishRealtimeState("DISCONNECTED");
 }
