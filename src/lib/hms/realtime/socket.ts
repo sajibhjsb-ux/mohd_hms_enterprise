@@ -1,7 +1,13 @@
 "use client";
 
 // MOHD.HMS ENTERPRISE — Realtime socket connection (client singleton).
-// socket.io transport through the gateway (`/?XTransformPort=3003`).
+// socket.io transport rides the app's own single production origin: the
+// browser connects to the same origin's `/socket.io` endpointhol, and Next's
+// rewrite (`/socket.io/:path* -> http://127.0.0.1:3003/:path*`) proxies BOTH
+// the engine.io HTTP polling handshake and the WebSocket upgrade to the
+// realtime service (verified in the standalone: rewrite destinations with a
+// protocol go through upgradeHandler -> proxyRequest -> HttpProxy({ws:true})
+// -> proxy.ws, so 1006-on-upgrade is resolved at the proxy, not the client).
 //
 // Spec coverage:
 //   STEP 8  — authenticated: the HttpOnly session cookie rides along on the
@@ -39,8 +45,13 @@ export function connectRealtime(): void {
   if (g.__hmsRealtimeSocket) return; // singleton — HMR/navigations reuse it
 
   publishRealtimeState("CONNECTING");
-  const socket = io("/?XTransformPort=3003", {
-    path: "/",
+  // Same-origin: the Next rewrite (`/socket.io/:path* -> http://127.0.0.1:3003/socket.io/:path*`)
+  // carries BOTH engine.io HTTP polling and the WebSocket upgrade (verified in the
+  // standalone — rewrite destinations with a protocol go through upgradeHandler →
+  // proxyRequest → HttpProxy({ws:true}) → proxy.ws). Dropped the Caddy-only
+  // `/?XTransformPort=3003` query transform: production's TCP router never applied it.
+  const socket = io("/", {
+    path: "/socket.io",
     // WebSocket first, polling fallback (proxy/failure tolerance, STEP 29/30).
     transports: ["websocket", "polling"],
     withCredentials: true, // HttpOnly session cookie → server-side auth

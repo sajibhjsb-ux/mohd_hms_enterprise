@@ -2,6 +2,22 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  // Realtime transport rides the app's single production origin: the
+  // standalone proxies BOTH engine.io HTTP polling and the WebSocket upgrade
+  // (upgradeHandler → proxyRequest → proxy.ws) to the external realtime
+  // service. Replaces the Caddy-only `?XTransformPort=3003` query transform,
+  // which production's TCP router never applied (see worklog STEP 29/30).
+  async rewrites() {
+    return [
+      {
+        source: "/socket.io/:path*",
+        // Strip the `/socket.io` prefix: the realtime service's socket.io server
+        // mounts at ROOT (path: "/", NOT "/socket.io" — see realtime-service
+        // index.ts:253-255), so engine.io traffic must land on `/?EIO=...`.
+        destination: "http://127.0.0.1:3003/:path*",
+      },
+    ];
+  },
   // Pin Turbopack's root to this project so stray lockfiles in parent dirs
   // (e.g. /home/hasan/package-lock.json) can never hijack the build — otherwise
   // the standalone server.js lands nested under .next/standalone/<rel-app>/
