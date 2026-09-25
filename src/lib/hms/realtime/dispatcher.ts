@@ -145,6 +145,13 @@ export async function resolveRooms(event: RealtimeEventRow): Promise<Room[]> {
     return userIds.flatMap((id) => user(id));
   }
 
+  // Session revocation (single-active-device) → exactly the affected user's
+  // devices: the superseded one verifies and logs itself out; the NEW device
+  // verifies successfully and stays (§8).
+  if (t === EVENT_TYPES.SESSION_REVOKED) {
+    return user(typeof payload.userId === "string" ? payload.userId : null);
+  }
+
   switch (t) {
     // ── Complaint lifecycle (STEP 38-42): staff + owning customer; the
     //    assigned technician also follows accept/start/complete progress.

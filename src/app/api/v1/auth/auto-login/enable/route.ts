@@ -25,7 +25,7 @@ export const POST = handler(
     const expiresAt = new Date(Date.now() + SESSION_REMEMBER_TTL_MS);
     await db.session.update({
       where: { id: session.id },
-      data: { remember: true, expiresAt, idleRevokedAt: null },
+      data: { remember: true, expiresAt },
     });
 
     await audit({
@@ -38,7 +38,7 @@ export const POST = handler(
     await notify({
       userId: user.id,
       title: "Auto login enabled",
-      message: "Keep-me-signed-in was enabled on this device. Your session can be restored automatically when you return — it is still subject to the inactivity timeout and can be revoked anytime.",
+      message: "Keep-me-signed-in was enabled on this device — the session persists on this device until it expires, you sign out, or another device signs in.",
       type: "INFO", resourceType: "SESSION", resourceId: session.id,
     });
     return ok({ autoLogin: true, sessionExpiresAt: expiresAt.toISOString() });

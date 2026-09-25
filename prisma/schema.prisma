@@ -103,24 +103,19 @@ model Session {
   userAgent  String?
   createdAt  DateTime @default(now())
   lastSeenAt DateTime @default(now())
-  // Idle-timeout clock (spec: auto logout after inactivity). Advanced ONLY by
-  // genuine-user-activity reports — background polling/heartbeat/WS traffic
-  // never touches it. The server enforces: idle >= SESSION_IDLE_TIMEOUT_MS
-  // invalidates the session on the next authenticated request.
-  lastActivityAt DateTime @default(now())
   // USER-CONTROLLED AUTO LOGIN ("Keep me signed in on this device").
   // remember=true marks THIS device's session as a persistent-login grant —
   // set only by an explicit user choice (login checkbox or the Security
-  // settings toggle), DEFAULT OFF for every new session/device/user.
+  // settings toggle), DEFAULT OFF for every new session/device/user. It only
+  // extends the session's lifetime; it never bypasses revocation.
   remember      Boolean   @default(false)
-  // Idle-timeout marker for remember-grants: instead of deleting the row, the
-  // 5-minute idle expiry revokes the LIVE credential (every authenticated
-  // request → 401 SESSION_EXPIRED, exactly as before) while the grant survives
-  // so a genuinely FRESH app open can restore it via
-  // POST /api/v1/auth/auto-login/restore (token rotation on restore).
-  // Explicit logout, password change/reset, admin reset and user disable all
-  // DELETE the row — an explicit logout always wins over auto login.
-  idleRevokedAt DateTime?
+  // SINGLE ACTIVE DEVICE (one account = one active session): a login on
+  // another device marks THIS row revoked (the credential stops authorizing
+  // every request → 401 SESSION_REVOKED) instead of deleting it, keeping an
+  // auditable revocation record. Explicit logout, password change/reset,
+  // admin reset and user disable remove the row entirely.
+  revokedAt     DateTime?
+  revokedReason String?
 
   @@index([userId])
   @@index([expiresAt])

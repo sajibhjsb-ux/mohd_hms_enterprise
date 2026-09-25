@@ -1,5 +1,5 @@
 import { handler, ok } from "@/lib/hms/api";
-import { getSessionUser, SESSION_IDLE_TIMEOUT_SECONDS } from "@/lib/hms/auth";
+import { getSessionUser, consumeSessionRejectionReason } from "@/lib/hms/auth";
 import { db } from "@/lib/db";
 import { customerProfileState } from "@/lib/hms/customer-profile";
 import { isAvatarRef } from "@/lib/hms/profile-photo";
@@ -12,7 +12,13 @@ import { termsStatusFor } from "@/lib/hms/legal/legal";
  *  when a new version is published mid-session. */
 export const GET = handler(
   async ({ user }) => {
-    if (!user) return ok({ authenticated: false });
+    if (!user) {
+      // §28: the validation endpoint distinguishes WHY the session is not
+      // active — REVOKED (superseded by another device), EXPIRED, or INVALID
+      // (no/unknown cookie) — so clients can react precisely.
+      const reason = consumeSessionRejectionReason();
+      return ok({ authenticated: false, state: reason === "REVOKED" ? "REVOKED" : reason === "EXPIRED" ? "EXPIRED" : "INVALID" });
+    }
     const [profileState, terms, avatar] = await Promise.all([
       customerProfileState(user),
       termsStatusFor(user),
@@ -37,9 +43,6 @@ export const GET = handler(
         avatarUrl: avatarUrl,
       },
       sessionExpiresAt: user.sessionExpiresAt,
-      // Centralized idle-timeout configuration (seconds) — the client builds
-      // its warning/UX timers from THIS value; 300 in production.
-      idleTimeoutSeconds: SESSION_IDLE_TIMEOUT_SECONDS,
     });
   },
   { auth: false }

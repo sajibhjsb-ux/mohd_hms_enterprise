@@ -44,10 +44,10 @@ export const GET = handler(async ({ req, user }) => {
         current: r.token === currentToken,
         device: `${browser} — ${os}`,
         autoLogin: r.remember,
-        // Honest status: a remember-grant whose live credential was idle-
-        // revoked shows as "Logged out (restorable)" — it is NOT an active
-        // login; a fresh app open may restore it.
-        status: r.idleRevokedAt ? "IDLE_REVOKED" : r.expiresAt.getTime() < now ? "EXPIRED" : "ACTIVE",
+        // Honest status: a session replaced by a newer login on another device
+        // shows as REVOKED (single-active-device audit record, not an active
+        // login); expired rows expire out; everything else is ACTIVE.
+        status: r.revokedAt ? "REVOKED" : r.expiresAt.getTime() < now ? "EXPIRED" : "ACTIVE",
         ip: r.ip,
         createdAt: r.createdAt.toISOString(),
         lastSeenAt: r.lastSeenAt.toISOString(),

@@ -28,7 +28,7 @@ type SessionRow = {
   current: boolean;
   device: string;
   autoLogin: boolean;
-  status: "ACTIVE" | "IDLE_REVOKED" | "EXPIRED";
+  status: "ACTIVE" | "REVOKED" | "EXPIRED";
   ip: string | null;
   createdAt: string;
   lastSeenAt: string;
@@ -82,7 +82,7 @@ export function SecuritySessionsCard() {
       toast({
         title: next ? "Auto login enabled" : "Auto login disabled",
         description: next
-          ? "This device can restore your session when you return. The 5-minute inactivity timeout still applies."
+          ? "This device stays signed in until its session expires, you sign out, or another device signs in."
           : "Auto login disabled for this device.",
       });
       await load();
@@ -157,9 +157,12 @@ export function SecuritySessionsCard() {
           <div className="space-y-1">
             <p className="text-sm font-medium">Auto login</p>
             <p className="text-sm text-muted-foreground">
-              Keep me signed in on this device — automatically restore your secure session when you
-              return. Your password is never stored; the 5-minute inactivity timeout still signs you
-              out, and signing out, changing your password, or an administrator reset revokes it.
+              Keep me signed in on this device — your secure session persists on this device until
+              it expires. Your password is never stored.
+            </p>
+            <p className="text-sm text-muted-foreground">
+              Only one device can be actively signed in to this account at a time. Signing in on
+              another device automatically ends the previous active session.
             </p>
             <p className="text-xs text-muted-foreground pt-1" data-testid="auto-login-state">
               {savingAuto
@@ -219,7 +222,7 @@ export function SecuritySessionsCard() {
                     <p className="text-xs text-muted-foreground truncate">
                       Auto login: {r.autoLogin ? "ON" : "OFF"} · Last active {timeAgo(r.lastSeenAt)}
                       {r.ip ? ` · ${r.ip}` : ""}
-                      {r.status === "IDLE_REVOKED" ? " · Logged out (restorable)" : ""}
+                      {r.status === "REVOKED" ? " · Signed out (another device)" : ""}
                       {r.status === "EXPIRED" ? " · Expired" : ""}
                     </p>
                   </div>

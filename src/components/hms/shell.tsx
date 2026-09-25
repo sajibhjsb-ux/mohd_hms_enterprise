@@ -38,7 +38,6 @@ import type { SearchNavigateTarget } from "./shell/global-search";
 import { QrScanDialog } from "./shell/qr-dialog";
 import { RealtimeProvider } from "./realtime/realtime-provider";
 import { TermsConsentGate } from "./legal/terms-consent-gate";
-import { IdleSessionGuard } from "./idle-session-guard";
 import { WelcomeDialog } from "./welcome/welcome-dialog";
 import { useRealtimeEvent } from "@/lib/hms/realtime/hooks";
 import { RT } from "@/lib/hms/realtime/matrix";
@@ -341,8 +340,7 @@ export function AppShell() {
       />
 
       {/* Overlays (utility dialogs only — business CRUD uses dedicated pages) */}
-      <IdleSessionGuard />
-      {/* Post-login welcome popup — renders nothing unless a real login just
+        {/* Post-login welcome popup — renders nothing unless a real login just
           happened (consumes the one-shot signal from lib/hms/welcome.ts). */}
       <WelcomeDialog />
       <ChangePasswordDialog open={changePwOpen} onOpenChange={setChangePwOpen} />

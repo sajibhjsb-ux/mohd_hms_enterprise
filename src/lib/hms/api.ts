@@ -86,10 +86,11 @@ export function handler(
       const needsAuth = opts?.auth !== false;
       const user = await getSessionUser();
       if (needsAuth && !user) {
-        // Precise 401 code: an idle-expired session answers SESSION_EXPIRED so
-        // the client can run the central session-expired flow (§17/§26).
-        if (consumeSessionRejectionReason() === "IDLE_TIMEOUT") {
-          throw new ApiError(401, "SESSION_EXPIRED", "Your session has expired due to inactivity. Please log in again.");
+        // Precise 401 code: a session replaced by a newer login on another
+        // device (single-active-device policy) answers SESSION_REVOKED so the
+        // client can explain exactly why it was signed out (§10/§11).
+        if (consumeSessionRejectionReason() === "REVOKED") {
+          throw new ApiError(401, "SESSION_REVOKED", "This session was ended because the account signed in on another device.");
         }
         throw Errors.unauthorized();
       }

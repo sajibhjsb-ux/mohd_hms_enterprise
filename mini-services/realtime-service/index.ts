@@ -30,7 +30,7 @@ const SESSION_CACHE_TTL_MS = 60_000;
 // session is re-verified against the app's session store at most this often.
 // A DEFINITIVE unauthenticated answer (logout / idle revoke / admin revoke)
 // force-disconnects the socket; transient app unavailability never does.
-const SESSION_REVERIFY_MS = 45_000;
+const SESSION_REVERIFY_MS = 15_000;
 
 type SessionInfo = {
   id: string;
@@ -363,7 +363,7 @@ function broadcastPresence() {
 
 // ─── Session-revocation sweep (single-active-device policy) ─────────────────
 // A socket authenticated at handshake must NOT stay connected after its session
-// is revoked (logout, idle timeout, admin revocation). Every socket is
+// is revoked (logout, admin revocation, or a newer login on another device). Every socket is
 // re-verified at most once per SESSION_REVERIFY_MS; only a DEFINITIVE
 // "unauthenticated" answer from the app's session store disconnects it — a
 // transient app restart/error never drops live clients.

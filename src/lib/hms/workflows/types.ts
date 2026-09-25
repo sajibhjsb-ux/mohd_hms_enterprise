@@ -63,6 +63,10 @@ export const EVENT_TYPES = {
   // should reach connected portals is persisted in the ONE authoritative
   // DomainEvent outbox and dispatched to authorized sockets by the realtime
   // dispatcher. NO frontend code may emit these.
+  // SESSION_REVOKED (single-active-device): emitted by the login route when a
+  // newer login supersedes the account's other live sessions — the targeted
+  // user's devices verify and the superseded one logs itself out (§8).
+  SESSION_REVOKED: "SESSION_REVOKED",
   NOTIFICATION_CREATED: "NOTIFICATION_CREATED",
   NOTIFICATION_READ: "NOTIFICATION_READ",
   COMPLAINT_UPDATED: "COMPLAINT_UPDATED",

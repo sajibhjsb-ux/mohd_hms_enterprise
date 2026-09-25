@@ -2,11 +2,21 @@
 
 // Client session context: holds the authenticated user + permissions.
 // Renewal is silent (background heartbeat) — the app NEVER reloads mid-work.
+//
+// SINGLE ACTIVE DEVICE (client side, §11): the backend stays authoritative —
+// a superseded device's very next API call answers 401 SESSION_REVOKED and
+// the central interceptor below logs it out. When the device is online its
+// WebSocket also delivers the SESSION_REVOKED event instantly (same event
+// channel as everything else — no second connection, no polling): the
+// handler re-verifies against the server and logs out only on a definitive
+// revocation, so the NEW device (same user room) is never affected.
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { api } from "@/lib/hms/api-client";
 import { clearLastRoute } from "@/lib/hms/pwa";
 import { markWelcomePending } from "@/lib/hms/welcome";
+import { onRealtimeEvents } from "@/lib/hms/realtime/bus";
+import { RT } from "@/lib/hms/realtime/matrix";
 import type { Permission } from "@/lib/hms/constants";
 
 export type SessionUser = {
@@ -39,35 +49,19 @@ type SessionCtx = {
   refresh: () => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
-  /** Server-configured idle timeout (seconds; 300 in production). The
-   *  IdleSessionGuard builds its warning/UX timers from this — no client-side
-   *  hardcoding of the timeout value anywhere. */
-  idleTimeoutSeconds: number | null;
 };
 
 const Ctx = createContext<SessionCtx>({
-  user: null, loading: true, refresh: async () => {}, signIn: async () => {}, signOut: async () => {}, idleTimeoutSeconds: null,
+  user: null, loading: true, refresh: async () => {}, signIn: async () => {}, signOut: async () => {},
 });
 
-/** sessionStorage key for the post-expiry login banner (set before the
- *  redirect, consumed + cleared once by the auth flow). */
-export const SESSION_EXPIRED_NOTICE_KEY = "hms_session_expired_notice";
-
-/** True when THIS tab was itself logged out in the current sitting (idle
- *  expiry or manual logout navigation) — the flag survives in-tab reloads but
- *  dies when the browser/PWA is closed. USER-CONTROLLED AUTO LOGIN uses it to
- *  distinguish the states the spec separates (§22): restoration is attempted
- *  ONLY on a genuinely fresh app open, never right after an in-tab logout —
- *  so auto login can never defeat the 5-minute inactivity timeout or undo an
- *  explicit logout in front of the user. */
-export function hasSessionExpiredFlag(): boolean {
-  if (typeof window === "undefined") return false;
-  try {
-    return sessionStorage.getItem(SESSION_EXPIRED_NOTICE_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
+/** sessionStorage key for the post-logout login banner (set before the
+ *  redirect, consumed + cleared once by the auth flow). The value IS the
+ *  message so each logout reason can speak for itself (§26). */
+export const SESSION_END_NOTICE_KEY = "hms_session_end_notice";
+/** §26: the exact user-facing wording for a single-active-device revocation. */
+export const SESSION_REVOKED_MESSAGE =
+  "Your account was signed in on another device, so this session has been logged out.";
 
 export function useSession() {
   return useContext(Ctx);
@@ -76,36 +70,20 @@ export function useSession() {
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<SessionUser | null>(null);
   const [loading, setLoading] = useState(true);
-  const [idleTimeoutSeconds, setIdleTimeoutSeconds] = useState<number | null>(null);
   const beatRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const refresh = useCallback(async () => {
     try {
-      const res = await api.get<{ authenticated: boolean; user?: SessionUser; idleTimeoutSeconds?: number }>("/api/v1/auth/session");
+      const res = await api.get<{ authenticated: boolean; user?: SessionUser }>("/api/v1/auth/session");
       if (res.data.authenticated && res.data.user) {
         setUser(res.data.user);
-        if (res.data.idleTimeoutSeconds) setIdleTimeoutSeconds(res.data.idleTimeoutSeconds);
       } else {
         setUser(null);
-        // USER-CONTROLLED AUTO LOGIN (server-authoritative): on a fresh app
-        // open with an expired/idle-revoked session, ask the backend to
-        // validate the persistent-login grant ("Keep me signed in on this
-        // device") and restore the session. The backend alone decides — the
-        // grant must exist (explicit logout/password change/admin reset all
-        // destroy it), be unexpired, belong to an ACTIVE user, and the role
-        // comes back freshly resolved from the DB. A tab that logged itself
-        // out this sitting (sessionStorage flag) never attempts restoration.
-        if (!hasSessionExpiredFlag()) {
-          try {
-            const r = await api.post<{ restored: boolean; user?: SessionUser; idleTimeoutSeconds?: number }>("/api/v1/auth/auto-login/restore");
-            if (r.data?.restored && r.data.user) {
-              // Restoration is NOT a real sign-in: no welcome popup, no
-              // persisted-route reset — the app opens as the user left it.
-              setUser(r.data.user);
-              if (r.data.idleTimeoutSeconds) setIdleTimeoutSeconds(r.data.idleTimeoutSeconds);
-            }
-          } catch { /* no grant / rejected — stay on the login flow */ }
-        }
+        // USER-CONTROLLED AUTO LOGIN: the session cookie itself IS the
+        // persistent credential — a remember-grant session simply stays
+        // valid (no inactivity expiry exists), so no separate restoration
+        // step is needed. Revoked/expired/destroyed grants fail above and
+        // the login flow renders; nothing is ever silently restored.
       }
     } catch {
       setUser(null);
@@ -116,20 +94,51 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  // Central SESSION_EXPIRED interception (§10/§17): the api-client dispatches
-  // this once for any 401 SESSION_EXPIRED; every component shares this single
-  // cleanup — clear auth state, clear the persisted launch route, and go to
-  // the login screen with the inactivity notice. A full navigation also tears
-  // down the WebSocket, polls and all authenticated state in one move.
+  // Central session-security interception (§11): the api-client dispatches
+  // this once for any 401 SESSION_REVOKED / SESSION_EXPIRED; every component
+  // shares this single cleanup — record the reason for the login banner,
+  // clear auth state + the persisted launch route, and go to the login
+  // screen. A full navigation also tears down the WebSocket, polls and all
+  // authenticated state in one move.
   useEffect(() => {
-    const onExpired = () => {
-      try { sessionStorage.setItem(SESSION_EXPIRED_NOTICE_KEY, "1"); } catch { /* best effort */ }
+    const onExpired = (ev: Event) => {
+      const code = (ev as CustomEvent<{ code?: string }>).detail?.code;
+      const message = code === "SESSION_REVOKED" ? SESSION_REVOKED_MESSAGE : "Your session has ended. Please log in again.";
+      try { sessionStorage.setItem(SESSION_END_NOTICE_KEY, message); } catch { /* best effort */ }
       clearLastRoute();
       setUser(null);
       if (window.location.pathname !== "/") window.location.assign("/?auth=login");
     };
     window.addEventListener("hms:session-expired", onExpired);
     return () => window.removeEventListener("hms:session-expired", onExpired);
+  }, []);
+
+  // Realtime revocation (§8): the login on ANOTHER device emits
+  // SESSION_REVOKED to this account's socket room. Re-verify with the
+  // server (authoritative) — a superseded device gets 401 SESSION_REVOKED
+  // here (the central interceptor above then performs the logout with the
+  // banner), while the NEW device verifies fine and stays untouched. Uses
+  // the raw bus subscription deliberately: a session revocation must NEVER
+  // be suppressed by the dirty-form guard.
+  const userRef = useRef<SessionUser | null>(null);
+  userRef.current = user;
+  useEffect(() => {
+    return onRealtimeEvents([RT.SESSION_REVOKED], () => {
+      if (!userRef.current) return;
+      // Server-authoritative re-verification: a DEFINITIVE "not
+      // authenticated" (or a 401 SESSION_REVOKED from a protected call — the
+      // interceptor above) logs this device out with the banner. An ambiguous
+      // network error never logs out — the heartbeat and the next API call
+      // re-verify anyway.
+      api.get<{ authenticated: boolean }>("/api/v1/auth/session").then((res) => {
+        if (!res.data.authenticated) {
+          try { sessionStorage.setItem(SESSION_END_NOTICE_KEY, SESSION_REVOKED_MESSAGE); } catch { /* best effort */ }
+          clearLastRoute();
+          setUser(null);
+          if (window.location.pathname !== "/") window.location.assign("/?auth=login");
+        }
+      }).catch(() => undefined);
+    });
   }, []);
 
   // Silent heartbeat: renews sliding session, keeps work alive. No reloads, ever.
@@ -176,20 +185,20 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }, []);
 
-  return <Ctx.Provider value={{ user, loading, refresh, signIn, signOut, idleTimeoutSeconds }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ user, loading, refresh, signIn, signOut }}>{children}</Ctx.Provider>;
 }
 
-/** True when the current page load came through an idle-session expiry
- *  (consumed by the auth flow to show the exact expired message once). */
-export function consumeSessionExpiredFlag(): boolean {
-  if (typeof window === "undefined") return false;
+/** The one-shot logout-reason banner for the auth flow (§26): returns and
+ *  clears the stored message — e.g. the single-active-device revocation
+ *  notice — or null when this is a plain login. */
+export function consumeSessionEndNotice(): string | null {
+  if (typeof window === "undefined") return null;
   try {
-    if (sessionStorage.getItem(SESSION_EXPIRED_NOTICE_KEY) === "1") {
-      sessionStorage.removeItem(SESSION_EXPIRED_NOTICE_KEY);
-      return true;
-    }
+    const message = sessionStorage.getItem(SESSION_END_NOTICE_KEY);
+    if (message) sessionStorage.removeItem(SESSION_END_NOTICE_KEY);
+    return message;
   } catch { /* best effort */ }
-  return false;
+  return null;
 }
 
 export function hasPerm(user: SessionUser | null, perm: Permission): boolean {

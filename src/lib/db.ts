@@ -7,7 +7,10 @@ const globalForPrisma = globalThis as unknown as {
 export const db =
   globalForPrisma.prisma ??
   new PrismaClient({
-    log: ['query'],
+    // 'query' logging floods dev.log and churns process memory on every
+    // scheduler/poll tick; errors + warnings only (queries remain inspectable
+    // via the generated client when needed).
+    log: ['error', 'warn'],
     // SQLite (dev) is a single-writer database: long payroll transactions can
     // collide with background scheduler writes and time out. Serializing the
     // connection pool + longer busy/socket timeouts makes writers queue

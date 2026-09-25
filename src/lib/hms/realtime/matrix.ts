@@ -6,6 +6,8 @@
 // never by hand-picking event strings inline.
 
 export const RT = {
+  // session security (single-active-device) — see session.tsx revocation handler
+  SESSION_REVOKED: "SESSION_REVOKED",
   // notifications
   NOTIFICATION_CREATED: "NOTIFICATION_CREATED",
   NOTIFICATION_READ: "NOTIFICATION_READ",

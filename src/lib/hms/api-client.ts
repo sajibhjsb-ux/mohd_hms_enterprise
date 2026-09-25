@@ -38,11 +38,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<ApiEnvelope
   }
   if (!res.ok || !body || body.ok === false) {
     const err = body && body.ok === false ? body.error : { code: "UNKNOWN", message: "Something went wrong. Please try again." };
-    // Central session-expired interception (§17): the backend answers
-    // 401 SESSION_EXPIRED when the idle timeout has passed. Dispatch ONCE
-    // here so every caller shares the same logout flow — no per-call logic.
-    if (res.status === 401 && err.code === "SESSION_EXPIRED" && typeof window !== "undefined") {
-      window.dispatchEvent(new CustomEvent("hms:session-expired"));
+    // Central session-security interception (§11): the backend answers
+    // 401 SESSION_REVOKED when this device's session was ended by a newer
+    // login on another device (single-active-device policy). Dispatch ONCE
+    // here with the precise code so every caller shares the same logout
+    // flow — no per-page revocation logic anywhere.
+    if (res.status === 401 && (err.code === "SESSION_REVOKED" || err.code === "SESSION_EXPIRED") && typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("hms:session-expired", { detail: { code: err.code } }));
     }
     throw new ClientApiError(err.message, err.code, res.status, (err as { details?: unknown }).details);
   }
