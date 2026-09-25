@@ -15,6 +15,12 @@ export type Branding = {
   email: string;
   country: string;
   contactLines: string[];
+  /** Split header fields (Settings → Templates §20 header toggles): the
+   *  address rows and the phone·email line are carried separately so the
+   *  template header can toggle each. contactLines stays the combined form
+   *  for every existing consumer. */
+  addressLines: string[];
+  contactLine: string;
   logoBytes: Buffer | null;
 };
 
@@ -63,6 +69,7 @@ export async function getBranding(): Promise<Branding> {
   // / body down automatically. The engine additionally flattens defensively,
   // but contactLines being one-line-per-entry keeps the header math exact.
   const addressLines = address.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
-  const contactLines = [...addressLines, [phone, email].filter(Boolean).join("  ·  ")].filter(Boolean);
-  return { company, address, phone, email, country, contactLines, logoBytes: loadLogo() };
+  const contactLine = [phone, email].filter(Boolean).join("  ·  ");
+  const contactLines = [...addressLines, contactLine].filter(Boolean);
+  return { company, address, phone, email, country, contactLines, addressLines, contactLine, logoBytes: loadLogo() };
 }

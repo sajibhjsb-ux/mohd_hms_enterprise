@@ -3048,3 +3048,79 @@ model QrVerificationLog {
   @@index([createdAt])
   @@map("qr_verification_logs")
 }
+
+// ── Document Template Management System (Settings → Templates) ─────────────
+// ONE central template registry for every PDF document type produced by the
+// central PDF service (invoice, quotation, inspection report, work order, PM
+// service sheet, equipment/project report, complaint, purchase order, payment
+// receipt). templateType keys are EXACTLY the registry keys of
+// `src/lib/hms/pdf/documents.ts` — no per-module template engines exist.
+// Layout/style live as JSON on immutable versions; business data always comes
+// from the authoritative loaders (§43/§44/§45 — no data inside templates).
+model DocumentTemplate {
+  id               String    @id @default(cuid())
+  // invoice | quotation | inspection-report | work-order | pm-task |
+  // equipment-report | complaint | purchase-order | payment-receipt
+  templateType     String
+  name             String
+  description      String    @default("")
+  // DRAFT | ACTIVE | INACTIVE | ARCHIVED
+  status           String    @default("DRAFT")
+  // ONE default per templateType (resolved when a document is generated
+  // without an explicit template — §7/§30). Enforced in the service layer.
+  isDefault        Boolean   @default(false)
+  currentVersionId String?
+  versions         DocumentTemplateVersion[]
+  createdById      String?
+  updatedById      String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([templateType, status])
+  @@index([isDefault])
+  @@map("document_templates")
+}
+
+// Immutable version snapshot. Publishing freezes a version; editing an
+// already-published template always creates the NEXT draft version (§28/§52 —
+// history is never overwritten). layout/style are JSON strings (flexible
+// config), everything searchable stays normalized.
+model DocumentTemplateVersion {
+  id          String           @id @default(cuid())
+  templateId  String
+  template    DocumentTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  version     Int
+  // TemplateLayoutJson: { order, hidden, headings, config }
+  layout      String           @default("{}")
+  // TemplateStyleJson: colors, typography, page geometry, header/footer
+  style       String           @default("{}")
+  // DRAFT | PUBLISHED
+  status      String           @default("DRAFT")
+  createdById String?
+  createdAt   DateTime         @default(now())
+
+  @@unique([templateId, version])
+  @@index([templateId, status])
+  @@map("document_template_versions")
+}
+
+// §29/§56 — DOCUMENT TEMPLATE SNAPSHOT. Once a PDF is generated for a business
+// record, the template + version used is pinned here so later template edits
+// NEVER change how that historical document renders again. Only an explicit
+// regeneration (?regenerate=1 — audited) re-resolves and re-pins.
+model DocumentTemplateSnapshot {
+  id            String   @id @default(cuid())
+  // PDF registry key (same space as templateType)
+  entityType    String
+  entityId      String
+  templateId    String   // "system" = built-in layout
+  templateName  String
+  versionId     String   @default("")
+  versionNumber Int      @default(0)
+  generatedById String?
+  generatedAt   DateTime @default(now())
+
+  @@unique([entityType, entityId])
+  @@index([templateId])
+  @@map("document_template_snapshots")
+}

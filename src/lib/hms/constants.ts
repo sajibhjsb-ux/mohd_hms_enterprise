@@ -124,6 +124,15 @@ export const PERMISSIONS = {
   settings_read: "settings.read",
   settings_manage: "settings.manage",
   audit_read: "audit.read",
+  // Document Template Management (Settings → Templates) — ONE central
+  // registry for all PDF document templates. read = view/preview templates;
+  // manage = create/edit drafts/duplicate; publish = publish/set-default/
+  // archive/restore (segregation of duties, spec §32/§39). ADMIN roles hold
+  // all three via the full permission set; FINANCE gets read-only access so
+  // finance staff can inspect invoice/receipt layouts they depend on.
+  templates_read: "templates.read",
+  templates_manage: "templates.manage",
+  templates_publish: "templates.publish",
   // email automation + configuration (centralized EmailService admin area)
   email_view: "email.view", // access the email admin area, logs and health
   email_config: "email.config", // SMTP configuration edit + test connection/send
@@ -254,6 +263,9 @@ const FINANCE_PERMS: Permission[] = [
   // Payroll (spec §29) — Finance reviews, approves and marks payment;
   // preparation stays with HR (segregation of duties).
   PERMISSIONS.payroll_read, PERMISSIONS.payroll_approve,
+  // Document templates (Settings → Templates) — finance staff may inspect
+  // the layouts of the financial documents they depend on (read-only).
+  PERMISSIONS.templates_read,
   // Email client — mailbox members only (assignment enforced per-user)
   PERMISSIONS.email_client,
   PERMISSIONS.files_read, PERMISSIONS.files_create, PERMISSIONS.files_update,
