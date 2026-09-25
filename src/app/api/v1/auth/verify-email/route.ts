@@ -10,7 +10,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { handler, ok, Errors, parseBody } from "@/lib/hms/api";
-import { createSession, setSessionCookie, SESSION_TTL_MS, SESSION_REMEMBER_TTL_MS } from "@/lib/hms/auth";
+import { createSupersedingSession, setSessionCookie, SESSION_TTL_MS, SESSION_REMEMBER_TTL_MS } from "@/lib/hms/auth";
 import { can } from "@/lib/hms/rbac";
 import { customerProfileState } from "@/lib/hms/customer-profile";
 import { termsStatusFor } from "@/lib/hms/legal/legal";
@@ -48,7 +48,10 @@ export const POST = handler(
       where: { id: user.id },
       data: { emailVerified: new Date(), lastLoginAt: new Date() },
     });
-    const { token, expiresAt } = await createSession(
+    // SINGLE ACTIVE DEVICE: the canonical superseding path — this OTP login
+    // revokes any other live session of the account first, so a customer
+    // signing in here ends the session on any previous device (§6/§21).
+    const { token, expiresAt, replacedCount } = await createSupersedingSession(
       user.id,
       ip,
       req.headers.get("user-agent") ?? undefined,
@@ -56,6 +59,10 @@ export const POST = handler(
       remember
     );
     await setSessionCookie(token, expiresAt);
+    if (replacedCount > 0) {
+      // §27: replacement audited with safe metadata only (count/reason).
+      await audit({ actorId: user.id, actorEmail: user.email, action: "SESSION_REPLACED", resourceType: "SESSION", metadata: { revokedCount: replacedCount, reason: "SUPERSEDED_BY_NEW_LOGIN", via: "email-verification" }, ip });
+    }
     if (remember) {
       await audit({ actorId: user.id, actorEmail: user.email, action: "PERSISTENT_SESSION_CREATED", resourceType: "SESSION", metadata: { via: "email-verification" }, ip });
     }

@@ -4,13 +4,11 @@ import { db } from "@/lib/db";
 import { handler, ok, Errors, parseBody } from "@/lib/hms/api";
 import {
   verifyPassword,
-  createSession,
+  createSupersedingSession,
   setSessionCookie,
   SESSION_TTL_MS,
   SESSION_REMEMBER_TTL_MS,
 } from "@/lib/hms/auth";
-import { emit } from "@/lib/hms/workflows/bus";
-import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 import { can } from "@/lib/hms/rbac";
 import { customerProfileState } from "@/lib/hms/customer-profile";
 import { isAvatarRef } from "@/lib/hms/profile-photo";
@@ -76,53 +74,20 @@ export const POST = handler(
       });
     }
 
-    // SINGLE ACTIVE DEVICE (one account = one active session, §6/§21/§22):
-    // the new login atomically revokes every other live session of this
-    // account and creates its own — there is never more than one active
-    // session per user. On PostgreSQL a per-user advisory lock serializes
-    // concurrent logins (no interleaving can produce two active sessions);
-    // on SQLite the single-writer database serializes transactions natively.
-    // The superseded rows are kept with revokedAt/revokedReason as an audit
-    // record — their cookies stop authorizing anything immediately
-    // (getSessionUser → 401 SESSION_REVOKED, §9/§34).
-    const isPostgres = (process.env.DATABASE_URL ?? "").startsWith("postgres");
-    const { token, expiresAt, replacedCount } = await db.$transaction(async (tx) => {
-      if (isPostgres) await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${user.id}))`;
-      const previous = await tx.session.findMany({
-        where: { userId: user.id, revokedAt: null, expiresAt: { gt: new Date() } },
-        select: { id: true },
-      });
-      if (previous.length > 0) {
-        await tx.session.updateMany({
-          where: { id: { in: previous.map((p) => p.id) } },
-          data: { revokedAt: new Date(), revokedReason: "SUPERSEDED_BY_NEW_LOGIN" },
-        });
-      }
-      const created = await createSession(
-        user.id,
-        ip,
-        req.headers.get("user-agent") ?? undefined,
-        remember ? SESSION_REMEMBER_TTL_MS : SESSION_TTL_MS,
-        remember,
-        tx,
-      );
-      // §8: realtime revocation — the superseded devices receive
-      // SESSION_REVOKED over the EXISTING socket and log out immediately
-      // (their sockets are also re-verified by the realtime service's
-      // session sweep, which then drops them from presence). Emitted inside
-      // the transaction so the event commits with the login itself.
-      if (previous.length > 0) {
-        await emit({
-          type: EVENT_TYPES.SESSION_REVOKED,
-          resourceType: "SESSION",
-          resourceId: user.id,
-          payload: { userId: user.id, reason: "SUPERSEDED_BY_NEW_LOGIN", revokedCount: previous.length },
-          actorId: user.id,
-          tx,
-        });
-      }
-      return { ...created, replacedCount: previous.length };
-    });
+    // SINGLE ACTIVE DEVICE (§6/§21/§22): the shared canonical path atomically
+    // revokes every other live session of this account and creates its own —
+    // there is never more than one active session per user. The superseded
+    // rows are kept with revokedAt/revokedReason as an audit record — their
+    // cookies stop authorizing anything immediately (getSessionUser → 401
+    // SESSION_REVOKED, §9/§34) and SESSION_REVOKED goes out over the existing
+    // realtime channel inside the same transaction (§8).
+    const { token, expiresAt, replacedCount } = await createSupersedingSession(
+      user.id,
+      ip,
+      req.headers.get("user-agent") ?? undefined,
+      remember ? SESSION_REMEMBER_TTL_MS : SESSION_TTL_MS,
+      remember,
+    );
     await setSessionCookie(token, expiresAt);
     await db.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
     await audit({ actorId: user.id, actorEmail: user.email, action: "LOGIN", resourceType: "AUTH", ip, metadata: { replacedSessions: replacedCount } });

@@ -208,7 +208,7 @@ export function SecuritySessionsCard() {
               <Skeleton className="h-10 w-5/6" />
             </div>
           ) : (
-            <ul className="rounded-md border divide-y" data-testid="session-list">
+            <ul className="rounded-md border divide-y max-h-96 overflow-y-auto hms-scroll" data-testid="session-list">
               {rows.map((r) => (
                 <li key={r.id} className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 px-3 py-2.5">
                   <DeviceIcon device={r.device} />

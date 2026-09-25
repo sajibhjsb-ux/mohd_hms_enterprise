@@ -16,7 +16,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomBytes } from "crypto";
 import { db } from "@/lib/db";
-import { createSession, SESSION_COOKIE } from "@/lib/hms/auth";
+import { createSupersedingSession, SESSION_COOKIE } from "@/lib/hms/auth";
 import { clientIp, rateLimit } from "@/lib/hms/rate-limit";
 import { audit } from "@/lib/hms/services";
 import { customerProfileState, createCustomerRecord, newCustomerCode } from "@/lib/hms/customer-profile";
@@ -184,7 +184,12 @@ export async function GET(req: NextRequest) {
     },
   });
 
-  const { token, expiresAt } = await createSession(user.id, ip, req.headers.get("user-agent") ?? undefined);
+  // SINGLE ACTIVE DEVICE: the canonical superseding path — this OAuth login
+  // revokes any other live session of the account first, so signing in with
+  // Google ends the session on any previous device (§6/§21).
+  const { token, expiresAt, replacedCount } = await createSupersedingSession(
+    user.id, ip, req.headers.get("user-agent") ?? undefined,
+  );
 
   // Landing decision from the DERIVED profile state (authoritative, not guessed).
   const profileState = await customerProfileState(user);
@@ -198,9 +203,19 @@ export async function GET(req: NextRequest) {
     metadata: {
       ...(provisioned ? { provisioned: true } : {}),
       ...(customerCreated ? { customerCreated: true } : {}),
+      replacedSessions: replacedCount,
       profileComplete: profileState.profileComplete,
     },
   });
+  if (replacedCount > 0) {
+    // §27: replacement audited with safe metadata only (count/reason).
+    await audit({
+      actorId: user.id, actorEmail: user.email,
+      action: "SESSION_REPLACED", resourceType: "SESSION",
+      metadata: { revokedCount: replacedCount, reason: "SUPERSEDED_BY_NEW_LOGIN", via: "google-oauth" },
+      ip,
+    });
+  }
 
   const res = NextResponse.redirect(new URL(landingFor(user.role, profileState), externalOrigin(req)));
   res.cookies.set(SESSION_COOKIE, token, {

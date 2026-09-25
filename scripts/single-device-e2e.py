@@ -133,9 +133,9 @@ with sync_playwright() as p:
         # jar (the interceptor logout doesn't touch it) — the precise 401 code
         # proves the OLD credential no longer authorizes anything.
         old_status = page_a.evaluate("fetch('/api/v1/auth/session').then(async r => ({ status: r.status, body: await r.json().catch(() => null) }))")
-        ok("Session validation reports REVOKED for the old cookie (§28)", old_status.get("body", {}).get("data", {}).get("state") == "REVOKED", old_status)
+        ok("Session validation reports REVOKED for the old cookie (§28)", (old_status.get("body") or {}).get("data", {}).get("state") == "REVOKED", old_status)
         old_api = page_a.evaluate("fetch('/api/v1/notifications?take=1').then(async r => ({ status: r.status, body: await r.json().catch(() => null) }))")
-        ok("A cannot access protected APIs anymore (§9/§32)", old_api.get("status") == 401 and old_api.get("body", {}).get("error", {}).get("code") == "SESSION_REVOKED", old_api)
+        ok("A cannot access protected APIs anymore (§9/§32)", old_api.get("status") == 401 and (old_api.get("body") or {}).get("error", {}).get("code") == "SESSION_REVOKED", old_api)
 
         # B stays ACTIVE through the revocation of the other device (§14)
         b_status2, b_body2 = session_probe(ctx_b.request)

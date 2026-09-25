@@ -20,6 +20,8 @@ import { db } from "@/lib/db";
 import type { Prisma } from "@prisma/client";
 import type { Permission } from "./constants";
 import { can } from "./rbac";
+import { emit } from "./workflows/bus";
+import { EVENT_TYPES } from "./workflows/types";
 
 const scrypt = promisify(_scrypt) as (
   password: string | Buffer,
@@ -101,6 +103,58 @@ export async function createSession(
     data: { token, userId, expiresAt, ip: ip ?? null, userAgent: userAgent ?? null, remember },
   });
   return { token, expiresAt };
+}
+
+/**
+ * SINGLE ACTIVE DEVICE (one account = one active session, spec §6/§21/§22):
+ * the ONE canonical session-creation path for EVERY login surface. Inside a
+ * single transaction it revokes every other live session of the account
+ * (keeping the rows as audit records — their cookies stop authorizing anything
+ * immediately → 401 SESSION_REVOKED), creates the new active session, and
+ * emits SESSION_REVOKED on the same transaction so the superseded devices log
+ * out instantly over the EXISTING realtime channel (§8) and the realtime
+ * service's session sweep drops them from presence (§25).
+ *
+ * Concurrency: on PostgreSQL a per-user advisory xact lock serializes
+ * concurrent logins, so no interleaving can produce two ACTIVE sessions
+ * (§22/§23 — the database-level serialization that fits this Prisma schema);
+ * on SQLite the single-writer database serializes transactions natively.
+ *
+ * Password login, customer email-OTP verification and the Google OAuth
+ * callback all create their session through this helper — never through
+ * createSession() directly — so one account can never hold two live sessions.
+ */
+export async function createSupersedingSession(
+  userId: string, ip?: string, userAgent?: string,
+  ttlMs: number = SESSION_TTL_MS, remember: boolean = false,
+): Promise<{ token: string; expiresAt: Date; replacedCount: number }> {
+  const isPostgres = (process.env.DATABASE_URL ?? "").startsWith("postgres");
+  return db.$transaction(async (tx) => {
+    if (isPostgres) await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${userId}))`;
+    const previous = await tx.session.findMany({
+      where: { userId, revokedAt: null, expiresAt: { gt: new Date() } },
+      select: { id: true },
+    });
+    if (previous.length > 0) {
+      await tx.session.updateMany({
+        where: { id: { in: previous.map((p) => p.id) } },
+        data: { revokedAt: new Date(), revokedReason: "SUPERSEDED_BY_NEW_LOGIN" },
+      });
+      // §8: realtime revocation — emitted inside the transaction so the event
+      // commits with the login itself. Safe metadata only (count/reason —
+      // never tokens, session ids or network details).
+      await emit({
+        type: EVENT_TYPES.SESSION_REVOKED,
+        resourceType: "SESSION",
+        resourceId: userId,
+        payload: { userId, reason: "SUPERSEDED_BY_NEW_LOGIN", revokedCount: previous.length },
+        actorId: userId,
+        tx,
+      });
+    }
+    const created = await createSession(userId, ip, userAgent, ttlMs, remember, tx);
+    return { ...created, replacedCount: previous.length };
+  });
 }
 
 export async function setSessionCookie(token: string, expiresAt: Date) {
