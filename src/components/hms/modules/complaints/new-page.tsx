@@ -104,12 +104,14 @@ export function ComplaintNewPage() {
 
   const selectedId = isStaffUser ? draft.value.customerId : (user?.customerId ?? "");
 
-  // Initial page of customers (20) for staff — search narrows server-side from there.
+  // Initial page of customers (20) for staff — search narrows server-side from
+  // there. customersOnly=1: backend returns genuine customer accounts only, so
+  // records mirroring staff logins can never appear or be picked.
   useEffect(() => {
     if (!isStaffUser) return;
     let alive = true;
     setCustLoading(true);
-    api.get<CustomerOpt[]>(`/api/v1/customers${qs({ pageSize: 20 })}`)
+    api.get<CustomerOpt[]>(`/api/v1/customers${qs({ pageSize: 20, customersOnly: 1 })}`)
       .then((r) => { if (alive) { setCustResults(Array.isArray(r.data) ? r.data : []); setCustInitialDone(true); } })
       .catch(() => { if (alive) setCustInitialDone(true); })
       .finally(() => { if (alive) setCustLoading(false); });
@@ -124,7 +126,7 @@ export function ComplaintNewPage() {
       if (custInitialDone && custQuery === "") {
         let alive = true;
         setCustLoading(true);
-        api.get<CustomerOpt[]>(`/api/v1/customers${qs({ pageSize: 20 })}`)
+        api.get<CustomerOpt[]>(`/api/v1/customers${qs({ pageSize: 20, customersOnly: 1 })}`)
           .then((r) => { if (alive) setCustResults(Array.isArray(r.data) ? r.data : []); })
           .catch(() => undefined)
           .finally(() => { if (alive) setCustLoading(false); });
@@ -135,7 +137,7 @@ export function ComplaintNewPage() {
     const seq = ++searchSeq.current;
     const t = setTimeout(() => {
       setCustLoading(true);
-      api.get<CustomerOpt[]>(`/api/v1/customers${qs({ search: q, pageSize: 20 })}`)
+      api.get<CustomerOpt[]>(`/api/v1/customers${qs({ search: q, pageSize: 20, customersOnly: 1 })}`)
         .then((r) => { if (alive(seq)) setCustResults(Array.isArray(r.data) ? r.data : []); })
         .catch(() => { if (alive(seq)) setCustResults([]); })
         .finally(() => { if (alive(seq)) setCustLoading(false); });
@@ -165,7 +167,7 @@ export function ComplaintNewPage() {
     const cid = draft.value.customerId;
     if (!cid || selectedCustomer?.id === cid) return;
     let alive = true;
-    api.get<CustomerOpt[]>(`/api/v1/customers${qs({ customerId: cid })}`)
+    api.get<CustomerOpt[]>(`/api/v1/customers${qs({ customerId: cid, customersOnly: 1 })}`)
       .then((r) => {
         if (!alive) return;
         const c = Array.isArray(r.data) ? r.data.find((x) => x.id === cid) : undefined;

@@ -20,6 +20,7 @@ import { createSession, SESSION_COOKIE } from "@/lib/hms/auth";
 import { clientIp, rateLimit } from "@/lib/hms/rate-limit";
 import { audit } from "@/lib/hms/services";
 import { customerProfileState, createCustomerRecord, newCustomerCode } from "@/lib/hms/customer-profile";
+import { importExternalAvatar, isAvatarRef } from "@/lib/hms/profile-photo";
 import {
   exchangeCodeForTokens,
   externalOrigin,
@@ -122,7 +123,6 @@ export async function GET(req: NextRequest) {
             status: "ACTIVE",
             emailVerified: new Date(),
             googleId: profile.sub,
-            avatarUrl: profile.picture ?? undefined,
             lastLoginAt: new Date(),
             customerId: customer.id,
           },
@@ -163,13 +163,24 @@ export async function GET(req: NextRequest) {
   if (!user) return fail("no_account", { email: profile.email });
   if (user.status !== "ACTIVE") return fail("account_disabled", { email: profile.email });
 
+  // avatarUrl is a STORAGE KEY. Import the Google picture only when the account
+  // has no valid stored photo (fresh account or a legacy external URL left by an
+  // older callback); undefined means "leave the stored value untouched".
+  const importedAvatar = !isAvatarRef(user.avatarUrl)
+    ? await importExternalAvatar(profile.picture, user.id)
+    : undefined;
+
   await db.user.update({
     where: { id: user.id },
     data: {
       googleId: profile.sub,
-      ...(profile.picture ? { avatarUrl: profile.picture } : {}),
       emailVerified: user.emailVerified ?? new Date(),
       lastLoginAt: new Date(),
+      // avatarUrl is a STORAGE KEY (avatars/...), never an external URL. A
+      // valid stored photo is preserved across sign-ins; a legacy external URL
+      // (once written by this callback) is repaired by importing the Google
+      // picture into private storage so the photo actually loads after re-login.
+      ...(importedAvatar !== undefined ? { avatarUrl: importedAvatar } : {}),
     },
   });
 

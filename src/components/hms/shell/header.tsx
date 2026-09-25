@@ -27,6 +27,7 @@ import { navigateTo, RESOURCE_ROUTES } from "@/lib/hms/router";
 import { humanize, PERMISSIONS } from "@/lib/hms/constants";
 import { initials } from "@/lib/hms/format";
 import { cn } from "@/lib/utils";
+import { UserAvatar } from "@/components/hms/shared/avatar";
 import { onRealtimeState, onRealtimePresenceCount, type RealtimeState } from "@/lib/hms/realtime/bus";
 import { getRealtimeSocket } from "@/lib/hms/realtime/socket";
 import { useRealtimeEvent } from "@/lib/hms/realtime/hooks";
@@ -529,15 +530,7 @@ function ProfileMenu({ onToggleTheme, themeMounted, themeDark, onSignOut, onOpen
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" aria-label="Profile" className="rounded-full pl-1 pr-1.5 sm:pr-2.5 gap-2 h-10 sm:h-9">
-          {user.avatarUrl ? (
-            <img
-              src={`/api/v1/profile/avatar?v=${encodeURIComponent(user.avatarUrl)}`}
-              alt=""
-              className="h-9 w-9 rounded-full object-cover"
-            />
-          ) : (
-            <span className="h-9 w-9 rounded-full bg-primary/10 text-primary text-xs font-semibold flex items-center justify-center">{initials(user.name)}</span>
-          )}
+          <UserAvatar url={user.avatarUrl} name={user.name} className="h-9 w-9 text-xs shrink-0" />
           <span className="hidden md:block text-left leading-tight">
             <span className="block text-sm font-medium max-w-[10rem] truncate">{user.name}</span>
             <span className="block text-[10px] uppercase tracking-wide text-muted-foreground">{humanize(user.role)}</span>

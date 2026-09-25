@@ -29,6 +29,7 @@ import { db } from "@/lib/db";
 import { handler, ok, Errors } from "@/lib/hms/api";
 import { audit } from "@/lib/hms/services";
 import { customerProfileState, missingCustomerFields } from "@/lib/hms/customer-profile";
+import { isAvatarRef } from "@/lib/hms/profile-photo";
 
 function clientIp(req: NextRequest): string {
   return (
@@ -93,7 +94,7 @@ export const GET = handler(async ({ user }) => {
       // Organizational job title — display-only, never an authorization input.
       position: me.position?.name ?? null,
       status: me.status,
-      avatarUrl: me.avatarUrl,
+      avatarUrl: isAvatarRef(me.avatarUrl) ? me.avatarUrl : null,
       googleLinked: !!me.googleId,
       lastLoginAt: me.lastLoginAt?.toISOString() ?? null,
       createdAt: me.createdAt.toISOString(),

@@ -11,6 +11,7 @@ import {
 } from "@/lib/hms/auth";
 import { can } from "@/lib/hms/rbac";
 import { customerProfileState } from "@/lib/hms/customer-profile";
+import { isAvatarRef } from "@/lib/hms/profile-photo";
 import { termsStatusFor } from "@/lib/hms/legal/legal";
 import {
   emailOtpCooldownRemainingSec,
@@ -92,7 +93,8 @@ export const POST = handler(
     // Profile state is derived server-side (authoritative) and customerId is
     // included so the client session is complete immediately after login.
     // Terms acceptance state ships too, so the consent gate renders without a
-    // waiting for the first session refresh.
+    // waiting for the first session refresh. avatarUrl comes from the DB (the
+    // persistent source) — only valid storage keys are ever delivered.
     const profileState = await customerProfileState(user);
     const terms = await termsStatusFor(user);
     const res = NextResponse.json({
@@ -107,6 +109,7 @@ export const POST = handler(
         profileComplete: profileState.profileComplete,
         missingFields: profileState.missingFields,
         terms,
+        avatarUrl: isAvatarRef(user.avatarUrl) ? user.avatarUrl : null,
       },
     });
     res.headers.set("x-session-expires-at", expiresAt.toISOString());

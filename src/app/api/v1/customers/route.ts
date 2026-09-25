@@ -38,6 +38,7 @@ const SORT_FIELDS = ["createdAt", "companyName", "code", "status"] as const;
 export const GET = handler(
   async ({ req, user }) => {
     const q = listQuery(req);
+    const sp = new URL(req.url).searchParams;
     const where: Prisma.CustomerWhereInput = {};
 
     // Customer portal users are scoped to their own record.
@@ -46,6 +47,17 @@ export const GET = handler(
     } else {
       if (q.customerId) where.id = q.customerId;
       if (q.status) where.status = q.status.toUpperCase();
+      // customersOnly=1: used by the complaint/report pickers — genuine
+      // customer accounts only (a Customer linked to a CUSTOMER-role portal
+      // user, or a contact record with no portal user). Customer records that
+      // just mirror a staff login (SUPER_ADMIN/SUPERVISOR accounts provisioned
+      // before role checks existed) are excluded at the QUERY level, so no
+      // non-customer user can ever be selected for a complaint.
+      if (sp.get("customersOnly") === "1") {
+        where.AND = [
+          { OR: [{ portalUser: { role: "CUSTOMER" } }, { portalUser: { is: null } }] },
+        ];
+      }
       if (q.search) {
         const term = ciContains(normalizeSearchTerm(q.search));
         where.OR = [

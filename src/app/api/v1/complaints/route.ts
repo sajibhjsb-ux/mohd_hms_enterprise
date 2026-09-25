@@ -100,8 +100,19 @@ export const POST = handler(
       customerId = body.customerId;
     }
 
-    const customer = await db.customer.findUnique({ where: { id: customerId }, select: { id: true } });
+    // Backend-authoritative customer check: the selected customer must be a
+    // genuine customer account. A customer record that merely mirrors a staff
+    // login (super-admin/supervisor accounts created before role checks
+    // existed) is rejected here, so tampering with the request to file a
+    // complaint against a non-customer user can never succeed.
+    const customer = await db.customer.findUnique({
+      where: { id: customerId },
+      select: { id: true, portalUser: { select: { role: true } } },
+    });
     if (!customer) throw Errors.badRequest("Customer not found.");
+    if (customer.portalUser && customer.portalUser.role !== "CUSTOMER") {
+      throw Errors.badRequest("The selected account is not a Customer account and cannot be used for a complaint.");
+    }
 
     if (body.equipmentId) {
       const equipment = await db.equipment.findUnique({ where: { id: body.equipmentId }, select: { id: true, customerId: true } });

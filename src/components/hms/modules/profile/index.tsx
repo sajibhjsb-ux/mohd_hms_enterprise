@@ -35,7 +35,7 @@ import { PushSettingsCards } from "@/components/hms/modules/profile/push-setting
 import { MyPayslipsCard } from "@/components/hms/modules/profile/payslips";
 import { SecuritySessionsCard } from "@/components/hms/modules/profile/security-sessions";
 import { humanize } from "@/lib/hms/constants";
-import { initials, fmtDate } from "@/lib/hms/format";
+import { fmtDate } from "@/lib/hms/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -53,6 +53,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SkillsManager, type SkillEntry } from "@/components/hms/modules/technicians/skills-manager";
+import { UserAvatar as Avatar } from "@/components/hms/shared/avatar";
 
 type ProfilePayload = {
   user: {
@@ -132,22 +133,6 @@ function mobileError(v: string): string | null {
   }
   if (!/^\+?[\d\s().-]+$/.test(trimmed)) return "Enter a valid mobile number (digits with optional +, spaces, dashes).";
   return null;
-}
-
-/** Authenticated avatar URL (cache-busting on the key, bucket stays private). */
-function avatarSrc(key: string | null | undefined): string | null {
-  return key ? `/api/v1/profile/avatar?v=${encodeURIComponent(key)}` : null;
-}
-
-function Avatar({ url, name, className }: { url: string | null | undefined; name: string; className?: string }) {
-  const src = avatarSrc(url);
-  return src ? (
-    <img src={src} alt="" className={cn("rounded-full object-cover", className)} />
-  ) : (
-    <span className={cn("rounded-full bg-primary/10 text-primary font-semibold flex items-center justify-center", className)}>
-      {initials(name)}
-    </span>
-  );
 }
 
 export function ProfileModule() {

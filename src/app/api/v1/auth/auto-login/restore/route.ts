@@ -25,6 +25,7 @@ import {
 } from "@/lib/hms/auth";
 import { db } from "@/lib/db";
 import { customerProfileState } from "@/lib/hms/customer-profile";
+import { isAvatarRef } from "@/lib/hms/profile-photo";
 import { termsStatusFor } from "@/lib/hms/legal/legal";
 import { audit } from "@/lib/hms/services";
 
@@ -57,6 +58,8 @@ export const POST = handler(
       action: "PERSISTENT_SESSION_RESTORED", resourceType: "SESSION",
       metadata: { sessionExpiresAt: expiresAt.toISOString() },
     });
+    const storedAvatar = avatar?.avatarUrl ?? null;
+    const avatarUrl = isAvatarRef(storedAvatar) ? storedAvatar : null;
     return NextResponse.json({
       ok: true,
       data: {
@@ -72,7 +75,7 @@ export const POST = handler(
           profileComplete: profileState.profileComplete,
           missingFields: profileState.missingFields,
           terms,
-          avatarUrl: avatar?.avatarUrl ?? null,
+          avatarUrl,
         },
         sessionExpiresAt: expiresAt,
         idleTimeoutSeconds: SESSION_IDLE_TIMEOUT_SECONDS,

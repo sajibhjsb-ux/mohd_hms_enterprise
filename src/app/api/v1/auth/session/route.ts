@@ -2,6 +2,7 @@ import { handler, ok } from "@/lib/hms/api";
 import { getSessionUser, SESSION_IDLE_TIMEOUT_SECONDS } from "@/lib/hms/auth";
 import { db } from "@/lib/db";
 import { customerProfileState } from "@/lib/hms/customer-profile";
+import { isAvatarRef } from "@/lib/hms/profile-photo";
 import { termsStatusFor } from "@/lib/hms/legal/legal";
 
 /** Session heartbeat. Sliding renewal happens server-side, silently — no reloads.
@@ -17,7 +18,10 @@ export const GET = handler(
       termsStatusFor(user),
       db.user.findUnique({ where: { id: user.id }, select: { avatarUrl: true } }),
     ]);
-    const avatarUrl = avatar?.avatarUrl ?? null;
+    // avatarUrl carries only valid storage keys — a legacy external URL is
+    // delivered as null so clients render the default avatar, not a broken image.
+    const storedAvatar = avatar?.avatarUrl ?? null;
+    const avatarUrl = isAvatarRef(storedAvatar) ? storedAvatar : null;
     return ok({
       authenticated: true,
       user: {
