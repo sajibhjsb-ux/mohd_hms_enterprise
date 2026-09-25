@@ -428,6 +428,19 @@ const complaint: DocumentDef = {
 
 // ── 3. INSPECTION REPORT (IRMS) ────────────────────────────────────────────
 
+/** Shape of the inspection photo rows this document consumes (structurally
+ *  satisfied by the Prisma InspectionPhoto rows the loader selects). */
+type IrmsPhoto = {
+  category: string;
+  photoNo: string;
+  sortOrder: number;
+  caption: string;
+  room: string;
+  building: string;
+  storagePath: string;
+  displayPath: string;
+};
+
 type IrmsRow = {
   code: string; status: string; overallCondition: string; revision: number; clientComment: string | null;
   jobOrderNo: string | null; type: string; inspectionDate: Date; building: string | null; floor: string | null; room: string | null;
@@ -439,7 +452,7 @@ type IrmsRow = {
   workOrder: { code: string; title: string } | null;
   inspector: { employeeNo: string; user: { name: string } } | null;
   findings: { finding: string; severity: string; recommendation: string | null }[];
-  photos: Parameters<typeof canonicalPhotoOrder>[0];
+  photos: IrmsPhoto[];
   approvals: { step: string; fromStatus: string; toStatus: string; userName: string | null; comment: string | null; createdAt: Date }[];
 };
 

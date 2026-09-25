@@ -23,22 +23,17 @@ export type SampleCtx = {
 
 // ── shared sample assets ────────────────────────────────────────────────────
 
-let sampleQrPng: Buffer | null | undefined;
+let sampleQrPng: Promise<Buffer | null> | undefined;
 
 /** Honest sample QR: production documents embed the centralized verification
  *  identity from the QR service; a preview must NOT mint a fake token, so the
  *  sample code encodes an explanatory string instead. */
-export function sampleQr(): Buffer | null {
-  if (sampleQrPng !== undefined) return sampleQrPng;
-  try {
-    sampleQrPng = Buffer.from(
-      QRCode.toBuffer(
-        "MOHD.HMS ENTERPRISE — template preview. Production documents embed the centralized https://app.mohdhms.com/verify/{token} link.",
-        { errorCorrectionLevel: "H", margin: 1, width: 240 }
-      )
-    );
-  } catch {
-    sampleQrPng = null;
+export function sampleQr(): Promise<Buffer | null> {
+  if (sampleQrPng === undefined) {
+    sampleQrPng = QRCode.toBuffer(
+      "MOHD.HMS ENTERPRISE — template preview. Production documents embed the centralized https://app.mohdhms.com/verify/{token} link.",
+      { errorCorrectionLevel: "H", margin: 1, width: 240 }
+    ).then(Buffer.from).catch(() => null);
   }
   return sampleQrPng;
 }
@@ -78,6 +73,7 @@ const company_name = "MOHD.HMS Enterprise";
 export async function sampleContext(type: TemplateType, brand: Branding): Promise<SampleCtx> {
   const company = brand.company || company_name;
   const varsCompany = { company_name: company };
+  const qrPng = await sampleQr();
 
   switch (type) {
     case "invoice": {
@@ -127,7 +123,7 @@ export async function sampleContext(type: TemplateType, brand: Branding): Promis
           meta: [["Status", "Partially Paid"], ["Due", "14 Mar 2026"]],
         }),
         data: inv,
-        qr: sampleQr() ? { png: sampleQr()!, reference: inv.code } : null,
+        qr: qrPng ? { png: qrPng, reference: inv.code } : null,
         vars: {
           invoice_number: inv.code,
           invoice_date: "12 Feb 2026",
@@ -191,7 +187,7 @@ export async function sampleContext(type: TemplateType, brand: Branding): Promis
           meta: [["Status", "Sent"], ["Valid Until", "2 Mar 2026"]],
         }),
         data: q,
-        qr: sampleQr() ? { png: sampleQr()!, reference: q.code } : null,
+        qr: qrPng ? { png: qrPng, reference: q.code } : null,
         vars: {
           quotation_number: q.code,
           quotation_date: "2 Feb 2026",
@@ -268,7 +264,7 @@ export async function sampleContext(type: TemplateType, brand: Branding): Promis
           meta: [["Status", "Approved"], ["Overall", "Fair"], ["Revision", "Rev 1"]],
         }),
         data: r,
-        qr: sampleQr() ? { png: sampleQr()!, reference: r.code } : null,
+        qr: qrPng ? { png: qrPng, reference: r.code } : null,
         vars: {
           inspection_number: r.code,
           project_number: "PRJ-2026-003",
@@ -327,7 +323,7 @@ export async function sampleContext(type: TemplateType, brand: Branding): Promis
           meta: [["Status", "Completed"], ["Priority", "Normal"]],
         }),
         data: wo,
-        qr: sampleQr() ? { png: sampleQr()!, reference: wo.code } : null,
+        qr: qrPng ? { png: qrPng, reference: wo.code } : null,
         vars: {
           work_order_number: wo.code,
           status: "Completed",
@@ -371,7 +367,7 @@ export async function sampleContext(type: TemplateType, brand: Branding): Promis
           meta: [["Status", "Completed"]],
         }),
         data: t,
-        qr: sampleQr() ? { png: sampleQr()!, reference: t.code } : null,
+        qr: qrPng ? { png: qrPng, reference: t.code } : null,
         vars: {
           task_number: t.code,
           status: "Completed",
@@ -415,7 +411,7 @@ export async function sampleContext(type: TemplateType, brand: Branding): Promis
           meta: [["Status", "Active"]],
         }),
         data: e,
-        qr: sampleQr() ? { png: sampleQr()!, reference: e.assetTag } : null,
+        qr: qrPng ? { png: qrPng, reference: e.assetTag } : null,
         vars: {
           asset_tag: e.assetTag,
           name: e.name,
@@ -467,7 +463,7 @@ export async function sampleContext(type: TemplateType, brand: Branding): Promis
           meta: [["Status", "Resolved"], ["Priority", "High"]],
         }),
         data: c,
-        qr: sampleQr() ? { png: sampleQr()!, reference: c.code } : null,
+        qr: qrPng ? { png: qrPng, reference: c.code } : null,
         vars: {
           complaint_number: c.code,
           status: "Resolved",
@@ -509,7 +505,7 @@ export async function sampleContext(type: TemplateType, brand: Branding): Promis
           meta: [["Status", "Approved"]],
         }),
         data: po,
-        qr: sampleQr() ? { png: sampleQr()!, reference: po.code } : null,
+        qr: qrPng ? { png: qrPng, reference: po.code } : null,
         vars: {
           po_number: po.code,
           order_date: "3 Feb 2026",
@@ -555,7 +551,7 @@ export async function sampleContext(type: TemplateType, brand: Branding): Promis
           meta: [["Method", "Bank Transfer"]],
         }),
         data: p,
-        qr: sampleQr() ? { png: sampleQr()!, reference: p.code } : null,
+        qr: qrPng ? { png: qrPng, reference: p.code } : null,
         vars: {
           receipt_number: p.code,
           receipt_date: "20 Feb 2026",

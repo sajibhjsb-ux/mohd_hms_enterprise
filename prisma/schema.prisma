@@ -3069,8 +3069,9 @@ model DocumentTemplate {
   // ONE default per templateType (resolved when a document is generated
   // without an explicit template — §7/§30). Enforced in the service layer.
   isDefault        Boolean   @default(false)
-  currentVersionId String?
-  versions         DocumentTemplateVersion[]
+  currentVersionId String? @unique
+  currentVersion   DocumentTemplateVersion? @relation("TemplateCurrentVersion", fields: [currentVersionId], references: [id])
+  versions         DocumentTemplateVersion[] @relation("TemplateVersions")
   createdById      String?
   updatedById      String?
   createdAt        DateTime  @default(now())
@@ -3088,7 +3089,9 @@ model DocumentTemplate {
 model DocumentTemplateVersion {
   id          String           @id @default(cuid())
   templateId  String
-  template    DocumentTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  template    DocumentTemplate @relation("TemplateVersions", fields: [templateId], references: [id], onDelete: Cascade)
+  // The template's working copy points here while the version is a DRAFT.
+  currentOf   DocumentTemplate? @relation("TemplateCurrentVersion")
   version     Int
   // TemplateLayoutJson: { order, hidden, headings, config }
   layout      String           @default("{}")

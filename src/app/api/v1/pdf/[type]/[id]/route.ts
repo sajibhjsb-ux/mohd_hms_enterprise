@@ -47,7 +47,11 @@ export const GET = handler(
       const proto = req.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
       const host = req.headers.get("x-forwarded-host")?.split(",")[0]?.trim() || req.headers.get("host")?.trim();
       const origin = host ? `${proto || "http"}://${host}` : undefined;
-      const doc = await buildDocument(def, id, user, undefined, origin);
+      // ?regenerate=1 — explicit re-resolution: re-pick the CURRENT type default
+      // and re-pin the template snapshot (§29/§56 — otherwise the pinned
+      // historical version always wins, no matter how templates changed).
+      const regenerate = req.nextUrl.searchParams.get("regenerate") === "1";
+      const doc = await buildDocument(def, id, user, undefined, origin, { regenerate });
       const durationMs = Date.now() - started;
 
       // §35 — structured generation log (no sensitive data).
@@ -64,6 +68,7 @@ export const GET = handler(
           durationMs,
           bytes: doc.bytes.length,
           pageCount: doc.pageCount,
+          regenerate,
         })
       );
 

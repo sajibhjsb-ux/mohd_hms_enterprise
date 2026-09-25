@@ -22,6 +22,7 @@ import { AiTab } from "./ai-tab";
 import { EmailTab } from "../email-config/email-tab";
 import { LegalTab } from "./legal-tab";
 import { NotificationsTab } from "./notifications-tab";
+import { TemplatesTab } from "./templates-tab";
 import { WhatsAppTab } from "./whatsapp-tab";
 
 // Keep in sync with package.json version.
@@ -63,6 +64,9 @@ export function SettingsModule() {
   const canViewWhatsApp = hasPerm(user, PERMISSIONS.whatsapp_view);
   // Push notification center (spec §30) — push.view permission (ADMIN roles).
   const canViewPush = hasPerm(user, PERMISSIONS.push_view);
+  // Document Template Management (Settings → Templates) — read = view/preview;
+  // manage/publish actions are gated inside the tab (segregation of duties).
+  const canViewTemplates = hasPerm(user, PERMISSIONS.templates_read);
 
   const [values, setValues] = useState<Record<string, string>>({});
   const [saved, setSaved] = useState<Record<string, string>>({});
@@ -162,6 +166,7 @@ export function SettingsModule() {
           {canViewEmail ? <TabsTrigger value="email">Email</TabsTrigger> : null}
           {canViewWhatsApp ? <TabsTrigger value="whatsapp">WhatsApp</TabsTrigger> : null}
           {canViewPush ? <TabsTrigger value="notifications">Notifications</TabsTrigger> : null}
+          {canViewTemplates ? <TabsTrigger value="templates">Templates</TabsTrigger> : null}
           <TabsTrigger value="legal">Legal</TabsTrigger>
           <TabsTrigger value="system">System</TabsTrigger>
         </TabsList>
@@ -292,6 +297,13 @@ export function SettingsModule() {
         {canViewPush ? (
           <TabsContent value="notifications">
             <NotificationsTab />
+          </TabsContent>
+        ) : null}
+
+        {/* ── Document Template Management (central Settings → Templates) ── */}
+        {canViewTemplates ? (
+          <TabsContent value="templates">
+            <TemplatesTab />
           </TabsContent>
         ) : null}
 

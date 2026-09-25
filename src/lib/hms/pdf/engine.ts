@@ -17,7 +17,7 @@
 // `@/lib/hms/format` (BND) before they reach this engine.
 
 import "server-only";
-import { PDFDocument, StandardFonts, rgb, type Color, type PDFFont, type PDFImage, type PDFPage } from "pdf-lib";
+import { PDFDocument, StandardFonts, rgb, type Color, type PDFFont, type PDFImage, type PDFPage, type RGB } from "pdf-lib";
 import { fmtDateTime } from "@/lib/hms/format";
 import { DEFAULT_TEMPLATE_STYLE, type TemplateStyle, type TemplateFont } from "./template-style";
 
@@ -109,7 +109,7 @@ const FONT_FAMILIES: Record<TemplateFont, [StandardFonts, StandardFonts]> = {
   Courier: [StandardFonts.Courier, StandardFonts.CourierBold],
 };
 
-function hexToRgb(hex: string, fallback: Color): Color {
+function hexToRgb(hex: string, fallback: RGB): RGB {
   const m = /^#([0-9a-fA-F]{6})$/.exec(hex);
   if (!m) return fallback;
   const n = parseInt(m[1], 16);
@@ -684,10 +684,10 @@ export class PdfDoc {
    *  height is derived from the MEASURED body top so exactly 3 rows fill a
    *  fresh page (§14) — no per-report or per-page size variation, and no
    *  hardcoded offsets that could collide with the header or footer. */
-  private photoRowMetrics(): { rowH: number; cellW: number; imgW: number; imgH: number; gap: number; floorY: number } {
+  private photoRowMetrics(cols = 3): { rowH: number; cellW: number; imgW: number; imgH: number; gap: number; floorY: number } {
     const gap = 7; // card → card spacing, horizontal and vertical (§12: 6–10pt)
     const floorY = this.floorY; // footer clearance — same floor as ensure()
-    const cellW = (this.contentW - 2 * gap) / 3;
+    const cellW = (this.contentW - (cols - 1) * gap) / cols;
     const rowH = Math.floor(((this.bodyTop - floorY) - 2 * gap) / 3); // 3 rows fill a fresh page
     const imgH = rowH - 34; // caption strip (number + caption) keeps its proven 34pt
     return { rowH, cellW, imgW: cellW - 12, imgH, gap, floorY };
@@ -699,9 +699,10 @@ export class PdfDoc {
   private async drawPhotoRow(
     cells: { caption: string; number: string; bytes: Buffer | Uint8Array | null }[],
     yTop: number,
-    m: { rowH: number; cellW: number; imgW: number; imgH: number; gap: number }
+    m: { rowH: number; cellW: number; imgW: number; imgH: number; gap: number },
+    cols = 3
   ): Promise<void> {
-    for (let i = 0; i < Math.min(3, cells.length); i++) {
+    for (let i = 0; i < Math.min(cols, cells.length); i++) {
       const cell = cells[i];
       const x = this.ML + i * (m.cellW + m.gap);
 
@@ -764,8 +765,13 @@ export class PdfDoc {
    *   • professional size (§10): row geometry is fixed from the measured
    *     body top — photos keep the same size on every page and report.
    */
-  async photoGrid(pages: { caption: string; number: string; bytes: Buffer | Uint8Array | null }[][], opts?: { heading?: string }): Promise<void> {
-    const m = this.photoRowMetrics();
+  async photoGrid(
+    pages: { caption: string; number: string; bytes: Buffer | Uint8Array | null }[][],
+    opts?: { heading?: string; cols?: number }
+  ): Promise<void> {
+    // Template-configurable column count (§16) — 1–4, default 3 = historical layout.
+    const cols = Math.min(4, Math.max(1, Math.round(opts?.cols ?? 3)));
+    const m = this.photoRowMetrics(cols);
     let headingPending = opts?.heading?.trim() ?? "";
 
     for (const cells of pages) {
@@ -780,7 +786,7 @@ export class PdfDoc {
 
       let i = 0;
       while (i < cells.length) {
-        const rowsLeft = Math.ceil((cells.length - i) / 3);
+        const rowsLeft = Math.ceil((cells.length - i) / cols);
         let rowsHere = Math.min(Math.floor((this.y - m.floorY + m.gap) / (m.rowH + m.gap)), rowsLeft);
         if (rowsHere <= 0) {
           this.addPage();
@@ -789,10 +795,10 @@ export class PdfDoc {
         for (let r = 0; r < rowsHere; r++) {
           // Row top: leave the gap above every row except the first on the page.
           const rowTop = r === 0 ? this.y : this.y - m.gap;
-          await this.drawPhotoRow(cells.slice(i, i + 3), rowTop, m);
+          await this.drawPhotoRow(cells.slice(i, i + cols), rowTop, m, cols);
           this.y = rowTop - m.rowH;
           this.recordInk(this.y, this.PW - this.MR);
-          i += 3;
+          i += cols;
         }
       }
     }
