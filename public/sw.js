@@ -38,10 +38,15 @@ const PRECACHE_URLS = [
   "/brand/icon-maskable-512.png",
 ];
 
-/** Requests that must never be intercepted (sensitive APIs + realtime). */
+/** Requests that must never be intercepted (sensitive APIs + realtime +
+ *  public QR verification — QR spec §48/§62). Verification navigations are
+ *  ONLINE-ONLY: they must always hit the live server, are never cached and
+ *  never fall back to offline.html — a slow network must never masquerade
+ *  as "offline" and a cached page must never answer a verification scan. */
 function isBypassed(url) {
   if (url.origin !== self.location.origin) return true;
   if (url.pathname === "/api" || url.pathname.startsWith("/api/")) return true;
+  if (url.pathname === "/verify" || url.pathname.startsWith("/verify/")) return true;
   if (url.searchParams.has("XTransformPort")) return true; // gateway relay (socket.io etc.)
   if (url.searchParams.has("EIO") || url.pathname === "/engine.io") return true;
   if (url.pathname.startsWith("/_next/webpack-hmr")) return true;
@@ -160,6 +165,14 @@ self.addEventListener("activate", (event) => {
           .filter((n) => n.startsWith("hms-") && ![STATIC_CACHE, SHELL_CACHE].includes(n))
           .map((n) => caches.delete(n))
       );
+      // QR spec §62 — verification responses are never cached. Purge any
+      // /verify/* entries a previous worker version may have stored.
+      for (const n of [STATIC_CACHE, SHELL_CACHE]) {
+        const cache = await caches.open(n);
+        for (const req of await cache.keys()) {
+          if (new URL(req.url).pathname.startsWith("/verify/")) await cache.delete(req);
+        }
+      }
       await self.clients.claim();
     })()
   );

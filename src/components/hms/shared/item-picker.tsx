@@ -270,14 +270,17 @@ export function CreateItemDialog({
   const [reorderLevel, setReorderLevel] = useState("0");
   const [unitCost, setUnitCost] = useState("0");
 
-  useEffect(() => {
-    if (open) {
+  /** Reset free-text fields when the dialog closes — done in the onOpenChange
+   *  event handler (not an effect) so reopening always starts clean. */
+  const handleOpenChange = (o: boolean) => {
+    if (!o) {
       setName("");
       setBrand("");
       setModel("");
       setPartNumber("");
     }
-  }, [open]);
+    onOpenChange(o);
+  };
 
   const submit = () => {
     if (!name.trim()) return;
@@ -296,7 +299,7 @@ export function CreateItemDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">

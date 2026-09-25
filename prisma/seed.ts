@@ -786,7 +786,10 @@ async function main() {
     quotation_terms: "Quotation valid for 30 days unless otherwise stated. Prices subject to change after validity.",
     tax_percent_default: "6",
     currency: "MYR",
-    public_url: "https://www.mohdhms.com",
+    // Canonical public verification origin (QR spec §2/§3): EVERY QR code the
+    // system generates points at https://app.mohdhms.com/verify/{token}. This
+    // single setting is THE authoritative public origin — QRService reads it.
+    public_url: "https://app.mohdhms.com",
     // Legal (Terms & Conditions): customers are asked to accept the current
     // version in the portal before using it (toggle in Settings → Legal).
     terms_acceptance_required: "true",

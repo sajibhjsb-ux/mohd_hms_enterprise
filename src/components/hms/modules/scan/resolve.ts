@@ -4,19 +4,23 @@
 // reusing the application's EXISTING QR formats and destinations (no second
 // QR system):
 //
-//   1. Equipment QR labels  → `${origin}/?resource=equipment:{qrToken}`
-//      (exactly what /api/v1/equipment/[id]/qr encodes). Resolved through the
-//      existing token lookup endpoint + the equipment module's deep-link
-//      navigation — the same path the phone-camera scan of a printed label
-//      already takes.
-//   2. IRMS report QR codes → `${origin}/irms/reports/{id}` (as encoded by
+//   1. PUBLIC verification QRs → `${origin}/verify/{token}` — what EVERY
+//      QR code now encodes (equipment labels, invoices, quotations, work
+//      orders, inspection reports… QR spec §2/§12). Resolved through the
+//      public verification API; equipment results carry an internal openPath
+//      which is then routed through the existing equipment token lookup.
+//   2. Legacy equipment QR labels → `${origin}/?resource=equipment:{qrToken}`
+//      (old printed labels — kept verifiable, QR spec §36 compatibility).
+//      Resolved through the existing token lookup endpoint + the equipment
+//      module's deep-link navigation.
+//   3. IRMS report QR codes → `${origin}/irms/reports/{id}` (as encoded by
 //      /api/v1/irms/reports/[id]/qr). Routes through the existing SPA router
 //      (RESOURCE_ROUTES.INSPECTION_REPORT mapping).
-//   3. Any other same-origin in-app module URL (complaints, invoices, work
+//   4. Any other same-origin in-app module URL (complaints, invoices, work
 //      orders…) → the module's existing dedicated page. RBAC is honoured
 //      twice: here as a UX hint (module must be visible to THIS user) and
 //      authoritatively by the backend API on the destination page.
-//   4. Bare `equipment:{token}` strings and bare equipment tokens (cuid-shaped)
+//   5. Bare `equipment:{token}` strings and bare equipment tokens (cuid-shaped)
 //      → the equipment token flow (same convention as the shell QR dialog).
 //
 // Security posture (spec §18–§21): external URLs are NEVER opened; unknown
@@ -29,6 +33,9 @@ export type QrResolution =
   | { kind: "route"; module: string; seg: string[]; query: Record<string, string> }
   /** Resolve an equipment qrToken through the existing lookup endpoint. */
   | { kind: "equipment-token"; token: string }
+  /** PUBLIC verification QR (/verify/{token}) — resolve through the public
+   *  verification API, then open the record when it exposes an internal path. */
+  | { kind: "verification"; token: string }
   /** Do nothing — show "Unsupported QR Code" (or the permission variant). */
   | { kind: "unsupported"; reason: "empty" | "external" | "unknown" | "permission" | "self" };
 
@@ -84,6 +91,15 @@ export function resolveQrValue(raw: string, allModules: string[], visibleModules
       if (type?.toLowerCase() === "equipment" && token) return { kind: "equipment-token", token };
       // Only the equipment deep-link format exists in this application.
       return { kind: "unsupported", reason: "unknown" };
+    }
+
+    // PUBLIC verification URL — the canonical format every QR code now
+    // encodes (QR spec §2). The path must be exactly /verify/{token}; only
+    // the opaque token is ever sent to the app's own public verification
+    // endpoint (same-origin API call — the scanned host is never contacted).
+    const segs0 = parseSegments(url.pathname);
+    if (segs0.length === 2 && segs0[0] === "verify" && /^[A-Za-z0-9_-]{8,80}$/.test(segs0[1])) {
+      return { kind: "verification", token: segs0[1] };
     }
 
     // Everything else: same-origin only. External QR codes are never opened

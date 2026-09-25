@@ -43,7 +43,7 @@ const COMPANY_FIELDS: FieldDef[] = [
   { key: "company_email_inspection", label: "Inspection Email", type: "email" },
   { key: "tax_percent_default", label: "Default Tax (%)", placeholder: "6" },
   { key: "currency", label: "Currency (BND)", placeholder: "BND" },
-  { key: "public_url", label: "Public Website URL", placeholder: "https://www.mohdhms.com" },
+  { key: "public_url", label: "Public Verification URL (QR)", placeholder: "https://app.mohdhms.com" },
   { key: "invoice_terms", label: "Invoice Terms", textarea: true },
   { key: "quotation_terms", label: "Quotation Terms", textarea: true },
 ];

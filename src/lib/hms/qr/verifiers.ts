@@ -31,6 +31,10 @@ export type PublicVerification = {
   verifyState?: "CANCELLED" | "SUPERSEDED";
   /** what the scanner can do after a positive verification (§35) */
   access: { requiresLogin: boolean; note: string } | null;
+  /** optional INTERNAL in-app route offered AFTER verification (QR spec §12
+   *  "internal routing after verification"). Only ever an app deep link —
+   *  reaching the record still requires signing in + full server-side RBAC. */
+  openPath?: string;
 };
 
 type EntityVerifier = {
@@ -43,6 +47,30 @@ type EntityVerifier = {
 const LOGIN_ACCESS = {
   requiresLogin: true,
   note: "Document authenticity confirmed. Sign in to MOHD.HMS to view the full document.",
+};
+
+/** Shared PM record loader — PREVENTIVE_MAINTENANCE is the canonical spelling
+ *  of the PM_TASK record type (QR spec §12); both resolve the same model. */
+const PM_TASK_LOADER: (id: string) => Promise<PublicVerification | null> = async (id) => {
+  const t = await db.pmTask.findUnique({
+    where: { id },
+    include: { equipment: { select: { name: true, assetTag: true } } },
+  });
+  if (!t) return null;
+  return {
+    number: t.code,
+    numberLabel: "PM Record Number",
+    recordStatus: t.status,
+    statusLabel: humanize(t.status),
+    fields: [
+      ["Equipment", `${t.equipment.name} (${t.equipment.assetTag})`],
+      ["Scheduled For", fmtDate(t.dueDate)],
+      ["Completed", fmtDate(t.completedAt)],
+      ["Status", humanize(t.status)],
+    ],
+    verifyState: t.status === "CANCELLED" ? "CANCELLED" : undefined,
+    access: LOGIN_ACCESS,
+  };
 };
 
 export const QR_VERIFIERS: Record<string, EntityVerifier> = {
@@ -70,6 +98,11 @@ export const QR_VERIFIERS: Record<string, EntityVerifier> = {
           ["Installed", fmtDate(eq.installationDate)],
         ],
         access: null,
+        // §12/§21 — signed-in staff can jump from the verification page into
+        // the asset record via the EXISTING deep-link mechanism. The token is
+        // a locator (already printed on the physical label), not a credential:
+        // the destination still enforces equipment.read + customer scoping.
+        openPath: `/?resource=equipment:${eq.qrToken}`,
       };
     },
   },
@@ -281,27 +314,13 @@ export const QR_VERIFIERS: Record<string, EntityVerifier> = {
   // ── PM TASK RECORD (PM compliance traceability — safe fields only) ───────
   PM_TASK: {
     permission: "pm.read" as Permission,
-    async load(id) {
-      const t = await db.pmTask.findUnique({
-        where: { id },
-        include: { equipment: { select: { name: true, assetTag: true } } },
-      });
-      if (!t) return null;
-      return {
-        number: t.code,
-        numberLabel: "PM Record Number",
-        recordStatus: t.status,
-        statusLabel: humanize(t.status),
-        fields: [
-          ["Equipment", `${t.equipment.name} (${t.equipment.assetTag})`],
-          ["Scheduled For", fmtDate(t.dueDate)],
-          ["Completed", fmtDate(t.completedAt)],
-          ["Status", humanize(t.status)],
-        ],
-        verifyState: t.status === "CANCELLED" ? "CANCELLED" : undefined,
-        access: LOGIN_ACCESS,
-      };
-    },
+    load: PM_TASK_LOADER,
+  },
+
+  // ── PREVENTIVE_MAINTENANCE (QR spec §12 — same PM record, canonical name) ─
+  PREVENTIVE_MAINTENANCE: {
+    permission: "pm.read" as Permission,
+    load: PM_TASK_LOADER,
   },
 };
 

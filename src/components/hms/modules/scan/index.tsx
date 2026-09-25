@@ -114,6 +114,70 @@ export function ScanModule() {
         return; // route change unmounts the scanner → cleanup stops the camera
       }
 
+      // PUBLIC verification QR (/verify/{token}) — resolve through the same
+      // public verification API the scan page uses, then follow the record's
+      // internal openPath when the result is positive (QR spec §12). Reaching
+      // the destination still passes the existing RBAC-enforced lookups.
+      if (resolution.kind === "verification") {
+        if (typeof navigator.onLine === "boolean" && !navigator.onLine) {
+          lockedRef.current = false;
+          setPhase({
+            s: "error",
+            title: "No internet connection",
+            message: "An internet connection is required to verify this QR code.",
+          });
+          return;
+        }
+        try {
+          const res = await fetch(`/api/v1/public/verify/${encodeURIComponent(resolution.token)}`, { cache: "no-store" });
+          const body = await res.json().catch(() => null);
+          const v = body?.verification as
+            | { result?: string; label?: string; number?: string; statusLabel?: string; openPath?: string }
+            | undefined;
+          if (!v?.result) throw new Error("This QR code could not be verified.");
+
+          // Positive + internal route → resolve the record through the
+          // EXISTING equipment token lookup (server-side RBAC + scoping).
+          if (v.result === "VERIFIED" && v.openPath) {
+            const m = v.openPath.match(/resource=equipment:([A-Za-z0-9_-]+)/);
+            if (m) {
+              const lookup = await api.get<{ equipmentId: string }>(
+                `/api/v1/equipment/-/qr?token=${encodeURIComponent(m[1])}`
+              );
+              if (lookup.data?.equipmentId) {
+                navigateTo("equipment", [lookup.data.equipmentId]);
+                return; // route change unmounts the scanner
+              }
+            }
+          }
+
+          // Honest inline result — the scanner never fakes a verified badge.
+          const detail = v.number ? `${v.label ?? "Record"} ${v.number}` : "";
+          lockedRef.current = false;
+          setPhase({
+            s: "error",
+            title:
+              v.result === "VERIFIED"
+                ? `Verified — ${v.label ?? "Record"}${v.number ? ` ${v.number}` : ""}`
+                : `QR verifies as ${v.result}`,
+            message:
+              v.result === "VERIFIED"
+                ? detail
+                  ? `${detail} is authentic (status: ${v.statusLabel ?? "—"}). Open the module from the navigation to view the full record.`
+                  : "Open the module from the navigation to view the full record."
+                : "This QR code did not pass online verification.",
+          });
+        } catch (err) {
+          lockedRef.current = false;
+          setPhase({
+            s: "error",
+            title: "QR code could not be verified",
+            message: err instanceof Error && err.message ? err.message : "Please try again.",
+          });
+        }
+        return;
+      }
+
       // Equipment token → the existing lookup endpoint (RBAC + customer
       // scoping enforced server-side), then the same detail page the
       // equipment deep-link resolver opens.

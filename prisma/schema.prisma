@@ -2999,7 +2999,8 @@ model QrCode {
   id               String    @id @default(cuid())
   publicToken      String    @unique
   // EQUIPMENT | INVOICE | QUOTATION | WORK_ORDER | COMPLAINT |
-  // INSPECTION_REPORT | PAYMENT_RECEIPT | PURCHASE_ORDER | PM_TASK
+  // INSPECTION_REPORT | PAYMENT_RECEIPT | PURCHASE_ORDER | PM_TASK |
+  // PREVENTIVE_MAINTENANCE
   entityType       String
   entityId         String
   documentVersion  Int       @default(1)

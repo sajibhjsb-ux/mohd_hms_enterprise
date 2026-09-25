@@ -21,6 +21,9 @@ type Verification = {
   revokedReason?: string;
   verifiedAt?: string;
   access?: { requiresLogin: boolean; note: string } | null;
+  /** internal in-app deep link offered AFTER a positive verification (QR spec
+   *  §12) — reaching the record still requires signing in + server-side RBAC */
+  openPath?: string;
 };
 
 type State =
@@ -220,9 +223,19 @@ function ResultCard({ verification, onRetry }: { verification: Verification; onR
           {verification.access?.requiresLogin && (
             <p className="text-[12px] text-stone-500 px-3">{verification.access.note}</p>
           )}
-          <a href="/" className="mt-2 inline-block text-[12px] font-medium text-emerald-700 hover:text-emerald-800 underline underline-offset-2">
-            Open MOHD.HMS ENTERPRISE
-          </a>
+          {positive && verification.openPath && (
+            <a
+              href={verification.openPath}
+              className="mt-2 inline-flex min-h-[36px] items-center gap-1.5 rounded-lg bg-[#14532d] px-4 py-2 text-[12px] font-semibold text-white shadow-sm transition-colors hover:bg-[#0c2414]"
+            >
+              Open this record in MOHD.HMS
+            </a>
+          )}
+          {!verification.openPath && (
+            <a href="/" className="mt-2 inline-block text-[12px] font-medium text-emerald-700 hover:text-emerald-800 underline underline-offset-2">
+              Open MOHD.HMS ENTERPRISE
+            </a>
+          )}
         </div>
       </div>
     </article>

@@ -42,6 +42,7 @@ export const QR_ENTITY_TYPES = [
   "PAYMENT_RECEIPT",
   "PURCHASE_ORDER",
   "PM_TASK",
+  "PREVENTIVE_MAINTENANCE",
 ] as const;
 export type QrEntityType = (typeof QR_ENTITY_TYPES)[number] | (string & {});
 
@@ -219,13 +220,19 @@ export async function ensureQr(
     });
     if (existing) return shape(existing);
 
+    // §17 — version distinguishes historical identities of the same record.
+    // Never reset to 1 after a revoke/regenerate cycle.
+    const prev = await db.qrCode.aggregate({
+      where: { entityType, entityId },
+      _max: { documentVersion: true },
+    });
     const issuedAt = new Date();
     const created = await db.qrCode.create({
       data: {
         publicToken: newPublicToken(),
         entityType,
         entityId,
-        documentVersion: 1,
+        documentVersion: (prev._max.documentVersion ?? 0) + 1,
         verificationType: opts.verificationType ?? "DOCUMENT",
         status: "ACTIVE",
         issuedAt,
@@ -253,13 +260,18 @@ export async function ensureQr(
 
 /** Explicit, authorized regeneration (§30): revoke the current identity and
  *  issue a fresh one in one transaction. The OLD token becomes a REVOKED row
- *  — printed labels show "revoked", never a wrong record. */
+ *  — printed labels show "revoked", never a wrong record. documentVersion
+ *  increments (QR spec §17) so historical identities stay distinguishable. */
 export async function regenerateQr(
   entityType: QrEntityType,
   entityId: string,
   actor: { id: string; email: string }
 ): Promise<QrCodeRow> {
   const result = await db.$transaction(async (tx) => {
+    const prev = await tx.qrCode.aggregate({
+      where: { entityType, entityId },
+      _max: { documentVersion: true },
+    });
     await tx.qrCode.updateMany({
       where: { entityType, entityId, status: "ACTIVE" },
       data: { status: "REVOKED", revokedAt: new Date(), revokedReason: "Regenerated — replaced by a new QR identity" },
@@ -270,6 +282,7 @@ export async function regenerateQr(
         publicToken: newPublicToken(),
         entityType,
         entityId,
+        documentVersion: (prev._max.documentVersion ?? 0) + 1,
         verificationType: entityType === "EQUIPMENT" ? "EQUIPMENT" : "DOCUMENT",
         status: "ACTIVE",
         issuedAt,
@@ -418,6 +431,7 @@ export const QR_READ_PERMISSION: Record<string, Permission> = {
   PAYMENT_RECEIPT: "payments.read",
   PURCHASE_ORDER: "purchases.read",
   PM_TASK: "pm.read",
+  PREVENTIVE_MAINTENANCE: "pm.read",
 };
 
 export const QR_MANAGE_PERMISSION: Record<string, Permission> = {
@@ -430,6 +444,7 @@ export const QR_MANAGE_PERMISSION: Record<string, Permission> = {
   PAYMENT_RECEIPT: "invoices.manage",
   PURCHASE_ORDER: "purchases.manage",
   PM_TASK: "pm.manage",
+  PREVENTIVE_MAINTENANCE: "pm.manage",
 };
 
 export function readPermissionFor(entityType: string): Permission | null {
@@ -453,6 +468,7 @@ const PDF_QR_ELIGIBLE: Record<string, (status: string) => boolean> = {
   PAYMENT_RECEIPT: () => true,
   EQUIPMENT: () => true,
   PM_TASK: () => true,
+  PREVENTIVE_MAINTENANCE: () => true,
 };
 
 export type PdfQrBadge = {

@@ -26,6 +26,10 @@ function requestContext(req: NextRequest): string {
   return `${ipHash}:${ua}`;
 }
 
+/** §25 — verification results are for direct QR-scan access, never for search
+ *  indexing. Belt-and-braces alongside the page's robots metadata. */
+const NO_INDEX = { "X-Robots-Tag": "noindex, nofollow" } as const;
+
 export async function GET(req: NextRequest, ctx: { params: Promise<{ token: string }> }) {
   const { token } = await ctx.params;
 
@@ -51,7 +55,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ token: stri
 
   // §62 — never cache a verification result: every scan must hit the live
   // backend. no-store also applies to intermediaries.
-  const noStore = { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" };
+  const noStore = { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", ...NO_INDEX };
 
   if (outcome.result === "VERIFIED" && outcome.entity) {
     return NextResponse.json(
@@ -68,6 +72,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ token: stri
           fields: outcome.entity.fields,
           verifiedAt: new Date().toISOString(),
           access: outcome.entity.access,
+          openPath: outcome.entity.openPath || undefined,
         },
       },
       { status: 200, headers: noStore }
