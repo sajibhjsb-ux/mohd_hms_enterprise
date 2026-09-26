@@ -23,8 +23,25 @@ export const DELETE = withParams<{ id: string }>(async ({ user, params }) => {
       select: { id: true, name: true, objectKey: true, versions: { select: { objectKey: true } } },
     });
 
+    // Storage removal first — a DB row without objects is worse than the
+    // reverse. Failure to remove ANY object aborts the metadata deletion so
+    // the folder tree is never reported purged while objects still exist.
     const keys = [...new Set(files.flatMap((f) => [f.objectKey, ...f.versions.map((v) => v.objectKey)]))].filter(Boolean);
-    for (const key of keys) await storage.remove(key).catch(() => undefined);
+    const failedKeys: string[] = [];
+    for (const key of keys) {
+      const ok = await storage.removeStrict(key).then(() => true).catch((err: unknown) => {
+        console.error(JSON.stringify({ ts: new Date().toISOString(), level: "error", msg: "folder-purge-remove-failed", folderId: id, key, error: err instanceof Error ? err.message : String(err) }));
+        return false;
+      });
+      if (!ok) failedKeys.push(key);
+    }
+    if (failedKeys.length > 0) {
+      void audit({
+        actorId: user.id, actorEmail: user.email, action: "FOLDER_PURGE_ABORTED", resourceType: "FILE_FOLDER", resourceId: id,
+        metadata: { name: folder.name, failedKeys },
+      });
+      throw Errors.conflict(`Some file objects could not be removed from storage (${failedKeys.length}). The folder was NOT purged — retry or contact support.`);
+    }
 
     await db.$transaction(async (tx) => {
       await tx.fileShare.deleteMany({ where: { targetType: "FOLDER", targetId: { in: folderIds } } });

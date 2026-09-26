@@ -2,7 +2,10 @@
 // An in-memory, short-TTL guard keyed by user + route + payload hash. A rapid
 // duplicate submission (double click, flaky retry) gets a 409 instead of a second
 // business record. Cache/ephemeral layer only — the authoritative uniqueness still
-// lives in database constraints (unique codes, one-invoice-per-complaint checks).
+// lives in database constraints (unique codes, optimistic/concurrency guards,
+// one-invoice-per-complaint checks). Scope: per-process; a multi-instance deploy
+// must rely on those DB-level constraints (the finance + inventory paths enforce
+// their own concurrent guards server-side).
 
 import "server-only";
 import { createHash } from "crypto";
@@ -11,9 +14,10 @@ import { Errors } from "@/lib/hms/api";
 type Entry = { at: number };
 const seen = new Map<string, Entry>();
 const TTL_MS = 5_000;
+const PRUNE_THRESHOLD = 1_000;
 
 function prune(now: number): void {
-  if (seen.size < 1_000) return;
+  if (seen.size < PRUNE_THRESHOLD) return;
   for (const [k, v] of seen) if (now - v.at > TTL_MS) seen.delete(k);
 }
 

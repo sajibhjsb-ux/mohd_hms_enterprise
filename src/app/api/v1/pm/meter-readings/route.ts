@@ -34,18 +34,22 @@ export const POST = handler(
     const meter = await db.equipmentMeter.findUnique({ where: { id: body.meterId } });
     if (!meter) throw Errors.notFound("Meter not found.");
 
-    // §10 — monotonic meter: backwards readings only as a manager correction.
-    if (body.reading < meter.currentReading) {
-      const canCorrect = roleCan(user.role, PERMISSIONS.pm_manage) && body.isCorrection;
-      if (!canCorrect) {
-        throw Errors.invalidTransition(`Reading cannot move backwards (${meter.currentReading} → ${body.reading}). Corrections require a manager.`);
-      }
-    }
-
     const readingDate = body.readingDate ? new Date(body.readingDate) : new Date();
     if (Number.isNaN(readingDate.getTime())) throw Errors.badRequest("readingDate must be a valid ISO date.");
 
-    const { created, updated } = await db.$transaction(async (tx) => {
+    const { created, updated, triggeredPlans } = await db.$transaction(async (tx) => {
+      // §10 — monotonic meter: the guard is enforced inside the transaction on
+      // a FRESH read, so two concurrent readings can never both pass and make
+      // the meter move backwards. Writes are optimistic (match currentReading).
+      const freshMeter = await tx.equipmentMeter.findUnique({ where: { id: meter.id } });
+      if (!freshMeter) throw Errors.notFound("Meter not found.");
+      if (body.reading < freshMeter.currentReading) {
+        const canCorrect = roleCan(user.role, PERMISSIONS.pm_manage) && body.isCorrection;
+        if (!canCorrect) {
+          throw Errors.invalidTransition(`Reading cannot move backwards (${freshMeter.currentReading} → ${body.reading}). Corrections require a manager.`);
+        }
+      }
+
       const created = await tx.equipmentMeterReading.create({
         data: {
           meterId: meter.id,
@@ -56,11 +60,43 @@ export const POST = handler(
           notes: body.notes ?? "",
         },
       });
-      const updated = await tx.equipmentMeter.update({
-        where: { id: meter.id },
+      const claimed = await tx.equipmentMeter.updateMany({
+        where: { id: meter.id, currentReading: freshMeter.currentReading },
         data: { currentReading: body.reading, currentReadingAt: readingDate },
       });
-      return { created, updated };
+      if (claimed.count !== 1) {
+        throw Errors.conflict("This meter was updated concurrently. Please review the latest reading and retry.");
+      }
+      const meterAfter = (await tx.equipmentMeter.findUnique({ where: { id: meter.id } }))!;
+
+      // §62 — event-driven meter PM: the PM_DUE outbox rows commit WITH the
+      // reading (transactional outbox) so a threshold crossing is never lost.
+      const triggeredPlans: { planId: string; code: string }[] = [];
+      const plans = await tx.pmPlan.findMany({
+        where: { meterId: meter.id, active: true, planType: { in: [...PM_METER_PLAN_TYPES] } },
+        select: { id: true, code: true, meterInterval: true, nextDueMeter: true },
+      });
+      for (const plan of plans) {
+        const threshold = plan.nextDueMeter ?? plan.meterInterval;
+        if (!threshold || body.reading < threshold) continue;
+        const open = await tx.pmTask.findFirst({
+          where: { planId: plan.id, status: { in: OPEN_TASK_STATUSES } },
+          select: { id: true },
+        });
+        if (open) continue;
+        await emit({
+          type: EVENT_TYPES.PM_DUE,
+          resourceType: "PM_PLAN",
+          resourceId: plan.id,
+          payload: { planId: plan.id },
+          actorType: "USER",
+          actorId: user.id,
+          tx,
+        });
+        triggeredPlans.push({ planId: plan.id, code: plan.code });
+      }
+
+      return { created, updated: meterAfter, triggeredPlans };
     });
 
     await audit({
@@ -77,31 +113,6 @@ export const POST = handler(
         isCorrection: body.isCorrection,
       },
     });
-
-    // §62 — event-driven meter PM: crossing a plan's threshold raises PM_DUE.
-    const triggeredPlans: { planId: string; code: string }[] = [];
-    const plans = await db.pmPlan.findMany({
-      where: { meterId: meter.id, active: true, planType: { in: PM_METER_PLAN_TYPES } },
-      select: { id: true, code: true, meterInterval: true, nextDueMeter: true },
-    });
-    for (const plan of plans) {
-      const threshold = plan.nextDueMeter ?? plan.meterInterval;
-      if (!threshold || body.reading < threshold) continue;
-      const open = await db.pmTask.findFirst({
-        where: { planId: plan.id, status: { in: OPEN_TASK_STATUSES } },
-        select: { id: true },
-      });
-      if (open) continue;
-      await emit({
-        type: EVENT_TYPES.PM_DUE,
-        resourceType: "PM_PLAN",
-        resourceId: plan.id,
-        payload: { planId: plan.id },
-        actorType: "USER",
-        actorId: user.id,
-      });
-      triggeredPlans.push({ planId: plan.id, code: plan.code });
-    }
 
     return ok({ reading: created, meter: updated, triggeredPlans }, 201);
   },

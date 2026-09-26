@@ -79,16 +79,19 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       const now = new Date();
 
       const { invoice: updated } = await db.$transaction(async (tx) => {
-        await tx.payment.update({
-          where: { id: payment.id },
+        // Claim the review IN the transaction — only an ON_HOLD proof can be
+        // confirmed, so two concurrent reviews can never double-confirm.
+        const claim = await tx.payment.updateMany({
+          where: { id: payment.id, status: "ON_HOLD" },
           data: { status: "PAID", reviewedById: user.id, reviewedAt: now },
         });
-        return applyPaymentToInvoice(tx, {
+        if (claim.count !== 1) {
+          const cur = await tx.payment.findUnique({ where: { id: payment.id }, select: { status: true } });
+          throw Errors.invalidTransition(`Only payments awaiting review (ON_HOLD) can be confirmed — this payment is ${cur?.status ?? payment.status}.`);
+        }
+        const applied = await applyPaymentToInvoice(tx, {
           invoiceId: invoice.id,
           invoiceCode: invoice.code,
-          totalCents: invoice.totalCents,
-          paidCentsBefore: invoice.paidCents,
-          statusBefore: invoice.status,
           amountCents: payment.amountCents,
           paymentId: payment.id,
           paymentCode: payment.code,
@@ -97,6 +100,23 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
           trxCode,
           description: `Payment ${invoice.code} (proof ${payment.code})`,
         });
+
+        // Transactional outbox (§27/§29): PAYMENT_RECEIVED + customer receipt
+        // email commit with the settlement — identical to the staff path.
+        await emit({
+          type: EVENT_TYPES.PAYMENT_RECEIVED, resourceType: "INVOICE", resourceId: invoice.id,
+          payload: { code: invoice.code, amountCents: payment.amountCents, method: payment.method, paidCents: applied.invoice.paidCents, balanceCents: applied.invoice.balanceCents, source: "PROOF_CONFIRMED" },
+          actorType: "USER", actorId: user.id, tx,
+        });
+        if (portalUserId) {
+          await emit({
+            type: EVENT_TYPES.EMAIL_SEND, resourceType: "INVOICE", resourceId: invoice.id,
+            payload: { userId: portalUserId, title: `Payment received for ${invoice.code}`, message: `Payment of ${formatCurrency(payment.amountCents / 100)} received for invoice ${invoice.code}. Thank you.` },
+            actorType: "USER", actorId: user.id, tx,
+          });
+        }
+
+        return applied;
       });
 
       await audit({
@@ -124,20 +144,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         resourceId: invoice.id,
       });
 
-      // Outbox (§27/§29): payment-received event + queued email receipt —
-      // identical to the staff-recorded payment path.
-      await emit({
-        type: EVENT_TYPES.PAYMENT_RECEIVED, resourceType: "INVOICE", resourceId: invoice.id,
-        payload: { code: invoice.code, amountCents: payment.amountCents, method: payment.method, paidCents: updated.paidCents, balanceCents: updated.balanceCents, source: "PROOF_CONFIRMED" },
-        actorType: "USER", actorId: user.id,
-      });
-      if (portalUserId) {
-        await emit({
-          type: EVENT_TYPES.EMAIL_SEND, resourceType: "INVOICE", resourceId: invoice.id,
-          payload: { userId: portalUserId, title: `Payment received for ${invoice.code}`, message: `Payment of ${formatCurrency(payment.amountCents / 100)} received for invoice ${invoice.code}. Thank you.` },
-          actorType: "USER", actorId: user.id,
-        });
-      }
+      // Outbox events (PAYMENT_RECEIVED + customer receipt email) are emitted
+      // INSIDE the settlement transaction above — not after commit.
 
       return ok({
         payment: await db.payment.findUnique({ where: { id: payment.id } }),

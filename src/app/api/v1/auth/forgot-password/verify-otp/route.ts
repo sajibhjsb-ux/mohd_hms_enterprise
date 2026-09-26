@@ -65,13 +65,17 @@ export const POST = handler(
     // Any earlier authorization for the account is retired first — exactly
     // one active authorization per user (multi-tab safety).
     const resetToken = generateToken();
-    await db.passwordResetToken.deleteMany({ where: { userId: user.id } });
-    await db.passwordResetToken.create({
-      data: {
-        token: hashResetToken(resetToken),
-        userId: user.id,
-        expiresAt: new Date(Date.now() + PASSWORD_RESET_AUTHORIZATION_TTL_SEC * 1000),
-      },
+    // Exactly one active authorization per user is retired+issued atomically —
+    // no gap where two tokens (or none) could exist for the account.
+    await db.$transaction(async (tx) => {
+      await tx.passwordResetToken.deleteMany({ where: { userId: user.id } });
+      await tx.passwordResetToken.create({
+        data: {
+          token: hashResetToken(resetToken),
+          userId: user.id,
+          expiresAt: new Date(Date.now() + PASSWORD_RESET_AUTHORIZATION_TTL_SEC * 1000),
+        },
+      });
     });
     await audit({
       actorId: user.id,

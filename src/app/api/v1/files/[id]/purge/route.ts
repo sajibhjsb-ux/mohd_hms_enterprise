@@ -22,9 +22,25 @@ export const DELETE = withParams<{ id: string }>(async ({ user, params }) => {
     });
     if (!file || file.ownerId !== user.id) throw Errors.notFound("File not found.");
 
-    // Storage removal first — a DB row without objects is worse than the reverse.
+    // Storage removal first — a DB row without objects is worse than the
+    // reverse. Failure to remove ANY object aborts the metadata deletion so
+    // we never silently leave the file "purged" while objects still exist.
     const keys = [...new Set([file.objectKey, ...file.versions.map((v) => v.objectKey)])].filter(Boolean);
-    for (const key of keys) await storage.remove(key).catch(() => undefined);
+    const failedKeys: string[] = [];
+    for (const key of keys) {
+      const ok = await storage.removeStrict(key).then(() => true).catch((err: unknown) => {
+        console.error(JSON.stringify({ ts: new Date().toISOString(), level: "error", msg: "file-purge-remove-failed", fileId: id, key, error: err instanceof Error ? err.message : String(err) }));
+        return false;
+      });
+      if (!ok) failedKeys.push(key);
+    }
+    if (failedKeys.length > 0) {
+      void audit({
+        actorId: user.id, actorEmail: user.email, action: "FILE_PURGE_ABORTED", resourceType: "FILE", resourceId: id,
+        metadata: { name: file.name, failedKeys },
+      });
+      throw Errors.conflict(`Some file objects could not be removed from storage (${failedKeys.length}). The file was NOT purged — retry or contact support.`);
+    }
 
     await db.$transaction(async (tx) => {
       await tx.fileShare.deleteMany({ where: { targetType: "FILE", targetId: id } });

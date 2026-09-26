@@ -16,6 +16,10 @@ import { EVENT_TYPES, type TxClient } from "./types";
 const BACKOFF_BASE_MS = 30_000;
 const BACKOFF_CAP_MS = 15 * 60_000;
 const BATCH = 25;
+// Lease held while an event is being PROCESSING. A worker that crashes mid-run
+// leaves its row PROCESSING forever unless a recovery sweep flips it back to
+// PENDING once the lease has expired (self-healing, no manual intervention).
+const DOMAIN_EVENT_LEASE_MS = 10 * 60_000;
 
 export type WorkflowResult = { result: "SUCCESS" | "SKIPPED" | "FAILED"; detail?: string };
 
@@ -59,6 +63,10 @@ export async function tickWorkflowEngine(): Promise<number> {
   g.__hmsWorkflowLastTick = Date.now();
   let processed = 0;
   try {
+    // Recovery sweep: PROCESSING rows whose lease has expired were abandoned
+    // by a crashed/timed-out worker — return them to the queue.
+    await recoverStuckEvents();
+
     for (let i = 0; i < BATCH; i++) {
       // Stop after one idle pass — a due event means there may be more.
       const candidate = await db.domainEvent.findFirst({
@@ -69,7 +77,7 @@ export async function tickWorkflowEngine(): Promise<number> {
       if (!candidate) break;
       const claim = await db.domainEvent.updateMany({
         where: { id: candidate.id, status: "PENDING", nextAttemptAt: { lte: new Date() } },
-        data: { status: "PROCESSING", attempts: { increment: 1 } },
+        data: { status: "PROCESSING", attempts: { increment: 1 }, nextAttemptAt: new Date(Date.now() + DOMAIN_EVENT_LEASE_MS) },
       });
       if (claim.count !== 1) continue; // another worker claimed it
       const event = await db.domainEvent.findUnique({ where: { id: candidate.id } });
@@ -87,6 +95,23 @@ export async function tickWorkflowEngine(): Promise<number> {
 
 export function lastEngineTick(): number {
   return g.__hmsWorkflowLastTick ?? 0;
+}
+
+/**
+ * Reclaim abandoned PROCESSING rows whose lease expired (crashed worker, hard
+ * timeout, process restart mid-run). Workflow-level idempotency (§6) makes the
+ * replay safe: any workflow with an existing SUCCESS run is skipped.
+ */
+async function recoverStuckEvents(): Promise<number> {
+  const now = new Date();
+  const res = await db.domainEvent.updateMany({
+    where: { status: "PROCESSING", nextAttemptAt: { lt: now } },
+    data: { status: "PENDING", nextAttemptAt: now, lastError: "Recovered after lease expiry (previous run crashed or timed out)." },
+  });
+  if (res.count > 0) {
+    console.warn(JSON.stringify({ ts: now.toISOString(), level: "warn", msg: "workflow-recovered-stuck-events", count: res.count }));
+  }
+  return res.count;
 }
 
 type EventRow = {
@@ -188,13 +213,19 @@ async function processEvent(event: EventRow): Promise<void> {
 }
 
 /** SUPER_ADMIN retry (§64): re-queue a FAILED/DEAD event. Idempotency holds —
- *  workflows with prior SUCCESS runs are skipped on reprocessing. */
+ *  workflows with prior SUCCESS runs are skipped on reprocessing. A PROCESSING
+ *  event can be requeued once its worker lease has expired (abandoned run). */
 export async function requeueEvent(eventId: string): Promise<{ ok: boolean; status?: string }> {
-  const event = await db.domainEvent.findUnique({ where: { id: eventId }, select: { id: true, status: true } });
+  const event = await db.domainEvent.findUnique({ where: { id: eventId }, select: { id: true, status: true, nextAttemptAt: true } });
   if (!event) return { ok: false };
-  if (!["FAILED", "DEAD", "DONE", "PENDING"].includes(event.status)) return { ok: false };
+  const leaseExpired = event.status === "PROCESSING" && event.nextAttemptAt !== null && event.nextAttemptAt.getTime() < Date.now();
+  if (!["FAILED", "DEAD", "DONE", "PENDING"].includes(event.status) && !leaseExpired) return { ok: false };
+  const where =
+    event.status === "PROCESSING"
+      ? { id: eventId, status: "PROCESSING", nextAttemptAt: { lt: new Date() } }
+      : { id: eventId, status: { in: ["FAILED", "DEAD", "DONE", "PENDING"] } };
   const updated = await db.domainEvent.updateMany({
-    where: { id: eventId, status: { in: ["FAILED", "DEAD", "DONE", "PENDING"] } },
+    where,
     data: { status: "PENDING", nextAttemptAt: new Date(), lastError: "" },
   });
   if (updated.count === 1) kickSelf();

@@ -11,6 +11,8 @@
 
 import "server-only";
 import type { Prisma } from "@prisma/client";
+import { Errors } from "@/lib/hms/api";
+import { formatCurrency } from "@/lib/hms/format";
 
 /** Same rich include the staff payments route has always returned. */
 export const INVOICE_AFTER_PAYMENT_INCLUDE = {
@@ -22,10 +24,6 @@ export const INVOICE_AFTER_PAYMENT_INCLUDE = {
 export type ApplyPaymentParams = {
   invoiceId: string;
   invoiceCode: string;
-  /** Invoice state snapshot read BEFORE the write (inside the same tx). */
-  totalCents: number;
-  paidCentsBefore: number;
-  statusBefore: string;
   amountCents: number;
   /** Payment row this settlement is booked against (ledger reference). */
   paymentId: string;
@@ -53,20 +51,44 @@ export type AppliedPayment = {
  * transaction: paidCents += amount, balanceCents = max(0, total − paid),
  * status PAID when fully settled / PARTIALLY_PAID when partially paid, then
  * credit the ACC-BANK account and book the INCOME ledger row.
+ *
+ * The invoice is RE-READ inside the transaction and all balance guards are
+ * re-applied there — a stale snapshot from the route can never clobber a
+ * concurrent settlement, and lost updates abort instead of overwriting.
  */
 export async function applyPaymentToInvoice(
   tx: Prisma.TransactionClient,
   p: ApplyPaymentParams
 ): Promise<AppliedPayment> {
-  const paidCents = p.paidCentsBefore + p.amountCents;
-  const balanceCents = Math.max(0, p.totalCents - paidCents);
-  const status = balanceCents === 0 ? "PAID" : paidCents > 0 ? "PARTIALLY_PAID" : p.statusBefore;
-
-  const invoice = await tx.invoice.update({
+  const fresh = await tx.invoice.findUnique({
     where: { id: p.invoiceId },
-    data: { paidCents, balanceCents, status },
-    include: INVOICE_AFTER_PAYMENT_INCLUDE,
+    select: { id: true, totalCents: true, paidCents: true, balanceCents: true, status: true },
   });
+  if (!fresh) throw Errors.notFound("Invoice not found.");
+  if (fresh.status === "CANCELLED") throw Errors.invalidTransition("Cannot record payments on a cancelled invoice.");
+  if (fresh.status === "DRAFT") throw Errors.invalidTransition("Send the invoice before recording payments.");
+  if (fresh.balanceCents <= 0) throw Errors.conflict("This invoice is already fully paid.");
+  if (p.amountCents > fresh.balanceCents) {
+    throw Errors.badRequest(`Payment exceeds the outstanding balance of ${formatCurrency(fresh.balanceCents / 100)}.`);
+  }
+
+  const paidCents = fresh.paidCents + p.amountCents;
+  const balanceCents = Math.max(0, fresh.totalCents - paidCents);
+  const status = balanceCents === 0 ? "PAID" : "PARTIALLY_PAID";
+
+  // Optimistic concurrency guard: only the writer that observed THIS paidCents
+  // snapshot may apply the settlement — a concurrent payment aborts with a
+  // conflict instead of being silently overwritten.
+  const claimed = await tx.invoice.updateMany({
+    where: { id: fresh.id, paidCents: fresh.paidCents },
+    data: { paidCents, balanceCents, status },
+  });
+  if (claimed.count !== 1) {
+    throw Errors.conflict("This invoice was updated concurrently. Please review the outstanding balance and retry.");
+  }
+
+  const invoice = await tx.invoice.findUnique({ where: { id: p.invoiceId }, include: INVOICE_AFTER_PAYMENT_INCLUDE });
+  if (!invoice) throw Errors.notFound("Invoice not found.");
 
   // Credit the bank account + ledger entry (best-effort inside the same tx —
   // ACC-BANK may not exist in a fresh environment; the payment still settles).

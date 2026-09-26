@@ -7,6 +7,7 @@ import "server-only";
 
 import { db } from "@/lib/db";
 import { Errors } from "@/lib/hms/api";
+import type { Prisma } from "@prisma/client";
 import { PAYROLL_CONFIG, engineConfigSnapshot, periodKeyOf, type PayrollLine } from "./config";
 
 // ── date helpers (all UTC-day based; periods are calendar dates) ────────────
@@ -594,6 +595,14 @@ export async function calculateRun(runId: string, actorId: string): Promise<Calc
       let calculated = 0;
       const today = new Date();
 
+      // Batch plan: existing rows are updated, missing rows are created with a
+      // single createMany — fewer round-trips and a shorter write window inside
+      // the run transaction (SQLite single-writer friendly, §F-13).
+      const existingItems = await tx.payrollItem.findMany({ where: { runId }, select: { id: true, employeeId: true } });
+      const existingItemIdByEmployee = new Map(existingItems.map((i) => [i.employeeId, i.id] as const));
+      const rowsToCreate: Prisma.PayrollItemCreateManyInput[] = [];
+      const rowsToUpdate: { id: string; data: Prisma.PayrollItemUpdateInput }[] = [];
+
       for (const employee of employees) {
         const item = calculateEmployeeItem({
           employee,
@@ -655,10 +664,21 @@ export async function calculateRun(runId: string, actorId: string): Promise<Calc
           updatedAt: today,
         };
 
-        await tx.payrollItem.upsert({
-          where: { runId_employeeId: { runId, employeeId: employee.id } },
-          create: { runId, employeeId: employee.id, ...data },
-          update: { ...data, payslipObjectKey: null, payslipSizeBytes: null, payslipGeneratedAt: null },
+        const existingId = existingItemIdByEmployee.get(employee.id);
+        if (existingId) {
+          rowsToUpdate.push({ id: existingId, data });
+        } else {
+          rowsToCreate.push({ runId, employeeId: employee.id, ...data });
+        }
+      }
+
+      if (rowsToCreate.length > 0) {
+        await tx.payrollItem.createMany({ data: rowsToCreate });
+      }
+      for (const u of rowsToUpdate) {
+        await tx.payrollItem.update({
+          where: { id: u.id },
+          data: { ...u.data, payslipObjectKey: null, payslipSizeBytes: null, payslipGeneratedAt: null },
         });
       }
 
@@ -719,14 +739,17 @@ function varianceFlags(net: number, prevNet: number): string[] {
   return flags;
 }
 
-/** Overtime amount for one request, computed from the employee's monthly basic. */
+/** Overtime amount for one request, computed from the employee's monthly basic.
+ *  The multiplier is converted to integer basis points and every intermediate
+ *  step stays integer cents — a float multiplier can never drift the amount. */
 export function computeOvertimeAmount(monthlyBasicCents: number, monthRef: Date, minutes: number, multiplier: number): { amountCents: number; rateBasisCents: number } {
   const monthStart = dayStart(monthRef);
   monthStart.setUTCDate(1);
   const monthEnd = addDays(monthStart, daysInMonth(monthStart) - 1);
   const monthWorkingDays = Math.max(workingDaysBetween(monthStart, monthEnd), 1);
   const hourly = Math.round(monthlyBasicCents / (monthWorkingDays * PAYROLL_CONFIG.standardHoursPerDay));
-  const amount = Math.round((hourly * multiplier * minutes) / 60);
+  const multBps = Math.round(multiplier * 10000);
+  const amount = Math.round((hourly * multBps * minutes) / (10000 * 60));
   return { amountCents: amount, rateBasisCents: hourly };
 }
 

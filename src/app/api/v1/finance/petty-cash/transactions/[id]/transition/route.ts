@@ -42,10 +42,19 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       if (note.length < 5) {
         throw Errors.badRequest("A review note of at least 5 characters is required to reject a transaction.");
       }
-      const rejected = await db.pettyCashTransaction.update({
-        where: { id: tx.id },
-        data: { status: "REJECTED", approvedById: user.id, approvedAt: new Date(), reviewNote: note },
-        include: { fund: { select: { id: true, code: true, name: true } } },
+      const rejected = await db.$transaction(async (prisma) => {
+        const claim = await prisma.pettyCashTransaction.updateMany({
+          where: { id: tx.id, status: "PENDING" },
+          data: { status: "REJECTED", approvedById: user.id, approvedAt: new Date(), reviewNote: note },
+        });
+        if (claim.count !== 1) {
+          const cur = await prisma.pettyCashTransaction.findUnique({ where: { id: tx.id }, select: { status: true } });
+          throw Errors.invalidTransition(`Cannot reject a transaction in status ${cur?.status ?? "UNKNOWN"}.`);
+        }
+        return (await prisma.pettyCashTransaction.findUnique({
+          where: { id: tx.id },
+          include: { fund: { select: { id: true, code: true, name: true } } },
+        }))!;
       });
       await audit({
         actorId: user.id, actorEmail: user.email, action: "PETTY_CASH_TX_REJECTED",
@@ -87,13 +96,10 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         );
       }
 
-      // 1) The money moves: fund balance + immutable snapshot on the tx.
-      await prisma.pettyCashFund.update({
-        where: { id: fund.id },
-        data: { currentBalanceCents: newBalance },
-      });
-      const approved = await prisma.pettyCashTransaction.update({
-        where: { id: tx.id },
+      // 0) Claim the transition: only one reviewer can move PENDING → APPROVED,
+      //    so two concurrent approvals can never double-pay the fund.
+      const claim = await prisma.pettyCashTransaction.updateMany({
+        where: { id: tx.id, status: "PENDING" },
         data: {
           status: "APPROVED",
           approvedById: user.id,
@@ -102,6 +108,17 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
           ...(body.note?.trim() ? { reviewNote: body.note.trim() } : {}),
         },
       });
+      if (claim.count !== 1) {
+        const cur = await prisma.pettyCashTransaction.findUnique({ where: { id: tx.id }, select: { status: true } });
+        throw Errors.invalidTransition(`Cannot approve a transaction in status ${cur?.status ?? "UNKNOWN"}.`);
+      }
+
+      // 1) The money moves: fund balance + immutable snapshot on the tx.
+      await prisma.pettyCashFund.update({
+        where: { id: fund.id },
+        data: { currentBalanceCents: newBalance },
+      });
+      const approved = (await prisma.pettyCashTransaction.findUnique({ where: { id: tx.id } }))!;
 
       // 2) Ledger mirror (best-effort, SAME transaction): ACC-CASH moves with
       //    the cash box and an INCOME/EXPENSE row lands in the general ledger.

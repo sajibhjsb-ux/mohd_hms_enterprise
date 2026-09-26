@@ -57,7 +57,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     const paidAt = body.paidAt ? new Date(body.paidAt) : new Date();
 
     // Single atomic transaction: Payment row (status RECORDED — immediately
-    // effective) + invoice paid/balance/status + bank credit + ledger entry.
+    // effective) + invoice paid/balance/status + bank credit + ledger entry
+    // + the transactional outbox (payment event + customer receipt email).
     // The settlement math is the SHARED helper also used when Finance confirms
     // a customer payment proof (src/lib/hms/finance/payments.ts).
     const updated = await db.$transaction(async (tx) => {
@@ -78,9 +79,6 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       const { invoice: saved } = await applyPaymentToInvoice(tx, {
         invoiceId: invoice.id,
         invoiceCode: invoice.code,
-        totalCents: invoice.totalCents,
-        paidCentsBefore: invoice.paidCents,
-        statusBefore: invoice.status,
         amountCents,
         paymentId: payment.id,
         paymentCode: payment.code,
@@ -88,6 +86,19 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         actorId: user.id,
         trxCode,
       });
+
+      // Transactional outbox (§27/§29/§69): the payment event + customer
+      // receipt email commit WITH the settlement — a payment can never be
+      // recorded while its automation is lost (or vice versa).
+      await emit({
+        type: EVENT_TYPES.PAYMENT_RECEIVED, resourceType: "INVOICE", resourceId: invoice.id,
+        payload: { code: invoice.code, amountCents, method: body.method, paidCents: saved.paidCents, balanceCents: saved.balanceCents },
+        actorType: "USER", actorId: user.id, tx,
+      });
+      const payPortalUser = await tx.customer.findUnique({ where: { id: invoice.customerId }, select: { portalUser: { select: { id: true } } } });
+      if (payPortalUser?.portalUser?.id) {
+        await emit({ type: EVENT_TYPES.EMAIL_SEND, resourceType: "INVOICE", resourceId: invoice.id, payload: { userId: payPortalUser.portalUser.id, title: `Payment received for ${invoice.code}`, message: `Payment of ${formatCurrency(body.amount)} received for invoice ${invoice.code}. Thank you.` }, actorType: "USER", actorId: user.id, tx });
+      }
 
       return saved;
     });
@@ -104,18 +115,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       resourceType: "INVOICE",
       resourceId: invoice.id,
     });
-    // Outbox (§27/§29/§69): payment event → customer receipt notification
-    // (auto-reconciliation) + queued email to the customer.
-    await emit({
-      type: EVENT_TYPES.PAYMENT_RECEIVED, resourceType: "INVOICE", resourceId: invoice.id,
-      payload: { code: invoice.code, amountCents, method: body.method, paidCents: updated.paidCents, balanceCents: updated.balanceCents },
-      actorType: "USER", actorId: user.id,
-    });
-    const payPortalUser = await db.customer.findUnique({ where: { id: invoice.customerId }, select: { portalUser: { select: { id: true } } } });
-    if (payPortalUser?.portalUser?.id) {
-      await emit({ type: EVENT_TYPES.EMAIL_SEND, resourceType: "INVOICE", resourceId: invoice.id, payload: { userId: payPortalUser.portalUser.id, title: `Payment received for ${invoice.code}`, message: `Payment of ${formatCurrency(body.amount)} received for invoice ${invoice.code}. Thank you.` }, actorType: "USER", actorId: user.id });
-    }
-
+    // Outbox events (PAYMENT_RECEIVED + customer receipt email) are emitted
+    // INSIDE the settlement transaction above — not after commit.
     return ok(updated, 201);
   }, { permission: PERMISSIONS.payments_record })(req);
 }

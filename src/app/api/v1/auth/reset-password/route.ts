@@ -63,14 +63,26 @@ export const POST = handler(
     // ATOMIC reset: new hash + authorization consumed + ALL sessions revoked
     // (existing security architecture: old logins cannot survive a password
     // change) + sandbox diagnostics cleaned. Any failure rolls everything back.
-    await db.$transaction([
-      db.user.update({ where: { id: reset.userId }, data: { passwordHash } }),
-      db.passwordResetToken.update({ where: { id: reset.id }, data: { usedAt: new Date() } }),
-      db.session.deleteMany({ where: { userId: reset.userId } }),
+    const consumed = await db.$transaction(async (tx) => {
+      // Single-use enforcement INSIDE the transaction: the token is consumed
+      // with a conditional update (usedAt IS NULL, still valid) — a raced
+      // second request finds zero rows, aborts the whole reset and can never
+      // overwrite the first result with a different password.
+      const claim = await tx.passwordResetToken.updateMany({
+        where: { id: reset.id, usedAt: null, expiresAt: { gt: new Date() } },
+        data: { usedAt: new Date() },
+      });
+      if (claim.count !== 1) {
+        throw Errors.badRequest(PASSWORD_RESET_NO_LONGER_VALID_MESSAGE);
+      }
+      await tx.user.update({ where: { id: reset.userId }, data: { passwordHash } });
+      await tx.session.deleteMany({ where: { userId: reset.userId } });
       // Legacy diagnostics from the superseded link-token flow + this flow's OTP.
-      db.setting.deleteMany({ where: { key: `dev_pwreset_${reset.userId}` } }),
-      db.setting.deleteMany({ where: { key: `dev_email_otp_password_reset_${reset.userId}` } }),
-    ]);
+      await tx.setting.deleteMany({ where: { key: `dev_pwreset_${reset.userId}` } });
+      await tx.setting.deleteMany({ where: { key: `dev_email_otp_password_reset_${reset.userId}` } });
+      return true;
+    });
+    void consumed;
 
     await audit({
       actorId: reset.userId,

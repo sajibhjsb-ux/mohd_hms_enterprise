@@ -30,6 +30,22 @@ async function counter(prefix: string, n: number) {
 async function main() {
   console.log("Seeding MOHD.HMS ENTERPRISE …");
 
+  // Safety guard: a seed must never wipe a database that already holds data.
+  // Opt out explicitly with FORCE_SEED=1 for throwaway/dev databases only.
+  if (process.env.FORCE_SEED !== "1") {
+    const existing = await Promise.all([
+      db.user.count(),
+      db.employee.count(),
+      db.inventoryItem.count(),
+      db.invoice.count(),
+      db.complaint.count(),
+    ]);
+    if (existing.reduce((a, b) => a + b, 0) > 0) {
+      console.error("[seed] Refusing to seed: the database already contains data. Run with FORCE_SEED=1 to wipe and reseed.");
+      process.exit(1);
+    }
+  }
+
   // wipe in dependency-safe order (fresh init only)
   await db.$transaction([
     db.auditLog.deleteMany(), db.notification.deleteMany(), db.draft.deleteMany(),

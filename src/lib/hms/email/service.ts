@@ -588,6 +588,40 @@ function getLogoBuffer(): Buffer | null {
 
 const g = globalThis as unknown as { __hmsEmailTickRunning?: boolean };
 
+const EMAIL_STUCK_MS = 5 * 60_000;
+
+/**
+ * Reclaim rows abandoned mid-send (crashed worker, process restart). Rows that
+ * already captured a provider Message-Id are FINALIZED to SENT — they must
+ * never be re-sent. Rows with no evidence of delivery are requeued.
+ */
+async function recoverStuckEmailLogs(): Promise<number> {
+  const cutoff = new Date(Date.now() - EMAIL_STUCK_MS);
+  const stuck = await db.emailLog.findMany({
+    where: { status: { in: ["PROCESSING", "SMTP_ACCEPTED"] }, updatedAt: { lt: cutoff } },
+    select: { id: true, messageId: true },
+  });
+  let recovered = 0;
+  for (const s of stuck) {
+    if (s.messageId) {
+      await db.emailLog.update({
+        where: { id: s.id },
+        data: { status: "SENT", sentAt: new Date(), lastError: "", errorClass: "", failedAt: null },
+      }).catch((e: unknown) => console.error(JSON.stringify({ ts: new Date().toISOString(), level: "error", msg: "email-recover-finalize-failed", id: s.id, error: e instanceof Error ? e.message : String(e) })));
+    } else {
+      await db.emailLog.update({
+        where: { id: s.id },
+        data: { status: "QUEUED", scheduledAt: new Date(), lastError: "Recovered after a stalled send — requeued.", errorClass: "" },
+      }).catch((e: unknown) => console.error(JSON.stringify({ ts: new Date().toISOString(), level: "error", msg: "email-recover-requeue-failed", id: s.id, error: e instanceof Error ? e.message : String(e) })));
+    }
+    recovered += 1;
+  }
+  if (recovered > 0) {
+    console.warn(JSON.stringify({ ts: new Date().toISOString(), level: "warn", msg: "email-recovered-stuck-rows", count: recovered }));
+  }
+  return recovered;
+}
+
 /** Process due queued emails. Called from the existing 10s scheduler tick. */
 export async function tickEmailWorker(): Promise<number> {
   if (g.__hmsEmailTickRunning) return 0;
@@ -602,6 +636,10 @@ export async function tickEmailWorker(): Promise<number> {
     // writer. QUEUED rows keep their honest CONFIG lastError and are picked up
     // the moment SMTP becomes ready.
     if (!providerReady) return 0;
+
+    // Self-healing sweep: rows stuck in PROCESSING/SMTP_ACCEPTED from a
+    // crashed worker are finalized (never re-sent) or requeued.
+    await recoverStuckEmailLogs();
 
     const due = await db.emailLog.findMany({
       where: { status: "QUEUED", scheduledAt: { lte: new Date() } },
@@ -700,11 +738,15 @@ async function processOne(id: string, providerReady: boolean): Promise<boolean> 
   });
 
   if (result.ok) {
-    // SENT = accepted by the SMTP server (response stored as evidence, §54).
+    // Two-phase finalize — a crash between provider acceptance and this write
+    // must NOT cause a duplicate send on recovery:
+    //   1) record the provider Message-Id under SMTP_ACCEPTED immediately;
+    //   2) then flip to SENT (the recovery sweep finalizes SMTP_ACCEPTED rows
+    //      that have a Message-Id instead of re-sending them).
     await db.emailLog.update({
       where: { id },
       data: {
-        status: "SENT",
+        status: "SMTP_ACCEPTED",
         sentAt: new Date(),
         messageId: result.messageId,
         providerResponse: [result.response, ...attachmentNotes].filter(Boolean).join(" | ").slice(0, 2000),
@@ -713,6 +755,10 @@ async function processOne(id: string, providerReady: boolean): Promise<boolean> 
         failedAt: null,
       },
     });
+    await db.emailLog.updateMany({
+      where: { id, status: "SMTP_ACCEPTED" },
+      data: { status: "SENT" },
+    }).catch(() => undefined);
     // Mirror the honest delivery state onto the user-facing mail message.
     if (log.relatedType === "MAIL_MESSAGE") {
       await db.mailMessage.updateMany({ where: { id: log.relatedId }, data: { messageId: result.messageId } }).catch(() => undefined);

@@ -320,6 +320,7 @@ export type ApplyMovementResult = {
   movementId: string;
   balanceAfter: number;
   warehouseId: string | null;
+  warehouseQtyAfter: number | null;
   lowStock: boolean;
   outOfStock: boolean;
 };
@@ -336,13 +337,23 @@ async function defaultWarehouseId(client: Db, itemWarehouseId: string | null): P
 }
 
 /**
- * THE stock write path (§19). Caller MUST run inside a transaction for
- * multi-row business flows. Guards: rejects stock writes on NON_STOCK items
- * (§3), rejects negative balances unless `inventory_negative_stock=true`
- * (§70), maintains item.stockQty + WarehouseStock (§21) + immutable ledger row
- * and evaluates low/out-of-stock flags (§16/§44) for the caller to emit.
+ * THE stock write path (§19). Runs atomically even when the caller passes the
+ * global pool client; callers that already pass an open transaction run inside
+ * their own transaction. Guards: rejects stock writes on NON_STOCK items (§3),
+ * rejects negative balances unless `inventory_negative_stock=true` (§70),
+ * maintains item.stockQty + per-warehouse WarehouseStock (§21) + immutable
+ * ledger row and evaluates low/out-of-stock flags (§16/§44) for the caller.
  */
 export async function applyStockMovement(client: Db, input: ApplyMovementInput): Promise<ApplyMovementResult> {
+  const poolClient =
+    typeof (client as { $transaction?: unknown }).$transaction === "function" ? (client as typeof db) : null;
+  if (poolClient) {
+    return poolClient.$transaction((tx) => applyStockMovementTx(tx, input));
+  }
+  return applyStockMovementTx(client as PrismaTx, input);
+}
+
+async function applyStockMovementTx(client: PrismaTx, input: ApplyMovementInput): Promise<ApplyMovementResult> {
   const item = await client.inventoryItem.findUnique({ where: { id: input.itemId } });
   if (!item) throw Errors.notFound("Inventory item not found.");
   if (item.stockType === "NON_STOCK" || ["SERVICE", "NON_STOCK"].includes(item.itemType)) {
@@ -392,14 +403,54 @@ export async function applyStockMovement(client: Db, input: ApplyMovementInput):
     data: { stockQty: round2(balanceAfter), avgCostCents, unitCostCents, lastPurchaseAt },
   });
 
+  // Per-warehouse quantity is a DELTA on the specific warehouse row
+  // (qty += signedQuantity) — never clobbered with the company-wide
+  // balanceAfter. An optimistic guard aborts if another movement raced us.
+  let warehouseQtyAfter: number | null = null;
   if (warehouseId) {
     const existing = await client.warehouseStock.findUnique({
       where: { itemId_warehouseId: { itemId: item.id, warehouseId } },
     });
     if (existing) {
-      await client.warehouseStock.update({ where: { id: existing.id }, data: { qty: round2(balanceAfter) } });
+      const newQty = round2(existing.qty + input.signedQuantity);
+      const claimed = await client.warehouseStock.updateMany({
+        where: { id: existing.id, qty: existing.qty },
+        data: { qty: newQty },
+      });
+      if (claimed.count !== 1) {
+        throw Errors.conflict("Stock changed concurrently in this warehouse — please review and retry.");
+      }
+      warehouseQtyAfter = newQty;
     } else {
-      await client.warehouseStock.create({ data: { itemId: item.id, warehouseId, qty: round2(balanceAfter) } });
+      try {
+        await client.warehouseStock.create({ data: { itemId: item.id, warehouseId, qty: round2(input.signedQuantity) } });
+        warehouseQtyAfter = round2(input.signedQuantity);
+      } catch (e) {
+        if ((e as { code?: string }).code !== "P2002") throw e;
+        // A concurrent movement created the row first — apply our delta to it.
+        const fresh = await client.warehouseStock.findUnique({
+          where: { itemId_warehouseId: { itemId: item.id, warehouseId } },
+        });
+        if (!fresh) throw e;
+        const newQty = round2(fresh.qty + input.signedQuantity);
+        const claimed = await client.warehouseStock.updateMany({
+          where: { id: fresh.id, qty: fresh.qty },
+          data: { qty: newQty },
+        });
+        if (claimed.count !== 1) {
+          throw Errors.conflict("Stock changed concurrently in this warehouse — please review and retry.");
+        }
+        warehouseQtyAfter = newQty;
+      }
+    }
+
+    // F-16 soft invariant canary: warehouse rows must never exceed the
+    // company-wide balance (they may lag below it only while some stock is
+    // not yet tracked per warehouse). Loudly flag any drift.
+    const agg = await client.warehouseStock.aggregate({ _sum: { qty: true }, where: { itemId: item.id } });
+    const warehoused = round2(agg._sum.qty ?? 0);
+    if (warehoused > round2(balanceAfter) + 1e-9) {
+      console.error(JSON.stringify({ ts: new Date().toISOString(), level: "error", msg: "stock-invariant-broken", itemId: item.id, sku: item.sku, warehoused, companyBalance: round2(balanceAfter) }));
     }
   }
 
@@ -408,6 +459,7 @@ export async function applyStockMovement(client: Db, input: ApplyMovementInput):
     movementId: movement.id,
     balanceAfter: round2(balanceAfter),
     warehouseId: warehouseId ?? null,
+    warehouseQtyAfter,
     lowStock: balanceAfter <= reorderPoint && reorderPoint > 0,
     outOfStock: balanceAfter <= 0,
   };

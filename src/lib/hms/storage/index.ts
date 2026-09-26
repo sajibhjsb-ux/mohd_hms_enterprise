@@ -155,6 +155,18 @@ export const storage = {
     }
   },
 
+  /**
+   * Delete one object and REJECT on failure. Use ONLY for permanent-purge
+   * flows (file/folder purge): those must not delete metadata while objects
+   * may still exist, so a failure must surface loudly instead of being
+   * swallowed like the best-effort `remove`.
+   */
+  async removeStrict(key: string): Promise<void> {
+    assertSafeKey(key);
+    await ensureBucket();
+    await client.removeObject(S3_BUCKET, key);
+  },
+
   /** Delete every object under a prefix (report folder cleanup). */
   async removePrefix(prefix: string): Promise<void> {
     if (!prefix || prefix.includes("..")) throw new StorageError("OBJECT_NOT_FOUND", "Invalid storage prefix.");
