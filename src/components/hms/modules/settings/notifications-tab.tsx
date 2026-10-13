@@ -27,8 +27,12 @@ type Overview = {
     fcm: { configured: boolean; projectId: string | null; clientReady: boolean; toggleOn: boolean };
     vapid: { configured: boolean };
   };
-  devices: { fcmTotal: number; fcmActive: number; vapidActive: number };
+  devices: {
+    fcmTotal: number; fcmActive: number; vapidActive: number;
+    lastRegisteredAt: string | null; lastDeviceLabel: string | null;
+  };
   deliveries7d: { queued: number; sending: number; sent: number; failed: number; deadLettered: number; skipped: number };
+  lastSentAt: string | null;
   recent: Array<{
     id: string; status: string; channel: string; priority: string; title: string; body: string;
     userName: string; deviceCount: number; sentCount: number; failedCount: number; skippedCount: number;
@@ -56,6 +60,8 @@ function friendlyPushError(code: string | undefined, raw: string | undefined): s
       return "No active push device is registered for this user. Enable notifications on the user's browser/device (Profile → Notifications) and try again.";
     case "Unconfigured":
       return detail || "Push transport is not configured on this server yet. Add the Firebase (or VAPID) credentials to the server environment, then retry.";
+    case "ChannelDisabled":
+      return detail || "Push notifications are turned off in Settings → Automation → Push notifications. Turn the channel on, then retry.";
     case "Permanent":
       return "The device registration was rejected as invalid/expired by the push service. The user must disable and re-enable notifications on that device.";
     case "Transient":
@@ -230,6 +236,23 @@ export function NotificationsTab() {
               <div className="rounded-md border p-2">
                 <div className="text-lg font-semibold">{overview?.deliveries7d.sent ?? "—"}</div>
                 <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Sent 7d</div>
+              </div>
+            </div>
+            <div className="mt-3 space-y-1 text-xs text-muted-foreground">
+              <div className="flex justify-between gap-3">
+                <span>Last registration</span>
+                <span className="text-foreground">
+                  {overview?.devices.lastRegisteredAt
+                    ? new Date(overview.devices.lastRegisteredAt).toLocaleString()
+                    : "—"}
+                  {overview?.devices.lastDeviceLabel ? ` · ${overview.devices.lastDeviceLabel}` : ""}
+                </span>
+              </div>
+              <div className="flex justify-between gap-3">
+                <span>Last successful send</span>
+                <span className="text-foreground">
+                  {overview?.lastSentAt ? new Date(overview.lastSentAt).toLocaleString() : "—"}
+                </span>
               </div>
             </div>
           </CardContent>

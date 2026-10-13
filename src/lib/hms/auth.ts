@@ -77,6 +77,10 @@ export type SessionUser = {
   customerId: string | null;
   permissions: Permission[];
   sessionExpiresAt: Date;
+  /** The live session row id — used to bind push devices to this device's
+   *  session so the single-active-device policy also stops superseded devices
+   *  from receiving push. */
+  sessionId: string;
 };
 
 /**
@@ -150,6 +154,14 @@ export async function createSupersedingSession(
         payload: { userId, reason: "SUPERSEDED_BY_NEW_LOGIN", revokedCount: previous.length },
         actorId: userId,
         tx,
+      });
+      // Single-active-device also applies to push: deactivate every push device
+      // still bound to a session that this login just superseded, so a replaced
+      // device stops receiving the account's notifications immediately (matches
+      // the 401 SESSION_REVOKED it already gets on its next request).
+      await tx.pushDevice.updateMany({
+        where: { userId, lastSessionId: { in: previous.map((p) => p.id) } },
+        data: { active: false },
       });
     }
     const created = await createSession(userId, ip, userAgent, ttlMs, remember, tx);
@@ -242,6 +254,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
     customerId: session.user.customerId,
     permissions: can(session.user.role as never),
     sessionExpiresAt: session.expiresAt,
+    sessionId: session.id,
   };
 }
 

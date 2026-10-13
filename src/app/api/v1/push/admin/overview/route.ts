@@ -12,7 +12,7 @@ export const GET = handler(
   async () => {
     const since7d = new Date(Date.now() - 7 * 86_400_000);
 
-    const [fcmDevices, fcmActive, vapidActive, statusCounts, recent, recentErrors, fcmToggle] = await Promise.all([
+    const [fcmDevices, fcmActive, vapidActive, statusCounts, recent, recentErrors, fcmToggle, lastDevice, lastSent] = await Promise.all([
       db.pushDevice.count(),
       db.pushDevice.count({ where: { active: true } }),
       db.pushSubscription.count({ where: { revokedAt: null } }),
@@ -35,6 +35,8 @@ export const GET = handler(
         select: { id: true, status: true, channel: true, errorCode: true, lastError: true, title: true, updatedAt: true, userId: true },
       }),
       isAutomationEnabled("push_notifications"),
+      db.pushDevice.findFirst({ orderBy: { lastSeenAt: "desc" }, select: { lastSeenAt: true, browser: true, operatingSystem: true } }),
+      db.pushLog.findFirst({ where: { status: "SENT", sentAt: { not: null } }, orderBy: { sentAt: "desc" }, select: { sentAt: true } }),
     ]);
 
     const users = await db.user.findMany({
@@ -50,7 +52,13 @@ export const GET = handler(
         fcm: { ...fcmStatusSummary(), toggleOn: !!fcmToggle },
         vapid: { configured: !!vapidPublicKey() },
       },
-      devices: { fcmTotal: fcmDevices, fcmActive, vapidActive },
+      devices: {
+        fcmTotal: fcmDevices,
+        fcmActive,
+        vapidActive,
+        lastRegisteredAt: lastDevice?.lastSeenAt ?? null,
+        lastDeviceLabel: lastDevice ? [lastDevice.browser, lastDevice.operatingSystem].filter(Boolean).join(" · ") : null,
+      },
       deliveries7d: {
         queued: byStatus["QUEUED"] ?? 0,
         sending: byStatus["SENDING"] ?? 0,
@@ -59,6 +67,7 @@ export const GET = handler(
         deadLettered: byStatus["DEAD_LETTER"] ?? 0,
         skipped: byStatus["SKIPPED"] ?? 0,
       },
+      lastSentAt: lastSent?.sentAt ?? null,
       recent: recent.map((r) => ({ ...r, userName: userName.get(r.userId) ?? r.userId })),
       recentErrors: recentErrors.map((r) => ({ ...r, userName: userName.get(r.userId) ?? r.userId })),
     });

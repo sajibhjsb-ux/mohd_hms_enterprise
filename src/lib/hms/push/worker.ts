@@ -99,18 +99,25 @@ async function processOne(logId: string): Promise<void> {
   let firstError = "";
   let errorCode = "";
 
-  const fcmReady = fcmConfigured() && (await isAutomationEnabled("push_notifications"));
+  // ONE authoritative global switch governs the WHOLE push channel (spec §3):
+  // admins turn push on/off in Settings → Automation → Push notifications, and
+  // both transports honour it. Firebase being unconfigured is reported
+  // separately from the channel being disabled so diagnostics never lie.
+  const channelOn = await isAutomationEnabled("push_notifications");
+  const fcmReady = channelOn && fcmConfigured();
   // Configure THIS module instance of web-push (see vapid.ts — the scheduler
   // bundle loads its own copy; without this the send lacks the VAPID auth
   // header and the push service answers 401).
-  const vapidReady = ensureVapidConfigured();
+  const vapidReady = channelOn && ensureVapidConfigured();
+
+  const channelDisabledMsg = "Push notifications are disabled (Settings → Automation → Push notifications).";
 
   // ── FCM transport ──
   if (devices.length > 0) {
     if (!fcmReady) {
       skippedCount += devices.length;
-      errorCode = errorCode || "Unconfigured";
-      firstError = firstError || (fcmConfigured() ? "FCM channel is disabled (Settings → Automation → Push notifications)." : "Firebase is not configured on this server.");
+      errorCode = errorCode || (channelOn ? "Unconfigured" : "ChannelDisabled");
+      firstError = firstError || (channelOn ? "Firebase is not configured on this server." : channelDisabledMsg);
     } else {
       const outcomes = await sendFcmToTokens(devices.map((d) => d.token), {
         title: row.title,
@@ -157,8 +164,8 @@ async function processOne(logId: string): Promise<void> {
   if (subs.length > 0) {
     if (!vapidReady) {
       skippedCount += subs.length;
-      errorCode = errorCode || "Unconfigured";
-      firstError = firstError || "VAPID is not configured on this server.";
+      errorCode = errorCode || (channelOn ? "Unconfigured" : "ChannelDisabled");
+      firstError = firstError || (channelOn ? "VAPID is not configured on this server." : channelDisabledMsg);
     } else {
       const webpush = (await import("web-push")).default;
       const body = JSON.stringify({

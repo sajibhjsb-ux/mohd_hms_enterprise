@@ -50,6 +50,7 @@ export const POST = handler(
         appVersion: body.appVersion ?? null,
         permissionStatus: body.permissionStatus,
         active: true,
+        lastSessionId: user.sessionId,
         lastSeenAt: new Date(),
       },
       update: {
@@ -65,10 +66,27 @@ export const POST = handler(
         active: body.permissionStatus === "GRANTED",
         failureCount: 0,
         lastError: "",
+        lastSessionId: user.sessionId,
         lastSeenAt: new Date(),
       },
       select: { id: true },
     });
+
+    // Token refresh (spec §19): a device whose FCM token rotated presents the
+    // same Firebase installationId with a new token. Retire the previous token
+    // row for this installation so we stop targeting a dead token instead of
+    // waiting for FCM to report it unregistered.
+    if (body.installationId) {
+      await db.pushDevice.updateMany({
+        where: {
+          userId: user.id,
+          installationId: body.installationId,
+          token: { not: body.token },
+          active: true,
+        },
+        data: { active: false },
+      });
+    }
 
     await audit({
       actorId: user.id,
