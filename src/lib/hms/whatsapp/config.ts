@@ -3,6 +3,7 @@
 // (scheduler + route chunks are separate module instances), write-only
 // secrets (API key / webhook secret are NEVER returned — only hints).
 
+import crypto from "node:crypto";
 import { db } from "@/lib/db";
 import { encryptSecret, decryptSecret, maskSecretHint } from "./crypto";
 
@@ -139,6 +140,52 @@ export async function updateWhatsAppConfig(update: WhatsAppConfigUpdate): Promis
   });
   invalidateWhatsAppConfigCache();
   return toSafeConfig(row as WhatsAppConfigRow);
+}
+
+/** Accept either the bare gateway origin (`http://host:2785`) or the
+ *  `/api`-suffixed form an operator may put in OPENWA_API_URL — openwa.ts
+ *  appends `/api/...` itself, so a trailing `/api` must be stripped. */
+function normalizeGatewayBaseUrl(raw: string): string {
+  return raw.trim().replace(/\/$/, "").replace(/\/api$/, "");
+}
+
+/**
+ * Provision the singleton from the deployment environment — idempotent, runs at
+ * boot. The operator provisions OpenWA through `OPENWA_*` env; without this the
+ * app's config row stays empty (apiKeyEnc="") and every surface honestly reports
+ * "not configured". Values an admin already saved are never overwritten; only
+ * blanks are filled, the API key is encrypted at rest, and the webhook secret is
+ * generated and stored so the signed callback works. No credential is hardcoded.
+ */
+export async function provisionWhatsAppConfigFromEnv(): Promise<void> {
+  const envKey = (process.env.OPENWA_API_KEY || "").trim();
+  const envUrl = normalizeGatewayBaseUrl(process.env.OPENWA_API_URL || "");
+  const envSession = (process.env.OPENWA_SESSION_NAME || "").trim();
+  if (!envKey && !envUrl) return; // nothing provisioned — never invent a config
+
+  const existing = await db.whatsAppConfig.findUnique({ where: { id: CONFIG_ID } });
+  const data: Record<string, unknown> = {};
+  let seededKey = false;
+
+  if (!existing?.apiKeyEnc && envKey) { data.apiKeyEnc = encryptSecret(envKey); seededKey = true; }
+  if (!existing?.gatewayBaseUrl && envUrl) data.gatewayBaseUrl = envUrl;
+  if (!existing?.sessionName && envSession) data.sessionName = envSession;
+  // Webhook signing secret is app-generated and handed to the gateway on
+  // registration; without one the signed public webhook rejects every delivery.
+  if (!existing?.webhookSecretEnc) data.webhookSecretEnc = encryptSecret(crypto.randomBytes(32).toString("hex"));
+  // Provisioning the gateway in the environment implies intent to use it.
+  // Only auto-enable when we actually injected the key — an admin's later
+  // "off" toggle must survive the next boot.
+  if (seededKey) data.enabled = true;
+
+  if (Object.keys(data).length === 0) return;
+  data.configuredAt = existing?.configuredAt ?? new Date();
+  await db.whatsAppConfig.upsert({
+    where: { id: CONFIG_ID },
+    update: data,
+    create: { id: CONFIG_ID, ...data },
+  });
+  invalidateWhatsAppConfigCache();
 }
 
 /** Honest status mirror updates — only ever called with REAL gateway values. */

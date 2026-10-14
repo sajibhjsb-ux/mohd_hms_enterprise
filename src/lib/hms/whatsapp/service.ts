@@ -502,6 +502,24 @@ export async function disconnectSession(logout: boolean): Promise<{ ok: boolean;
   }
 }
 
+const WHATSAPP_WEBHOOK_PATH = "/api/v1/whatsapp/openwa/webhook";
+
+/**
+ * The callback URL registered on the gateway. The OpenWA container CANNOT reach
+ * the app at 127.0.0.1 — prefer the operator-provisioned OPENWA_WEBHOOK_URL
+ * (host.docker.internal, also in OpenWA's SSRF allowlist), falling back to
+ * APP_ORIGIN / HMS_APP_URL / loopback only when it is absent. The env value's
+ * path is ignored; the canonical route is always used.
+ */
+function resolveWebhookUrl(): string {
+  for (const candidate of [process.env.OPENWA_WEBHOOK_URL, process.env.APP_ORIGIN, process.env.HMS_APP_URL]) {
+    try {
+      if (candidate) return `${new URL(candidate).origin}${WHATSAPP_WEBHOOK_PATH}`;
+    } catch { /* unparseable — try the next candidate */ }
+  }
+  return `http://127.0.0.1:3000${WHATSAPP_WEBHOOK_PATH}`;
+}
+
 /** Register/refresh the MOHD.HMS webhook on the session with a signing secret (§17/§18). */
 const WEBHOOK_EVENTS = [
   "message.received", "message.sent", "message.ack", "message.failed",
@@ -516,8 +534,7 @@ export async function ensureWebhook(client?: { baseUrl: string; apiKey: string; 
 
   // The webhook target is THIS app (server-side loopback in the sandbox;
   // the deployment origin in production). OpenWA's SSRF guard must allow it.
-  const selfOrigin = process.env.WA_WEBHOOK_ORIGIN || process.env.APP_ORIGIN || "http://127.0.0.1:3000";
-  const webhookUrl = `${selfOrigin.replace(/\/$/, "")}/api/v1/whatsapp/openwa/webhook`;
+  const webhookUrl = resolveWebhookUrl();
 
   try {
     const id = sessionId ?? await resolveSessionId(gw);

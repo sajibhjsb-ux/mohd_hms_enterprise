@@ -4,6 +4,7 @@
 // invoked from startScheduler(). No second engine, no second scheduler.
 
 import { db } from "@/lib/db";
+import { provisionWhatsAppConfigFromEnv } from "./config";
 import { registerWorkflow, type WorkflowResult } from "@/lib/hms/workflows/engine";
 import { runWhatsAppAutomations, WHATSAPP_AUTOMATION_EVENTS } from "./automations";
 import { TEMPLATE_CATALOG, AUTOMATION_SEEDS } from "./templates";
@@ -29,6 +30,14 @@ const g = globalThis as unknown as { __hmsWaBooted?: boolean };
  */
 export async function bootstrapWhatsAppSystem(): Promise<void> {
   registerWhatsAppWorkflows();
+  // Mirror deployment-provisioned OpenWA credentials (OPENWA_* env) into the
+  // config singleton — idempotent, admin values preserved. Must run before any
+  // config read so the integration is usable without a manual key re-entry.
+  try {
+    await provisionWhatsAppConfigFromEnv();
+  } catch (e) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: "error", msg: "whatsapp-config-provision-failed", err: e instanceof Error ? e.message : String(e) }));
+  }
   if (g.__hmsWaBooted) return;
   g.__hmsWaBooted = true;
 
