@@ -50,16 +50,21 @@ export const AI_PROVIDERS: AiProviderDef[] = [
     id: "GOOGLE_GEMINI",
     label: "Google Gemini",
     requiresKey: true,
-    defaultModel: "gemini-2.5-flash",
+    defaultModel: "gemini-3.5-flash-lite",
     endpoint: "https://generativelanguage.googleapis.com/v1beta",
     docsUrl: "https://ai.google.dev/api/generate-content",
     supportsDiscovery: true,
     capabilities: ["text", "json", "image", "tools", "streaming"],
     catalog: [
-      { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", provider: "GOOGLE_GEMINI", recommended: true, contextTokens: 1_048_576, capabilities: ["text", "json", "image", "tools", "streaming"] },
-      { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro", provider: "GOOGLE_GEMINI", recommended: true, contextTokens: 1_048_576, capabilities: ["text", "json", "image", "tools", "streaming"] },
-      { id: "gemini-2.0-flash", label: "Gemini 2.0 Flash", provider: "GOOGLE_GEMINI", contextTokens: 1_048_576, capabilities: ["text", "json", "image", "tools", "streaming"] },
-      { id: "gemini-2.0-flash-lite", label: "Gemini 2.0 Flash Lite", provider: "GOOGLE_GEMINI", contextTokens: 1_048_576, capabilities: ["text", "json"] },
+      // Current general-purpose models (verified reachable). Discovery +
+      // Test Connection still validate against the live API before use.
+      { id: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash Lite", provider: "GOOGLE_GEMINI", recommended: true, contextTokens: 1_048_576, capabilities: ["text", "json", "image", "tools", "streaming"] },
+      { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", provider: "GOOGLE_GEMINI", recommended: true, contextTokens: 1_048_576, capabilities: ["text", "json", "image", "tools", "streaming"] },
+      { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash", provider: "GOOGLE_GEMINI", contextTokens: 1_048_576, capabilities: ["text", "json", "image", "tools", "streaming"] },
+      // Superseded — shown for transparency, never auto-selected.
+      { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash (retired)", provider: "GOOGLE_GEMINI", deprecated: true, contextTokens: 1_048_576, capabilities: ["text", "json", "image", "tools", "streaming"] },
+      { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro (retired)", provider: "GOOGLE_GEMINI", deprecated: true, contextTokens: 1_048_576, capabilities: ["text", "json", "image", "tools", "streaming"] },
+      { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash Lite (retired)", provider: "GOOGLE_GEMINI", deprecated: true, contextTokens: 1_048_576, capabilities: ["text", "json"] },
     ],
   },
   {
@@ -97,16 +102,28 @@ export const AI_PROVIDERS: AiProviderDef[] = [
     id: "NVIDIA",
     label: "NVIDIA AI (NIM)",
     requiresKey: true,
-    defaultModel: "meta/llama-3.3-70b-instruct",
+    // NVIDIA-hosted inference (build.nvidia.com / integrate.api.nvidia.com) —
+    // an OpenAI-compatible hosted endpoint, NOT a self-hosted NIM container.
+    // Model availability is per-NVIDIA-account and changes over time, so
+    // discovery + a real generation test are authoritative; this catalog is a
+    // maintained fallback only. Retired endpoints are kept visible but flagged
+    // so they are never auto-selected.
+    defaultModel: "nvidia/nemotron-3.5-lightning-30b-a3b",
     endpoint: "https://integrate.api.nvidia.com/v1",
-    docsUrl: "https://docs.nvidia.com/nim/",
+    docsUrl: "https://docs.api.nvidia.com/nim/reference/llm-apis",
     supportsDiscovery: true,
     capabilities: ["text", "json", "streaming"],
     catalog: [
-      { id: "meta/llama-3.3-70b-instruct", label: "Llama 3.3 70B Instruct", provider: "NVIDIA", recommended: true, contextTokens: 128_000, capabilities: ["text", "json", "streaming"] },
-      { id: "meta/llama-3.1-8b-instruct", label: "Llama 3.1 8B Instruct", provider: "NVIDIA", recommended: true, contextTokens: 128_000, capabilities: ["text", "json", "streaming"] },
-      { id: "nvidia/llama-3.3-nemotron-super-49b-v1", label: "Llama 3.3 Nemotron Super 49B", provider: "NVIDIA", contextTokens: 128_000, capabilities: ["text", "json", "streaming"] },
-      { id: "qwen/qwen2.5-coder-32b-instruct", label: "Qwen2.5 Coder 32B", provider: "NVIDIA", contextTokens: 131_072, capabilities: ["text", "json", "streaming"] },
+      { id: "nvidia/nemotron-3.5-lightning-30b-a3b", label: "Nemotron 3.5 Lightning 30B", provider: "NVIDIA", recommended: true, contextTokens: 128_000, capabilities: ["text", "json", "streaming"] },
+      { id: "nvidia/nemotron-3-super-120b-a12b", label: "Nemotron 3 Super 120B", provider: "NVIDIA", recommended: true, contextTokens: 128_000, capabilities: ["text", "json", "streaming"] },
+      { id: "openai/gpt-oss-20b", label: "GPT-OSS 20B", provider: "NVIDIA", contextTokens: 128_000, capabilities: ["text", "json", "streaming"] },
+      { id: "meta/llama-3.2-11b-vision-instruct", label: "Llama 3.2 11B Vision Instruct", provider: "NVIDIA", contextTokens: 128_000, capabilities: ["text", "json", "streaming"] },
+      { id: "meta/llama-3.2-90b-vision-instruct", label: "Llama 3.2 90B Vision Instruct", provider: "NVIDIA", contextTokens: 128_000, capabilities: ["text", "json", "streaming"] },
+      // Retired endpoints (HTTP 410 end-of-life / 404 not-entitled) — never auto-picked.
+      { id: "meta/llama-3.3-70b-instruct", label: "Llama 3.3 70B Instruct (retired)", provider: "NVIDIA", deprecated: true, contextTokens: 128_000, capabilities: ["text", "json", "streaming"] },
+      { id: "meta/llama-3.1-8b-instruct", label: "Llama 3.1 8B Instruct (retired)", provider: "NVIDIA", deprecated: true, contextTokens: 128_000, capabilities: ["text", "json", "streaming"] },
+      { id: "nvidia/llama-3.3-nemotron-super-49b-v1", label: "Llama 3.3 Nemotron Super 49B (retired)", provider: "NVIDIA", deprecated: true, contextTokens: 128_000, capabilities: ["text", "json", "streaming"] },
+      { id: "qwen/qwen2.5-coder-32b-instruct", label: "Qwen2.5 Coder 32B (retired)", provider: "NVIDIA", deprecated: true, contextTokens: 131_072, capabilities: ["text", "json", "streaming"] },
     ],
   },
   {
@@ -149,7 +166,10 @@ export function modelCandidates(provider: AiProviderDef, preferred: string): AiM
   const usable = provider.catalog.filter((m) => !m.deprecated);
   const ordered: AiModelInfo[] = [];
   const push = (m?: AiModelInfo | null) => {
-    if (m && !ordered.some((x) => x.id === m.id)) ordered.push(m);
+    // A retired/deprecated model is never a candidate, not even the admin's
+    // current selection (spec §3 — stop auto-selecting dead endpoints).
+    if (!m || m.deprecated || ordered.some((x) => x.id === m.id)) return;
+    ordered.push(m);
   };
   push(getCatalogModel(provider.id, preferred));
   for (const m of usable.filter((m) => m.recommended)) push(m);

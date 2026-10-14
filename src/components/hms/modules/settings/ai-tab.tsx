@@ -77,6 +77,17 @@ type ProfileView = {
   lastErrorMessage: string;
   updatedAt: string;
 };
+type TestAttempt = { model: string; ok: boolean; httpStatus: number | null; errorCode: string; errorMessage: string; durationMs: number };
+type TestResult = {
+  ok: boolean;
+  status: string;
+  message: string;
+  testedModel?: string;
+  model?: string;
+  errorCode?: string;
+  attempts?: TestAttempt[];
+  stoppedEarly?: boolean;
+};
 type ConfigView = {
   enabled: boolean;
   defaultProvider: string;
@@ -115,6 +126,8 @@ function statusView(status: string): { label: string; tone: string; kind: "ok" |
       return { label: "Authentication failed — check the credential", tone: "bg-red-500", kind: "bad" };
     case "MODEL_UNAVAILABLE":
       return { label: "Model unavailable", tone: "bg-red-500", kind: "bad" };
+    case "MODEL_DEPRECATED":
+      return { label: "Model retired by provider — pick a current model", tone: "bg-red-500", kind: "bad" };
     case "RATE_LIMITED":
       return { label: "Rate limited — try again", tone: "bg-amber-500", kind: "warn" };
     case "QUOTA_ISSUE":
@@ -156,6 +169,7 @@ export function AiTab() {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [discovering, setDiscovering] = useState(false);
+  const [lastTest, setLastTest] = useState<TestResult | null>(null);
 
   const load = useCallback(
     async (keepSelection = false) => {
@@ -262,12 +276,14 @@ export function AiTab() {
   const testConnection = async () => {
     if (testing || saving) return;
     setTesting(true);
+    setLastTest(null);
     try {
-      const res = await api.post<{ ok: boolean; message: string; testedModel?: string; model?: string; status: string }>(
+      const res = await api.post<TestResult>(
         "/api/v1/settings/ai/test",
         { provider: selected, apiKey: keyInput.trim() || undefined, model: model.trim() || undefined }
       );
       const r = res.data;
+      setLastTest(r);
       toast({
         title: r.ok ? `${providerMeta?.label ?? selected} connected` : `${providerMeta?.label ?? selected} test failed`,
         description: `${r.message}${r.testedModel || r.model ? ` · model: ${r.testedModel || r.model}` : ""}`,
@@ -374,6 +390,33 @@ export function AiTab() {
               {profile.lastErrorMessage ? <p className="text-xs text-muted-foreground">{profile.lastErrorMessage}</p> : null}
             </div>
           </div>
+
+          {lastTest ? (
+            <div className="rounded-lg border p-3 space-y-1.5">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                {lastTest.ok ? <CheckCircle2 className="h-4 w-4 text-emerald-600" aria-hidden /> : <XCircle className="h-4 w-4 text-red-600" aria-hidden />}
+                Last test — {lastTest.ok ? "model verified successfully" : "connection failed"}
+                {lastTest.testedModel ? <span className="font-normal text-muted-foreground">· {lastTest.testedModel}</span> : null}
+              </div>
+              <p className="text-xs text-muted-foreground">{lastTest.message}</p>
+              {lastTest.attempts && lastTest.attempts.length > 0 ? (
+                <ul className="space-y-0.5 text-xs">
+                  {lastTest.attempts.map((a) => (
+                    <li key={a.model} className="flex items-center gap-2">
+                      {a.ok ? <CheckCircle2 className="h-3 w-3 text-emerald-600" aria-hidden /> : <XCircle className="h-3 w-3 text-red-600" aria-hidden />}
+                      <span className="font-mono">{a.model}</span>
+                      <span className="text-muted-foreground">
+                        {a.ok ? `ok (${a.durationMs} ms)` : `${a.errorCode}${a.httpStatus ? ` · HTTP ${a.httpStatus}` : ""}`}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              {lastTest.stoppedEarly ? (
+                <p className="text-xs text-muted-foreground">Stopped after the first verified result — not every eligible model was tested.</p>
+              ) : null}
+            </div>
+          ) : null}
 
           <Separator />
 

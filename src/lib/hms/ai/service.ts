@@ -25,7 +25,6 @@ import {
   AI_PROVIDERS,
   getProviderDef,
   getCatalogModel,
-  modelCandidates,
   type AiModelInfo,
   type AiProviderDef,
   type AiProviderId,
@@ -45,6 +44,7 @@ export type AiErrorCode =
   | "AI_AUTH_FAILED"
   | "AI_QUOTA_EXCEEDED"
   | "AI_MODEL_UNAVAILABLE"
+  | "AI_MODEL_DEPRECATED"
   | "AI_TIMEOUT"
   | "AI_SERVICE_UNAVAILABLE"
   | "AI_BAD_RESPONSE"
@@ -58,6 +58,7 @@ export type AiConnectionStatus =
   | "FAILED"
   | "AUTH_FAILED"
   | "MODEL_UNAVAILABLE"
+  | "MODEL_DEPRECATED"
   | "RATE_LIMITED"
   | "QUOTA_ISSUE"
   | "SERVICE_UNAVAILABLE";
@@ -343,12 +344,18 @@ export class AiHttpError extends Error {
 
 // ── Error classification (per-provider bodies, honest categories) ────────────
 
-function classifyError(status: number, bodyText: string): { code: AiErrorCode; message: string } {
+export function classifyError(status: number, bodyText: string): { code: AiErrorCode; message: string } {
   const hay = bodyText.toUpperCase();
   const quota = /INSUFFICIENT_QUOTA|EXCEEDED YOUR CURRENT QUOTA|BILLING|PAYMENT REQUIRED|INSUFFICIENT FUNDS|OUT OF CREDIT/.test(hay);
-  const modelMissing = /MODEL.*(NOT FOUND|DOES NOT EXIST|UNAVAILABLE|UNKNOWN|INVALID)|NOT FOUND.*MODEL|UNSUPPORTED MODEL/.test(hay);
+  const deprecated = /END[ -]OF[ -]LIFE|NO LONGER AVAILABLE|HAS BEEN DEPRECATED|IS DEPRECATED|DEPRECATED|RETIRED|SUPERSEDED/.test(hay);
+  const modelMissing = /MODEL.*(NOT FOUND|DOES NOT EXIST|UNAVAILABLE|UNKNOWN|INVALID)|NOT FOUND.*MODEL|UNSUPPORTED MODEL|NOT FOUND FOR ACCOUNT/.test(hay);
   const auth = /API[_ ]?KEY|UNAUTHENTICATED|PERMISSION_DENIED|INVALID.*(KEY|TOKEN|CREDENTIAL)|AUTHENTICATION/.test(hay);
 
+  // 410 Gone / explicit end-of-life notice (NVIDIA RFC7807 problem+json, Gemini
+  // "no longer available") — the model exists but its endpoint is retired.
+  if (status === 410 || (!auth && deprecated && !quota)) {
+    return { code: "AI_MODEL_DEPRECATED", message: "The selected model has been retired by the provider and can no longer be used. Choose or discover a current model." };
+  }
   if (status === 401 || status === 403) {
     if (quota) return { code: "AI_QUOTA_EXCEEDED", message: "The AI provider reports a quota or billing issue with this credential." };
     return { code: "AI_AUTH_FAILED", message: "Authentication failed. Verify the credential and its API restrictions in Settings → AI." };
@@ -375,6 +382,7 @@ export function statusForError(code: AiErrorCode): AiConnectionStatus {
   switch (code) {
     case "AI_AUTH_FAILED": return "AUTH_FAILED";
     case "AI_MODEL_UNAVAILABLE": return "MODEL_UNAVAILABLE";
+    case "AI_MODEL_DEPRECATED": return "MODEL_DEPRECATED";
     case "AI_RATE_LIMITED": return "RATE_LIMITED";
     case "AI_QUOTA_EXCEEDED": return "QUOTA_ISSUE";
     case "AI_SERVICE_UNAVAILABLE": return "SERVICE_UNAVAILABLE";
@@ -609,8 +617,22 @@ async function resolveChain(cfg: AiGlobalConfig, override?: AiProviderId): Promi
   return { chain, skipped };
 }
 
-function modelFor(def: AiProviderDef, profile: AiProfileRow): string {
-  return (profile.model || profile.testedModel || def.defaultModel).trim();
+function isRetiredCatalogModel(def: AiProviderDef, model: string): boolean {
+  return getCatalogModel(def.id, model)?.deprecated === true;
+}
+
+/**
+ * The model used for real generation. A model the admin explicitly chose is
+ * kept UNLESS it is a catalogued retired/deprecated endpoint (HTTP 410), in
+ * which case the last verified model — or the current default — is used so a
+ * dead endpoint is never selected (spec §3).
+ */
+export function modelFor(def: AiProviderDef, profile: Pick<AiProfileRow, "model" | "testedModel">): string {
+  const chosen = (profile.model || "").trim();
+  if (chosen && !isRetiredCatalogModel(def, chosen)) return chosen;
+  const tested = (profile.testedModel || "").trim();
+  if (tested && !isRetiredCatalogModel(def, tested)) return tested;
+  return def.defaultModel;
 }
 
 // ── Core text generation ──────────────────────────────────────────────────────
@@ -765,6 +787,75 @@ export type TestConnectionResult = {
 };
 
 /**
+ * Heuristic: keep only general chat/reasoning models from a live listing so
+ * embedding, rerank, guard, TTS, image and similar utility endpoints are never
+ * probed for a chat completion.
+ */
+function isChatModelId(id: string): boolean {
+  return !/embed|rerank|reward|guard|safety|parse|clip|neva|vila|kosmos|deplot|fuyu|diffusion|detector|calibration|translat|retriev|tts|transcrib|robotic|computer-use|deep-research|antigravity|lyria|nano-banana|image|video|omni/i.test(id);
+}
+
+/**
+ * Deterministic, BOUNDED candidate list for Test Connection / Auto Select.
+ * Order: the admin's preferred model (unless retired) → catalogued recommended
+ * models → live-discovered chat models (authoritative availability) → the rest
+ * of the non-deprecated catalog. Retired endpoints are never included.
+ */
+export function selectCandidates(def: AiProviderDef, preferred: string, discovered: DiscoveredModel[] = [], max = 8): string[] {
+  const retired = new Set(def.catalog.filter((m) => m.deprecated).map((m) => m.id));
+  const out: string[] = [];
+  const push = (id: string) => {
+    const t = (id || "").trim();
+    if (!t || retired.has(t) || out.includes(t)) return;
+    out.push(t);
+  };
+  push(preferred);
+  for (const m of def.catalog) if (m.recommended && !m.deprecated) push(m.id);
+  for (const m of discovered) if (isChatModelId(m.id)) push(m.id);
+  for (const m of def.catalog) if (!m.deprecated) push(m.id);
+  return out.slice(0, max);
+}
+
+export type ProbeFn = (model: string) => Promise<GenerateOutput>;
+
+export type CandidateWalk = { attempts: ModelTestResult[]; success: { model: string; preview: string } | null; stoppedEarly: boolean };
+
+/**
+ * Walk bounded candidates, testing each with a REAL probe. Stops at the first
+ * verified success (unless testAll) and on credential/quota/rate-limit errors
+ * that affect the whole key. Never reports a model as tested unless it was.
+ */
+export async function walkCandidates(
+  candidates: string[],
+  probe: ProbeFn,
+  opts: { testAll?: boolean; onAttempt?: (a: ModelTestResult) => void } = {}
+): Promise<CandidateWalk> {
+  const attempts: ModelTestResult[] = [];
+  let stoppedEarly = false;
+  let success: { model: string; preview: string } | null = null;
+  for (const model of candidates) {
+    const at = Date.now();
+    let rec: ModelTestResult;
+    try {
+      const out = await probe(model);
+      const text = out.text.trim();
+      const ok = text.length > 0;
+      rec = { model, ok, httpStatus: 200, errorCode: ok ? "" : "AI_BAD_RESPONSE", errorMessage: ok ? "" : "The model returned an empty response.", durationMs: Date.now() - at, outputPreview: text.slice(0, 120) };
+      if (ok) { success = { model, preview: text.slice(0, 120) }; }
+    } catch (err) {
+      const e = err instanceof AiHttpError ? err : new AiHttpError(502, "AI_PROVIDER_ERROR", "The AI request failed.");
+      rec = { model, ok: false, httpStatus: e.status, errorCode: e.code, errorMessage: e.message, durationMs: Date.now() - at, outputPreview: "" };
+    }
+    attempts.push(rec);
+    opts.onAttempt?.(rec);
+    if (rec.ok && !opts.testAll) { stoppedEarly = true; break; }
+    // Credential-wide problems: stop, do not hammer every other model.
+    if (rec.errorCode === "AI_AUTH_FAILED" || rec.errorCode === "AI_QUOTA_EXCEEDED" || rec.errorCode === "AI_RATE_LIMITED") { stoppedEarly = true; break; }
+  }
+  return { attempts, success, stoppedEarly };
+}
+
+/**
  * Test the credential CURRENTLY ENTERED in the form (if provided) against the
  * provider, walking eligible models until one produces a validated generation.
  * Only a real HTTP success with usable output yields CONNECTED.
@@ -811,42 +902,48 @@ export async function aiTestConnection(params: {
   }
 
   const preferred = (params.preferredModel || profile.model || def.defaultModel).trim();
-  const candidates = def.id === "ZAI_PLATFORM" ? [def.catalog[0]] : modelCandidates(def, preferred);
-  const attempts: ModelTestResult[] = [];
-  let stoppedEarly = false;
-  let success: { model: string; preview: string } | null = null;
 
-  for (const cand of candidates) {
-    const at = Date.now();
+  // Refresh the candidate list from the provider's live listing API when it
+  // supports one (authoritative for THIS credential); fall back to the
+  // maintained catalog when discovery is unavailable. Retired models are never
+  // probed. Discovery is best-effort — a failure never fails the test.
+  let discovered: DiscoveredModel[] = [];
+  if (def.id !== "ZAI_PLATFORM" && def.supportsDiscovery) {
     try {
-      const out = await callProvider(def, key, cand.id, AI_GLOBAL_SYSTEM_INSTRUCTIONS, "Reply with exactly: OK", { json: false, temperature: 0, maxTokens: 64, timeoutMs: Math.min(cfg.timeoutMs, 20_000) });
-      const text = out.text.trim();
-      const preview = text.slice(0, 120);
-      const ok = text.length > 0;
-      const rec: ModelTestResult = { model: cand.id, ok, httpStatus: 200, errorCode: ok ? "" : "AI_BAD_RESPONSE", errorMessage: ok ? "" : "Empty response", durationMs: Date.now() - at, outputPreview: preview };
-      attempts.push(rec);
-      await db.aiModelTestRun.create({ data: { runId, provider: def.id, model: cand.id, ok, httpStatus: 200, errorCode: ok ? "" : "AI_BAD_RESPONSE", errorMessage: ok ? "" : "Empty response", durationMs: rec.durationMs } }).catch(() => undefined);
-      if (ok) { success = { model: cand.id, preview }; if (!params.testAll) { stoppedEarly = true; break; } }
-    } catch (err) {
-      const e = err instanceof AiHttpError ? err : new AiHttpError(502, "AI_PROVIDER_ERROR", "The AI request failed.");
-      const rec: ModelTestResult = { model: cand.id, ok: false, httpStatus: e.status, errorCode: e.code, errorMessage: e.message, durationMs: Date.now() - at, outputPreview: "" };
-      attempts.push(rec);
-      await db.aiModelTestRun.create({ data: { runId, provider: def.id, model: cand.id, ok: false, httpStatus: e.status, errorCode: e.code, errorMessage: e.message.slice(0, 300), durationMs: rec.durationMs } }).catch(() => undefined);
-      // Auth failures affect the whole credential — stop hammering other models.
-      if (e.code === "AI_AUTH_FAILED" || e.code === "AI_QUOTA_EXCEEDED") { stoppedEarly = true; break; }
-      // Rate limited: stop the whole run, do not consume more quota.
-      if (e.code === "AI_RATE_LIMITED") { stoppedEarly = true; break; }
-    }
+      const d = await discoverModels(def.id, key, Math.min(cfg.timeoutMs, 20_000));
+      if (d.ok) discovered = d.models;
+    } catch { /* discovery is best-effort */ }
   }
+  const candidates = selectCandidates(def, preferred, discovered);
+  if (candidates.length === 0) {
+    return fail("AI_MODEL_UNAVAILABLE", `${def.label} returned no eligible chat model. Load live models and pick one explicitly.`, preferred);
+  }
+
+  const walk = await walkCandidates(
+    candidates,
+    // 512 tokens so reasoning-style models (e.g. NVIDIA Nemotron) still emit
+    // visible content after their (hidden) reasoning, avoiding false "empty".
+    (model) => callProvider(def, key, model, AI_GLOBAL_SYSTEM_INSTRUCTIONS, "Reply with exactly: OK", { json: false, temperature: 0, maxTokens: 512, timeoutMs: Math.min(cfg.timeoutMs, 20_000) }),
+    {
+      testAll: params.testAll,
+      onAttempt: (a) => { void db.aiModelTestRun.create({ data: { runId, provider: def.id, model: a.model, ok: a.ok, httpStatus: a.httpStatus, errorCode: a.errorCode, errorMessage: a.errorMessage.slice(0, 300), durationMs: a.durationMs } }).catch(() => undefined); },
+    }
+  );
+  const attempts = walk.attempts;
+  const stoppedEarly = walk.stoppedEarly;
+  const success = walk.success;
 
   const durationMs = Date.now() - started;
 
   if (!success) {
-    const firstFail = attempts.find((a) => !a.ok);
-    const code = (firstFail?.errorCode || "AI_MODEL_UNAVAILABLE") as AiErrorCode;
-    const message = firstFail?.errorCode === "AI_AUTH_FAILED"
+    // Most actionable error across the attempted candidates (auth > quota >
+    // rate limit > retired > unavailable > ...), with sanitized HTTP status.
+    const rank: AiErrorCode[] = ["AI_AUTH_FAILED", "AI_QUOTA_EXCEEDED", "AI_RATE_LIMITED", "AI_MODEL_DEPRECATED", "AI_MODEL_UNAVAILABLE", "AI_SERVICE_UNAVAILABLE", "AI_TIMEOUT", "AI_PROVIDER_ERROR", "AI_BAD_RESPONSE"];
+    const code = rank.find((c) => attempts.some((a) => !a.ok && a.errorCode === c)) ?? "AI_MODEL_UNAVAILABLE";
+    const detail = attempts.slice(-3).map((a) => `${a.model} → ${a.errorCode}${a.httpStatus ? ` (HTTP ${a.httpStatus})` : ""}`).join("; ");
+    const message = code === "AI_AUTH_FAILED"
       ? "Authentication failed. Verify the credential and its API restrictions."
-      : "No tested model could establish a successful connection. Review the individual test results.";
+      : `No eligible model connected after ${attempts.length} attempt(s). ${detail}`;
     await db.aiProviderProfile.update({ where: { id: def.id }, data: { status: statusForError(code), lastTestedAt: new Date(), lastTestOk: false, lastErrorCode: code, lastErrorMessage: message.slice(0, 400) } });
     return { ok: false, runId, provider: def.id, testedProvider: def.id, model: preferred, testedModel: profile.testedModel, status: statusForError(code), message, durationMs, errorCode: code, attempts, stoppedEarly, promotedPendingKey: false, usedUnsavedKey };
   }
@@ -878,13 +975,20 @@ export async function aiTestConnection(params: {
     }
   }
   if (usedUnsavedKey && formKey && !testingPending) {
-    // An unsaved key that just worked is persisted on success (spec §6.2).
+    // An unsaved key that just worked is persisted on success (spec §6.2). Any
+    // other pending credential is now obsolete and must not linger, or the next
+    // test would try the stale (unverified) key first.
     const prep = prepareKeyUpdate(formKey);
     data.apiKeyEnc = prep.enc;
     data.apiKeyLast4 = prep.last4;
     data.apiKeySetAt = prep.setAt;
+    data.pendingApiKeyEnc = "";
+    data.pendingApiKeyLast4 = "";
+    data.pendingKeySetAt = null;
   }
-  if (!profile.model) data.model = success.model;
+  // Adopt the verified model (Auto Select): never leave a retired endpoint or
+  // an unverified guess as the configured generation model (spec §3/§6).
+  data.model = success.model;
   await db.aiProviderProfile.update({ where: { id: def.id }, data });
 
   const message = promotedPendingKey
