@@ -20,6 +20,9 @@
 
 import { createServer } from "http";
 import { Server, type Socket } from "socket.io";
+// Presence visibility policy — SHARED with the Next app (single source of
+// truth). Pure module; the relative path is the only cross-boundary import.
+import { presenceAudienceRooms, scopePresence } from "../../src/lib/hms/realtime/presence";
 
 const PORT = 3003; // public WebSocket transport (via gateway ?XTransformPort=3003)
 const INTERNAL_PORT = Number(process.env.REALTIME_INTERNAL_PORT ?? 3004); // loopback publish/health API
@@ -59,6 +62,11 @@ const stats = (g.__hmsStats ??= { broadcast: 0, lastEventAt: 0, lastEvent: "", s
 
 type PresenceEntry = { name: string; role: string; sockets: number; since: number; lastSeenAt: number };
 const presence = new Map<string, PresenceEntry>(); // userId → entry
+
+/** Canonical snapshot (unique users) — the ONE input to every projection. */
+function presenceSnapshot() {
+  return Array.from(presence.entries()).map(([userId, p]) => ({ userId, ...p }));
+}
 
 function log(level: "info" | "warn" | "error", msg: string, extra: Record<string, unknown> = {}) {
   console.log(JSON.stringify({ ts: new Date().toISOString(), level, service: "realtime", msg, ...extra }));
@@ -319,12 +327,13 @@ io.on("connection", (socket: Socket) => {
     socket.emit("realtime:resync", { serverTime: new Date().toISOString() });
   });
 
-  // Presence list for admin dashboards (staff only — verified server-side).
+  // Presence list for the header dropdown. The server resolves the viewer's
+  // role from the VERIFIED session and returns ONLY that role's projection
+  // (all / technicians / self) — a restricted client cannot ask for more by
+  // emitting this RPC. Safe fields only (name, role, socket count, since).
   socket.on("presence:list", () => {
-    if (user.role === "CUSTOMER") return;
-    socket.emit("presence:list", {
-      presence: Array.from(presence.entries()).map(([userId, p]) => ({ userId, ...p })),
-    });
+    const scope = scopePresence(user.role, user.id, presenceSnapshot());
+    socket.emit("presence:list", { scope: scope.visibility, presence: scope.presence, count: scope.count });
   });
 
   socket.on("disconnect", (reason) => {
@@ -343,22 +352,33 @@ io.on("connection", (socket: Socket) => {
   });
 });
 
+/** Emit one payload to the union of several rooms (no-op if none). */
+function emitToRooms(rooms: string[], event: string, payload: unknown) {
+  if (rooms.length === 0) return;
+  let op = io.to(rooms[0]);
+  for (let i = 1; i < rooms.length; i++) op = op.to(rooms[i]);
+  op.emit(event, payload);
+}
+
 function broadcastPresence() {
-  // Detailed presence stays staff-scoped (existing RBAC policy): names/roles
-  // are never pushed to customer sockets.
-  io.to("staff").emit("presence:update", {
-    presence: Array.from(presence.entries()).map(([userId, p]) => ({ userId, ...p })),
-  });
-  // Count-only presence for EVERY authenticated socket (the header's
-  // "● N Online" indicator). `io.emit` reaches only sockets that passed the
-  // authenticated handshake middleware — anonymous clients do not exist here.
-  // The count is UNIQUE USERS (presence.size), not raw sockets: multiple
-  // tabs/devices of one user (and the single-active-device policy) always
-  // collapse to one online user.
-  io.emit("presence:count", {
-    count: presence.size,
-    timestamp: new Date().toISOString(),
-  });
+  const all = presenceSnapshot();
+
+  // Full list + total unique-user count → SUPER_ADMIN / ADMIN only.
+  const allRooms = presenceAudienceRooms("all");
+  const allScope = scopePresence("SUPER_ADMIN", "", all);
+  emitToRooms(allRooms, "presence:update", { scope: "all", presence: allScope.presence, count: allScope.count });
+  emitToRooms(allRooms, "presence:count", { scope: "all", count: allScope.count, timestamp: new Date().toISOString() });
+
+  // Technician-only list + technician count → SUPERVISOR only. Names/roles of
+  // admins, customers and other roles are NEVER pushed to a supervisor socket.
+  const techRooms = presenceAudienceRooms("technicians");
+  const techScope = scopePresence("SUPERVISOR", "", all);
+  emitToRooms(techRooms, "presence:update", { scope: "technicians", presence: techScope.presence, count: techScope.count });
+  emitToRooms(techRooms, "presence:count", { scope: "technicians", count: techScope.count, timestamp: new Date().toISOString() });
+
+  // Self-only roles (TECHNICIAN, CUSTOMER, FINANCE, HR, …) receive NOTHING:
+  // their own online status derives from their own live socket, and no other
+  // user's identity or any global count is ever pushed to them.
 }
 
 // ─── Session-revocation sweep (single-active-device policy) ─────────────────

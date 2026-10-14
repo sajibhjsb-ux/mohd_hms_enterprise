@@ -28,7 +28,8 @@ import { humanize, PERMISSIONS } from "@/lib/hms/constants";
 import { initials } from "@/lib/hms/format";
 import { cn } from "@/lib/utils";
 import { UserAvatar } from "@/components/hms/shared/avatar";
-import { onRealtimeState, onRealtimePresenceCount, type RealtimeState } from "@/lib/hms/realtime/bus";
+import { onRealtimeState, onRealtimePresenceFeed, type RealtimeState, type PresenceFeed } from "@/lib/hms/realtime/bus";
+import { presenceVisibility } from "@/lib/hms/realtime/presence";
 import { getRealtimeSocket } from "@/lib/hms/realtime/socket";
 import { useRealtimeEvent } from "@/lib/hms/realtime/hooks";
 import { RT } from "@/lib/hms/realtime/matrix";
@@ -273,27 +274,23 @@ function BrandLockup() {
 }
 
 /**
- * Online presence indicator — the header's PRIMARY status (replaces the old
- * technical "Reconnecting…" pill).
+ * Online presence indicator — the header's PRIMARY status.
  *
- * The number is the backend-authoritative ONLINE USER COUNT pushed by the
- * realtime service's presence manager over the EXISTING socket
- * (`presence:count` — unique authenticated users, deduplicated across
- * tabs/devices server-side; never raw sockets, never a frontend computation,
+ * WHAT IS SHOWN IS ROLE-SCOPED BY THE BACKEND (spec §2/§3/§5). The server
+ * (REST route + socket.io mini-service, ONE shared policy module:
+ * `src/lib/hms/realtime/presence.ts`) filters the canonical presence map
+ * BEFORE it reaches this component, so this code only renders what the viewer
+ * is entitled to see — the frontend never widens visibility:
+ *
+ *   SUPER_ADMIN | ADMIN   → "● N Online" + the full online-user list
+ *   SUPERVISOR            → "● N Technicians Online" + technicians only
+ *   TECHNICIAN | CUSTOMER | FINANCE | HR → "● You are online", no count/list
+ *
+ * The count is the server-deduplicated UNIQUE USER count (never raw sockets,
  * never a hardcoded value). No second WebSocket, no polling.
  *
- * State model (spec §12/§13/§27):
- *   healthy     ● N Online           (green — live count)
- *   recovering  ● N Online           (count kept, dot pulses — brief reconnect;
- *                                     the header is not dominated by diagnostics)
- *   loading     … Online             (no count yet — skeleton, not "0")
- *   unavailable ⚠ Online unavailable (channel dead — the stale count is
- *                                     WITHDRAWN; "unavailable" ≠ "0 online")
- *
- * Clicking opens the existing dropdown: staff receive the live online-user
- * list (server-scoped `presence:list` RPC + `presence:update` push — staff
- * room only, safe fields only: name/role/online), customers get the count
- * summary. One canonical presence source for header AND Realtime dashboard.
+ * State model: live (green) / connecting (skeleton, never "0") / unavailable
+ * (channel dead — any count is WITHDRAWN; "unavailable" ≠ "0 online").
  */
 type PresenceRow = {
   userId: string; name: string; role: string;
@@ -303,26 +300,32 @@ type PresenceRow = {
 function OnlinePresenceIndicator() {
   const { user } = useSession();
   const [state, setState] = useState<RealtimeState>("CONNECTING");
-  const [count, setCount] = useState<number | null>(null);
+  const [feed, setFeed] = useState<PresenceFeed | null>(null);
   const [open, setOpen] = useState(false);
   const [list, setList] = useState<PresenceRow[] | null>(null);
 
   useEffect(() => onRealtimeState(setState), []);
-  useEffect(() => onRealtimePresenceCount(setCount), []);
+  useEffect(() => onRealtimePresenceFeed(setFeed), []);
 
-  const isStaff = user?.role !== "CUSTOMER";
+  // Display class is derived from the server-verified session role; the DATA
+  // underneath is independently filtered server-side to the same class.
+  const visibility = presenceVisibility(user?.role);
+  const isSelf = visibility === "self";
+  const live = state === "CONNECTED";
   const dead = state === "FAILED" || state === "DISCONNECTED";
-  const showCount = count !== null && !dead; // a stale count is never shown as current
-  const loading = !showCount && !dead; // connecting / awaiting first count
+  const connecting = !live && !dead;
 
-  // Live dropdown list (staff only — the server enforces that room scope):
-  // initial snapshot via the request/response RPC, then kept fresh by the
-  // staff-scoped push while the dropdown stays open. Both carry the same
-  // safe fields (name, role, online) — no emails, tokens or session ids.
-  // "Unavailable" is DERIVED from the connection state (never set in-effect).
-  const listDead = open && isStaff && state !== "CONNECTED";
+  // Only trust a feed whose scope the server assigned to THIS viewer's class.
+  const count = !isSelf && feed?.scope === visibility ? feed.count : null;
+  const showCount = count !== null && !dead;
+
+  const listVisible = !isSelf; // full / technician viewers receive a scoped list
+  const listDead = open && listVisible && !live;
+
+  // Scoped dropdown list: RPC snapshot + push. The server already filtered the
+  // payload to this viewer's class — no client-side filtering, no over-fetch.
   useEffect(() => {
-    if (!open || !isStaff) return;
+    if (!open || !listVisible) return;
     const socket = getRealtimeSocket();
     if (!socket || !socket.connected) return;
     const apply = (p: { presence?: PresenceRow[] }) => {
@@ -332,23 +335,27 @@ function OnlinePresenceIndicator() {
     socket.on("presence:update", apply);
     socket.emit("presence:list");
     return () => { socket.off("presence:list", apply); socket.off("presence:update", apply); };
-  }, [open, isStaff]);
+  }, [open, listVisible]);
 
-  const summary = `${count ?? 0} user${count === 1 ? "" : "s"} currently online`;
-  const pillTone = showCount
+  const noun = visibility === "technicians" ? "technician" : "user";
+  const summary = showCount ? `${count} ${noun}${count === 1 ? "" : "s"} currently online` : null;
+
+  const ok = live && (isSelf || showCount);
+  const pillTone = ok
     ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-400"
     : "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-400";
-  const dotTone = showCount
-    ? (state === "CONNECTED" ? "bg-emerald-500" : "bg-amber-500 animate-pulse")
-    : "bg-amber-500 animate-pulse";
-  const tooltip =
-    dead ? "Realtime connection unavailable — online status cannot be verified right now"
-    : !showCount ? "Connecting to realtime presence…"
-    : state === "CONNECTED" ? `${summary} — live from the realtime presence service`
-    : `Reconnecting — showing the last known count, which may be briefly outdated`;
+  const dotTone = ok ? "bg-emerald-500" : "bg-amber-500 animate-pulse";
+  const tooltip = dead
+    ? "Realtime connection unavailable — online status cannot be verified right now"
+    : connecting ? "Connecting to realtime presence…"
+    : isSelf ? "You are online"
+    : showCount ? `${summary} — live from the realtime presence service`
+    : "Reconnecting — showing the last known state, which may be briefly outdated";
+
+  const panelTitle = isSelf ? "Your status" : visibility === "technicians" ? "Online technicians" : "Online users";
 
   return (
-    <DropdownMenu open={open} onOpenChange={setOpen}>
+    <DropdownMenu open={open} onOpenChange={(v) => { setOpen(v); setList(null); }}>
       <Tooltip>
         <TooltipTrigger asChild>
           <DropdownMenuTrigger asChild>
@@ -362,13 +369,33 @@ function OnlinePresenceIndicator() {
               )}
             >
               <span className={cn("h-1.5 w-1.5 rounded-full shrink-0", dotTone)} aria-hidden />
-              {showCount ? (
+              {isSelf ? (
+                live ? (
+                  <span className="contents" role="status" aria-live="polite">
+                    <span className="hidden sm:inline">You are online</span>
+                    <span className="sm:hidden">Online</span>
+                    <span className="sr-only">You are online</span>
+                  </span>
+                ) : connecting ? (
+                  <span className="contents" role="status" aria-live="polite">
+                    <span aria-hidden>…</span>
+                    <span className="hidden sm:inline">Loading</span>
+                    <span className="sr-only">Checking your status</span>
+                  </span>
+                ) : (
+                  <span className="contents" role="status" aria-live="polite">
+                    <AlertTriangle className="h-3.5 w-3.5" aria-hidden />
+                    <span className="hidden sm:inline">Status unavailable</span>
+                    <span className="sr-only">Online status unavailable</span>
+                  </span>
+                )
+              ) : showCount ? (
                 <span className="contents" role="status" aria-live="polite">
                   <span className="tabular-nums" data-testid="header-online-count">{count}</span>
-                  <span className="hidden sm:inline">Online</span>
-                  <span className="sr-only">users currently online</span>
+                  <span className="hidden sm:inline">{visibility === "technicians" ? "Technicians Online" : "Online"}</span>
+                  <span className="sr-only">{visibility === "technicians" ? "technicians currently online" : "users currently online"}</span>
                 </span>
-              ) : loading ? (
+              ) : connecting ? (
                 <span className="contents" role="status" aria-live="polite">
                   <span aria-hidden>…</span>
                   <span className="hidden sm:inline">Online</span>
@@ -388,55 +415,76 @@ function OnlinePresenceIndicator() {
       </Tooltip>
 
       <DropdownMenuContent align="end" className="w-64 p-0" data-testid="header-online-dropdown">
-        {isStaff ? (
-          <div>
-            <div className="flex items-center justify-between px-3 py-2.5 border-b">
-              <span className="text-sm font-medium">Online users</span>
+        <div>
+          <div className="flex items-center justify-between px-3 py-2.5 border-b">
+            <span className="text-sm font-medium">{panelTitle}</span>
+            {live ? (
               <span className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden /> Live
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden />
+                Live
               </span>
-            </div>
-            <div className="max-h-72 overflow-y-auto hms-scroll">
-              {listDead ? (
-                <div className="px-4 py-8 text-center text-sm text-muted-foreground">Online status unavailable</div>
-              ) : list === null ? (
-                <div className="flex items-center justify-center gap-2 px-4 py-8 text-center text-sm text-muted-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Loading presence…
-                </div>
-              ) : list.length === 0 ? (
-                <div className="px-4 py-8 text-center text-sm text-muted-foreground">No users currently online</div>
+            ) : null}
+          </div>
+
+          {isSelf ? (
+            <div className="px-3 py-3 text-sm" data-testid="header-online-summary">
+              {live ? (
+                <span className="flex items-center gap-2">
+                  <span className="h-2 w-2 rounded-full bg-emerald-500 shrink-0" aria-label="online" />
+                  You are online.
+                </span>
+              ) : connecting ? (
+                <span className="flex items-center gap-2 text-muted-foreground">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> Loading your status…
+                </span>
               ) : (
-                list.map((p) => (
-                  <div key={p.userId} className="flex items-center gap-2.5 px-3 py-2 border-b last:border-0">
-                    <span className="h-2 w-2 rounded-full bg-emerald-500 shrink-0" aria-label="online" />
-                    <span className="h-7 w-7 rounded-full bg-primary/10 text-primary text-[10px] font-semibold flex items-center justify-center shrink-0" aria-hidden>
-                      {initials(p.name)}
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-sm font-medium truncate">
-                        {p.name}
-                        {p.userId === user?.id ? <span className="font-normal text-muted-foreground"> (you)</span> : null}
-                      </span>
-                      <span className="block text-[10px] uppercase tracking-wide text-muted-foreground">{humanize(p.role)}</span>
-                    </span>
-                    {/* Multiple sockets of the SAME user never inflate the count —
-                        they only surface here, on the detailed staff list. */}
-                    {p.sockets > 1 ? (
-                      <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px]">{p.sockets} devices</Badge>
-                    ) : null}
-                  </div>
-                ))
+                <span className="text-muted-foreground">Online status is temporarily unavailable.</span>
               )}
             </div>
-            <div className="border-t px-3 py-2 text-xs text-muted-foreground" data-testid="header-online-summary">
-              {showCount ? summary : "Online status unavailable"}
-            </div>
-          </div>
-        ) : (
-          <div className="px-4 py-4 text-center text-sm text-muted-foreground" data-testid="header-online-summary">
-            {showCount ? summary : "Online status unavailable"}
-          </div>
-        )}
+          ) : (
+            <>
+              <div className="max-h-72 overflow-y-auto hms-scroll">
+                {listDead ? (
+                  <div className="px-4 py-4 text-center text-sm text-muted-foreground">Online status is temporarily unavailable.</div>
+                ) : list === null ? (
+                  <div className="px-4 py-4 flex items-center justify-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> Loading online users…
+                  </div>
+                ) : list.length === 0 ? (
+                  <div className="px-4 py-4 text-center text-sm text-muted-foreground">
+                    {visibility === "technicians" ? "No technicians are currently online." : "No other users are currently online."}
+                  </div>
+                ) : (
+                  list.map((p) => (
+                    <div key={p.userId} className="flex items-center gap-2 px-3 py-2 border-b last:border-0">
+                      <span className="h-2 w-2 rounded-full bg-emerald-500 shrink-0" aria-label="online" />
+                      <span className="h-7 w-7 rounded-full bg-primary/10 text-primary text-[10px] font-semibold flex items-center justify-center shrink-0" aria-hidden>
+                        {initials(p.name)}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-sm font-medium truncate">
+                          {p.name}
+                          {p.userId === user?.id ? <span className="font-normal text-muted-foreground"> (you)</span> : null}
+                        </span>
+                        <span className="block text-[10px] uppercase tracking-wide text-muted-foreground">{humanize(p.role)}</span>
+                      </span>
+                      {/* Multiple sockets of the SAME user never inflate the count —
+                          they only surface here, on the detailed scoped list. */}
+                      {p.sockets > 1 ? (
+                        <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px]">{p.sockets} devices</Badge>
+                      ) : null}
+                    </div>
+                  ))
+                )}
+              </div>
+              <div className="border-t px-3 py-2 text-xs text-muted-foreground" data-testid="header-online-summary">
+                {dead ? "Online status is temporarily unavailable."
+                  : showCount ? summary
+                  : "Loading online users…"}
+              </div>
+            </>
+          )}
+        </div>
       </DropdownMenuContent>
     </DropdownMenu>
   );

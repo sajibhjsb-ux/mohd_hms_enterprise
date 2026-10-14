@@ -26,8 +26,8 @@
 import { io, type Socket } from "socket.io-client";
 import {
   publishRealtimeEvent, publishRealtimeState, publishRealtimeResync,
-  publishPresenceCount,
-  type RealtimeEvent, type RealtimeState,
+  publishPresenceFeed,
+  type RealtimeEvent, type RealtimeState, type PresenceFeed,
 } from "./bus";
 
 const g = globalThis as unknown as {
@@ -92,12 +92,17 @@ export function connectRealtime(): void {
   // Server asks us to reconcile (reply to realtime:sync).
   socket.on("realtime:resync", () => publishRealtimeResync("server-resync"));
 
-  // Backend-authoritative ONLINE USER COUNT (unique users, server-deduped —
-  // presence manager, never raw sockets). Pushed on every connect/disconnect
-  // and after revocations; the connection handler broadcasts it to every
-  // freshly connected socket, so the count arrives immediately on (re)connect.
-  socket.on("presence:count", (p: { count?: number }) => {
-    publishPresenceCount(typeof p?.count === "number" && Number.isFinite(p.count) ? p.count : null);
+  // Backend-authoritative, role-SCOPED presence feed. The server pushes a
+  // count whose scope matches THIS socket's role (all users for admin /
+  // super-admin, technicians only for a supervisor); self-only roles receive
+  // no count at all. The client only accepts a feed whose scope it can render.
+  socket.on("presence:count", (p: { scope?: string; count?: number }) => {
+    const scope =
+      p?.scope === "all" ? "all" :
+      p?.scope === "technicians" ? "technicians" :
+      p?.scope === "self" ? "self" : null;
+    if (!scope) { publishPresenceFeed(null); return; }
+    publishPresenceFeed({ scope, count: typeof p.count === "number" && Number.isFinite(p.count) ? p.count : null });
   });
 
   // Server-enforced session revocation (logout / idle revoke / admin revoke /
@@ -132,9 +137,9 @@ export function disconnectRealtime(): void {
   if (!socket) return;
   g.__hmsRealtimeSocket = undefined;
   socket.disconnect();
-  // The count belongs to a live socket — without one it is no longer current
+  // The feed belongs to a live socket — without one it is no longer current
   // (§13: never present a stale count as fresh). Consumers decide how to
   // render the null ("status unavailable"), never a fabricated 0.
-  publishPresenceCount(null);
+  publishPresenceFeed(null);
   publishRealtimeState("DISCONNECTED");
 }
