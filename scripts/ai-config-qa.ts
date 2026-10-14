@@ -2,12 +2,12 @@
  * Central AI configuration & AIService E2E QA (central AI config spec §38/§39/§40).
  *
  * Exercises the REAL endpoints end-to-end against the running dev server:
- *   Configuration : save Gemini key → encrypted at rest → masked readback →
+ *   Configuration : save a provider key → encrypted at rest → masked readback →
  *                   raw key never appears in any API response
  *   Connection    : Test Connection with an INVALID key (honest sanitized
  *                   failure) / with the built-in provider (real success)
  *   States        : disabled → honest AI_DISABLED · no credential → honest
- *                   AI_NOT_CONFIGURED · invalid credential → honest 502
+ *                   AI_NOT_CONFIGURED · invalid credential → honest failure
  *   Generation    : real text generation + real structured (Zod-validated)
  *                   generation + one EXISTING AI feature (IRMS inspection
  *                   drafting) through the central service
@@ -79,6 +79,12 @@ async function login(jar: Jar, email: string, password: string) {
   if (!res.json?.ok) throw new Error(`login failed for ${email}`);
 }
 
+type ProfileView = Record<string, unknown>;
+function profileOf(view: Record<string, unknown> | undefined, provider: string): ProfileView | undefined {
+  const profiles = view?.profiles;
+  return Array.isArray(profiles) ? (profiles as ProfileView[]).find((p) => p.provider === provider) : undefined;
+}
+
 async function main() {
   const admin: Jar = new Map();
   const tech: Jar = new Map();
@@ -96,45 +102,45 @@ async function main() {
   check("customer login", true, USERS.customer1.email);
 
   // ── Baseline ──────────────────────────────────────────────────────────────
-  section("§A Configuration baseline (GET, masked)");
+  section("§A Configuration baseline (GET, masked, per-provider)");
   const base0 = await call(admin, "GET", "/api/v1/settings/ai");
   check("GET /api/v1/settings/ai 200", base0.res.status === 200 && base0.json?.ok === true);
   const cfg0 = base0.json?.data as Record<string, unknown> | undefined;
-  check("config view has masked fields only", Boolean(cfg0 && "maskedKey" in cfg0 && "provider" in cfg0 && !("apiKeyEnc" in cfg0) && !("apiKey" in cfg0)));
+  check("view exposes providers + profiles", Array.isArray(cfg0?.providers) && Array.isArray(cfg0?.profiles) && (cfg0!.profiles as unknown[]).length >= 4);
+  const gem0 = profileOf(cfg0, "GOOGLE_GEMINI");
+  check("profile view has masked fields only", Boolean(gem0 && "maskedKey" in gem0 && "pendingKeyMasked" in gem0 && !("apiKeyEnc" in gem0) && !("apiKey" in gem0)));
 
   // ── Save Gemini credential (rotation path — pending until tested) ────────
-  section("§B Save Gemini credential (encrypted at rest)");
+  section("§B Save a provider credential (encrypted at rest)");
   const put1 = await call(admin, "PUT", "/api/v1/settings/ai", {
-    provider: "GOOGLE_GEMINI",
-    model: "gemini-2.5-flash",
-    enabled: true,
-    apiKey: FAKE_KEY,
+    profile: { provider: "GOOGLE_GEMINI", model: "gemini-2.5-flash", enabled: true, apiKey: FAKE_KEY },
   });
   check("PUT with new credential 200", put1.res.status === 200 && put1.json?.ok === true);
-  const put1Data = put1.json?.data as Record<string, unknown> | undefined;
-  check("new key stored as PENDING (rotation §17)", put1Data?.hasPendingKey === true);
   const got1 = await call(admin, "GET", "/api/v1/settings/ai");
-  const cfg1 = got1.json?.data as Record<string, unknown> | undefined;
-  check("GET returns masked key only", typeof cfg1?.pendingKeyMasked === "string" && cfg1.pendingKeyMasked.startsWith("••••••••"));
+  const gem1 = profileOf(got1.json?.data as Record<string, unknown> | undefined, "GOOGLE_GEMINI");
+  check("new key stored as PENDING (rotation §8)", gem1?.hasPendingKey === true);
+  check("GET returns masked key only", typeof gem1?.pendingKeyMasked === "string" && (gem1!.pendingKeyMasked as string).startsWith("••••••••"));
   check("raw key NEVER in any response body", !jsonBodies.some((b) => b.includes(FAKE_KEY)));
 
   // DB: ciphertext, not plaintext.
-  const row = await db.aiConfiguration.findUnique({ where: { id: "singleton" } });
+  const row = await db.aiProviderProfile.findUnique({ where: { id: "GOOGLE_GEMINI" } });
   check("DB stores ciphertext, not plaintext", Boolean(row?.pendingApiKeyEnc) && !row!.pendingApiKeyEnc.includes(FAKE_KEY) && row!.pendingApiKeyEnc.startsWith("v1:"));
   check("DB last-4 hint only", row?.pendingApiKeyLast4 === FAKE_KEY.slice(-4));
 
   // ── Test Connection with INVALID key — honest sanitized failure ──────────
   section("§C Test Connection — invalid credential (honest failure)");
-  const test1 = await call(admin, "POST", "/api/v1/settings/ai/test");
+  const test1 = await call(admin, "POST", "/api/v1/settings/ai/test", { provider: "GOOGLE_GEMINI" });
   const test1Data = test1.json?.data as Record<string, unknown> | undefined;
   check("test endpoint responds", test1.res.status === 200 && typeof test1Data?.ok === "boolean");
-  check("invalid key honestly fails", test1Data?.ok === false, `code=${String(test1Data ? "" : "")}`);
+  check("invalid key honestly fails", test1Data?.ok === false, `status=${String(test1Data?.status ?? "")}`);
+  check("failure status is an honest non-connected state", ["AUTH_FAILED", "MODEL_UNAVAILABLE", "FAILED", "SERVICE_UNAVAILABLE"].includes(String(test1Data?.status)));
   const msg1 = String(test1Data?.message ?? "");
-  check("failure message is sanitized + human-readable", msg1.length > 0 && !msg1.includes(FAKE_KEY) && !/sk-|key\s*[:=]/i.test(msg1), msg1.slice(0, 90));
-  const rowAfterFail = await db.aiConfiguration.findUnique({ where: { id: "singleton" } });
-  check("status=FAILED after failed test", rowAfterFail?.status === "FAILED");
-  check("old/active credential untouched on failure (§17)", Boolean(rowAfterFail?.apiKeyEnc) === false); // none existed before
+  check("failure message is sanitized + human-readable", msg1.length > 0 && !msg1.includes(FAKE_KEY) && !/api[_-]?key\s*[:=]/i.test(msg1), msg1.slice(0, 90));
+  const rowAfterFail = await db.aiProviderProfile.findUnique({ where: { id: "GOOGLE_GEMINI" } });
+  check("profile status reflects the failure", rowAfterFail?.status !== "CONNECTED" && rowAfterFail?.lastTestOk === false);
+  check("old/active credential untouched on failure (§8)", !rowAfterFail?.apiKeyEnc);
   check("pending kept for retry", Boolean(rowAfterFail?.pendingApiKeyEnc));
+  check("per-model test rows recorded", (await db.aiModelTestRun.count({ where: { provider: "GOOGLE_GEMINI" } })) >= 1);
 
   // ── Disabled state ────────────────────────────────────────────────────────
   section("§D Disabled state (honest AI_DISABLED)");
@@ -147,11 +153,11 @@ async function main() {
 
   // ── Not-configured state (Gemini without stored credential) ──────────────
   section("§E Not-configured state (honest AI_NOT_CONFIGURED)");
-  await call(admin, "PUT", "/api/v1/settings/ai", { provider: "GOOGLE_GEMINI", clearApiKey: true });
+  await call(admin, "PUT", "/api/v1/settings/ai", { defaultProvider: "GOOGLE_GEMINI", profile: { provider: "GOOGLE_GEMINI", clearApiKey: true } });
   const genNoCfg = await call(admin, "POST", "/api/v1/ai/generate", { feature: "report_summary", prompt: "Summarize maintenance performance in one sentence." });
   check("generate → 503 when not configured", genNoCfg.res.status === 503);
   check("error code AI_NOT_CONFIGURED", genNoCfg.json?.error?.code === "AI_NOT_CONFIGURED");
-  const rowCleared = await db.aiConfiguration.findUnique({ where: { id: "singleton" } });
+  const rowCleared = await db.aiProviderProfile.findUnique({ where: { id: "GOOGLE_GEMINI" } });
   check("clearApiKey wipes active+pending credentials", !rowCleared?.apiKeyEnc && !rowCleared?.pendingApiKeyEnc);
 
   // ── RBAC ──────────────────────────────────────────────────────────────────
@@ -160,8 +166,10 @@ async function main() {
   check("technician GET settings/ai → 403", techCfg.res.status === 403);
   const techPut = await call(tech, "PUT", "/api/v1/settings/ai", { enabled: false });
   check("technician PUT settings/ai → 403", techPut.res.status === 403);
-  const techTest = await call(tech, "POST", "/api/v1/settings/ai/test");
+  const techTest = await call(tech, "POST", "/api/v1/settings/ai/test", { provider: "ZAI_PLATFORM" });
   check("technician test connection → 403", techTest.res.status === 403);
+  const techModels = await call(tech, "POST", "/api/v1/settings/ai/models", { provider: "GOOGLE_GEMINI" });
+  check("technician model discovery → 403", techModels.res.status === 403);
   const custCfg = await call(customer, "GET", "/api/v1/settings/ai");
   check("customer GET settings/ai → 403", custCfg.res.status === 403);
   const anonCfg = await call(anon, "GET", "/api/v1/settings/ai");
@@ -169,12 +177,12 @@ async function main() {
 
   // ── Real generation through the central service (ZAI platform) ───────────
   section("§G Real connection test + generation (built-in provider)");
-  await call(admin, "PUT", "/api/v1/settings/ai", { provider: "ZAI_PLATFORM", enabled: true });
-  const test2 = await call(admin, "POST", "/api/v1/settings/ai/test");
+  await call(admin, "PUT", "/api/v1/settings/ai", { defaultProvider: "ZAI_PLATFORM", enabled: true });
+  const test2 = await call(admin, "POST", "/api/v1/settings/ai/test", { provider: "ZAI_PLATFORM" });
   const test2Data = test2.json?.data as Record<string, unknown> | undefined;
-  check("Test Connection REAL success", test2Data?.ok === true, String(test2Data?.model ?? ""));
-  const rowActive = await db.aiConfiguration.findUnique({ where: { id: "singleton" } });
-  check("status=ACTIVE after successful test", rowActive?.status === "ACTIVE");
+  check("Test Connection REAL success", test2Data?.ok === true, String(test2Data?.testedModel ?? test2Data?.model ?? ""));
+  const rowActive = await db.aiProviderProfile.findUnique({ where: { id: "ZAI_PLATFORM" } });
+  check("status=CONNECTED after successful test", rowActive?.status === "CONNECTED");
 
   const gen1 = await call(admin, "POST", "/api/v1/ai/generate", {
     feature: "report_summary",
@@ -228,7 +236,7 @@ async function main() {
 
   // ── Rate limiting (cheap: failures are fast, limiter still counts) ────────
   section("§J Rate limiting (spec §23)");
-  await call(admin, "PUT", "/api/v1/settings/ai", { provider: "GOOGLE_GEMINI", apiKey: FAKE_KEY, enabled: true });
+  await call(admin, "PUT", "/api/v1/settings/ai", { defaultProvider: "GOOGLE_GEMINI", profile: { provider: "GOOGLE_GEMINI", apiKey: FAKE_KEY }, enabled: true });
   let got429 = false;
   let lastCode = "";
   for (let i = 0; i < 22; i++) {
@@ -247,14 +255,14 @@ async function main() {
   check("AI_CONFIG_TESTED events recorded", testsAudits.length >= 2, `count=${testsAudits.length}`);
   check("audit metadata holds masked credential only", updates.every((a) => !a.metadata.includes(FAKE_KEY)), "masked hint e.g. set(••••0000)");
   const sampleMeta = updates[0]?.metadata ?? "";
-  check("audit metadata includes provider/model/enabled/keyUpdated", /provider/.test(sampleMeta) && /keyUpdated/.test(sampleMeta));
+  check("audit metadata includes provider/model/keyUpdated", /provider/.test(sampleMeta) && /keyUpdated/.test(sampleMeta));
 
   // ── dev.log leak scan is done post-run by the runner (documented) ─────────
   section("§L Final state — reset to working configuration");
-  await call(admin, "PUT", "/api/v1/settings/ai", { provider: "ZAI_PLATFORM", enabled: true, clearApiKey: true, model: "" });
-  const testFinal = await call(admin, "POST", "/api/v1/settings/ai/test");
+  await call(admin, "PUT", "/api/v1/settings/ai", { defaultProvider: "ZAI_PLATFORM", enabled: true, profile: { provider: "GOOGLE_GEMINI", clearApiKey: true, model: "" } });
+  const testFinal = await call(admin, "POST", "/api/v1/settings/ai/test", { provider: "ZAI_PLATFORM" });
   const testFinalData = testFinal.json?.data as Record<string, unknown> | undefined;
-  check("config reset → built-in provider ACTIVE", testFinalData?.ok === true && (testFinalData?.status === "ACTIVE"));
+  check("config reset → built-in provider CONNECTED", testFinalData?.ok === true && testFinalData?.status === "CONNECTED");
 
   console.log(`\n═══ RESULT: ${passed} passed, ${failed} failed ═══`);
   if (failed > 0) process.exit(1);

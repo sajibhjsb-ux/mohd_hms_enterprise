@@ -75,3 +75,7 @@ mini-services/openwa/
 # ...but the push admin test-send API route is real source code:
 !src/app/api/v1/push/admin/test/
 !src/app/api/v1/push/admin/test/**
+# ...and the AI settings Test Connection route is real source code (`test`
+# above would otherwise silently drop it from every release — the original bug):
+!src/app/api/v1/settings/ai/test/
+!src/app/api/v1/settings/ai/test/**

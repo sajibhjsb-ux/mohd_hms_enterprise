@@ -2952,11 +2952,76 @@ model AiConfiguration {
   // Sanitized, human-readable failure reason — never contains the credential.
   lastErrorCode    String    @default("")
   lastErrorMessage String    @default("")
+  // Ordered fallback chain of provider ids (comma-separated), e.g.
+  // "GOOGLE_GEMINI,ANTHROPIC_CLAUDE,OPENAI". Empty = no cross-provider fallback.
+  fallbackChain    String    @default("")
   createdById      String    @default("")
   updatedById      String    @default("")
   updatedByEmail   String    @default("")
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
+}
+
+// Per-provider AI configuration profiles (central AI config spec §4) — ONE row
+// per provider so credentials and models are fully isolated: changing the
+// Gemini key never touches the Claude/OpenAI/NVIDIA rows. Credentials are
+// AES-256-GCM encrypted (see ai/crypto.ts); only a last-4 hint is ever shown.
+// `status` is the honest connection state machine (NOT_CONFIGURED |
+// SAVED_NOT_TESTED | CONNECTED | FAILED | AUTH_FAILED | MODEL_UNAVAILABLE |
+// RATE_LIMITED | QUOTA_ISSUE | SERVICE_UNAVAILABLE) — it can only be set by a
+// real provider test, never by a saved key or toggle.
+model AiProviderProfile {
+  // Provider id (GOOGLE_GEMINI | ANTHROPIC_CLAUDE | OPENAI | NVIDIA | ZAI_PLATFORM).
+  id       String @id
+  provider String
+  label    String @default("")
+  // Active credential (encrypted) + masked last-4 hint.
+  apiKeyEnc   String    @default("")
+  apiKeyLast4 String    @default("")
+  apiKeySetAt DateTime?
+  // Pending credential during rotation (spec §8): promoted only after a
+  // successful Test Connection; the previous working key stays active until then.
+  pendingApiKeyEnc   String    @default("")
+  pendingApiKeyLast4 String    @default("")
+  pendingKeySetAt    DateTime?
+  // Administrator's selected model (empty = provider default).
+  model       String @default("")
+  // The model that actually passed the most recent successful test.
+  testedModel String @default("")
+  enabled     Boolean @default(true)
+  // Honest connection state — set ONLY by aiTestConnection.
+  status           String    @default("NOT_CONFIGURED")
+  lastTestedAt     DateTime?
+  lastTestOk       Boolean?
+  lastSuccessAt    DateTime?
+  lastErrorCode    String    @default("")
+  lastErrorMessage String    @default("")
+  // Lower number = higher priority; used for the automatic fallback order.
+  priority      Int     @default(100)
+  createdById   String  @default("")
+  updatedById   String  @default("")
+  updatedByEmail String @default("")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// One row per model attempted during a Test Connection / Auto-Select run
+// (central AI config spec §6). Safe metadata only — never credentials or full
+// prompts. `runId` groups the attempts of a single test run.
+model AiModelTestRun {
+  id           String   @id @default(cuid())
+  runId        String
+  provider     String
+  model        String
+  ok           Boolean
+  httpStatus   Int?
+  errorCode    String   @default("")
+  errorMessage String   @default("")
+  durationMs   Int      @default(0)
+  createdAt    DateTime @default(now())
+
+  @@index([runId])
+  @@index([provider, createdAt])
 }
 
 // Per-request AI usage metadata (spec §22) — safe metadata only. Never stores
