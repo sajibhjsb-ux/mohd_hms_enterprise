@@ -42,13 +42,29 @@ const g = globalThis as unknown as {
   __hmsRealtimeLastDispatchAt?: number;
   __hmsRealtimeLastError?: string;
   __hmsRealtimeLastBroadcastAt?: number;
+  /** Consecutive failed cycles + the earliest time the next cycle may run.
+   *  Bounded exponential backoff (2s → 60s) so a down realtime service is not
+   *  hammered every 2s; reset the moment a cycle succeeds, so recovery is
+   *  immediate once the service returns (never requires a redeploy). */
+  __hmsRealtimeFailures?: number;
+  __hmsRealtimeNextAttemptAt?: number;
 };
 
+/** Cap for the dispatch retry backoff — a down service is retried at most
+ *  once per minute instead of every 2s scheduler tick. */
+const BACKOFF_MAX_MS = 60_000;
+
 export function dispatcherHealth() {
+  const lastError = g.__hmsRealtimeLastError ?? "";
   return {
     lastDispatchAt: g.__hmsRealtimeLastDispatchAt ?? 0,
     lastBroadcastAt: g.__hmsRealtimeLastBroadcastAt ?? 0,
-    lastError: g.__hmsRealtimeLastError ?? "",
+    // Reflects the MOST RECENT cycle: cleared at the start of every attempt, so
+    // a stale connection error never outlives the outage that caused it.
+    lastError,
+    failures: g.__hmsRealtimeFailures ?? 0,
+    nextAttemptAt: g.__hmsRealtimeNextAttemptAt ?? 0,
+    state: lastError ? "error" : (g.__hmsRealtimeLastDispatchAt ? "ok" : "idle"),
     dispatching: !!g.__hmsRealtimeDispatching,
     serviceUrl: SERVICE_URL,
   };
@@ -365,8 +381,15 @@ function safePayload(raw: string): Record<string, unknown> {
  */
 export async function dispatchPendingEvents(): Promise<number> {
   if (g.__hmsRealtimeDispatching) return 0;
+  // Backoff gate: after a failure, skip scheduler ticks until the bounded delay
+  // elapses. Cleared by the first successful cycle (see below).
+  if (Date.now() < (g.__hmsRealtimeNextAttemptAt ?? 0)) return 0;
   g.__hmsRealtimeDispatching = true;
   let sent = 0;
+  let failed = false;
+  // This cycle's outcome replaces the previous one — a recovered service stops
+  // reporting the old connection error even when no new events arrive.
+  g.__hmsRealtimeLastError = "";
   try {
     const candidates = await db.domainEvent.findMany({
       where: { broadcastAt: null, createdAt: { gte: new Date(Date.now() - RECENT_WINDOW_MS) } },
@@ -386,19 +409,29 @@ export async function dispatchPendingEvents(): Promise<number> {
           await postToService(event, rooms);
           sent++;
           g.__hmsRealtimeLastBroadcastAt = Date.now();
-          g.__hmsRealtimeLastError = "";
         }
       } catch (e) {
-        // Release the claim so the next tick retries (STEP 22 recovery).
+        // Release the claim so a later tick retries (STEP 22 recovery).
+        failed = true;
         g.__hmsRealtimeLastError = e instanceof Error ? e.message : String(e);
         await db.domainEvent.updateMany({ where: { id: event.id, broadcastAt: { not: null } }, data: { broadcastAt: null } }).catch(() => undefined);
-        break; // service likely down — stop hammering, retry next tick
+        break; // service likely down — stop hammering, retry after backoff
       }
     }
     g.__hmsRealtimeLastDispatchAt = Date.now();
   } catch (e) {
+    failed = true;
     g.__hmsRealtimeLastError = e instanceof Error ? e.message : String(e);
   } finally {
+    if (failed) {
+      const failures = (g.__hmsRealtimeFailures ?? 0) + 1;
+      g.__hmsRealtimeFailures = failures;
+      const delay = Math.min(2_000 * 2 ** (failures - 1), BACKOFF_MAX_MS);
+      g.__hmsRealtimeNextAttemptAt = Date.now() + delay;
+    } else {
+      g.__hmsRealtimeFailures = 0;
+      g.__hmsRealtimeNextAttemptAt = 0;
+    }
     g.__hmsRealtimeDispatching = false;
   }
   return sent;

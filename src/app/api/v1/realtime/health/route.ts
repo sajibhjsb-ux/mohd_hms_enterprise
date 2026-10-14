@@ -49,7 +49,10 @@ export const GET = handler(
     ]);
 
     const dispatcher = dispatcherHealth();
-    const status = service ? "healthy" : "degraded";
+    // "healthy" requires BOTH the transport reachable AND the dispatcher's most
+    // recent cycle free of errors — an app that is merely alive, or a dispatcher
+    // that keeps failing to publish, is "degraded", never "healthy".
+    const status = service && !dispatcher.lastError ? "healthy" : "degraded";
 
     return ok({
       status,
@@ -59,6 +62,7 @@ export const GET = handler(
       // PostgreSQL stays authoritative; no business data moves to a cache).
       redis: "n/a (postgresql-outbox)",
       dispatcher: { ...dispatcher, running: !!dispatcher.lastDispatchAt },
+      dispatcher_state: dispatcher.state,
       connected_clients: service?.connectedClients ?? 0,
       events_broadcast: service?.eventsBroadcast ?? 0,
       outbox_pending: pendingEvents,

@@ -52,6 +52,12 @@ export function connectRealtime(): void {
   // `/?XTransformPort=3003` query transform: production's TCP router never applied it.
   const socket = io("/", {
     path: "/socket.io",
+    // engine.io appends a trailing slash by default (`/socket.io/`). Next's
+    // default `trailingSlash: false` then 308-redirects that to `/socket.io`,
+    // and a 3xx is NOT followed for the WebSocket upgrade — so the handshake
+    // never completes through the single-origin rewrite. Request the exact
+    // path the rewrite matches (`/socket.io?EIO=…`) and the upgrade succeeds.
+    addTrailingSlash: false,
     // WebSocket first, polling fallback (proxy/failure tolerance, STEP 29/30).
     transports: ["websocket", "polling"],
     withCredentials: true, // HttpOnly session cookie → server-side auth
