@@ -38,9 +38,20 @@ type WaMessage = {
 type WaConversation = {
   id: string; chatId: string; state: string; unreadCount: number; assignedAgentId: string | null;
   lastMessageAt: string | null; lastInboundAt: string | null;
-  contact: { id: string; waName: string; phone: string; kind: string; automationEnabled: boolean; customerId: string | null };
+  // contact is OPTIONAL in the data model (WhatsAppConversation.contactId?) and
+  // can legitimately be null — e.g. the business's own chat or a conversation
+  // created before a contact row exists. Never assume it is present.
+  contact: { id: string; waName: string; phone: string; kind: string; automationEnabled: boolean; customerId: string | null } | null;
   customer: { id: string; code: string; companyName: string; contactPerson: string } | null;
 };
+
+/** Readable fallback for a conversation with no contact row: derive a display
+ *  number from the WhatsApp chatId ("6738185922@c.us" → "+6738185922"). */
+export function phoneFromChatId(chatId: string): string {
+  const raw = (chatId.split("@")[0] ?? "").trim();
+  if (!raw) return "Unknown contact";
+  return raw.startsWith("+") ? raw : `+${raw}`;
+}
 
 type WaConversationDetail = WaConversation & { messages: WaMessage[] };
 
@@ -267,7 +278,8 @@ export function WhatsAppDetailPage({ id }: { id: string }) {
 
   if (!conv) return null;
 
-  const name = conv.contact.waName || conv.customer?.contactPerson || conv.contact.phone;
+  const displayPhone = conv.contact?.phone || phoneFromChatId(conv.chatId);
+  const name = conv.contact?.waName || conv.customer?.contactPerson || displayPhone;
   const closed = conv.state === "CLOSED";
 
   return (
@@ -276,7 +288,7 @@ export function WhatsAppDetailPage({ id }: { id: string }) {
 
       <PageHeader
         title={name}
-        subtitle={`WhatsApp conversation · ${conv.contact.phone}`}
+        subtitle={`WhatsApp conversation · ${displayPhone}`}
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <ConvStateBadge state={conv.state} />
@@ -311,7 +323,7 @@ export function WhatsAppDetailPage({ id }: { id: string }) {
           <div className="min-w-0 flex-1">
             <p className="truncate font-medium">{name}</p>
             <p className="truncate text-xs text-muted-foreground">
-              {conv.contact.phone}
+              {displayPhone}
               {conv.customer ? ` · ${conv.customer.code} ${conv.customer.companyName || conv.customer.contactPerson}` : ""}
             </p>
             <p className="truncate font-mono text-[10px] text-muted-foreground/70">{conv.chatId}</p>

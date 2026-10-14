@@ -26,14 +26,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ChevronRight, MessageCircle, Plus } from "lucide-react";
-import { ConvStateBadge, WhatsAppDetailPage } from "./detail-page";
+import { ConvStateBadge, WhatsAppDetailPage, phoneFromChatId } from "./detail-page";
 
 // ── Types (mirror of the API list select — read-only contract) ──
 
 type ConvRow = {
   id: string; chatId: string; state: string; unreadCount: number; assignedAgentId: string | null;
   lastMessageAt: string | null; lastMessagePreview: string | null; lastInboundAt: string | null;
-  contact: { id: string; waName: string; phone: string; kind: string; automationEnabled: boolean };
+  // contact is optional in the data model — null for the business's own chat or
+  // a conversation created before its contact row exists. Render defensively.
+  contact: { id: string; waName: string; phone: string; kind: string; automationEnabled: boolean } | null;
   customer: { id: string; code: string; companyName: string; contactPerson: string } | null;
 };
 
@@ -52,13 +54,14 @@ export function WhatsAppModule() {
 // ── Row helpers ──
 
 function convName(r: ConvRow): string {
-  return r.contact.waName || r.customer?.contactPerson || r.contact.phone;
+  const named = r.contact?.waName?.trim() || r.customer?.contactPerson?.trim();
+  return named || r.contact?.phone || phoneFromChatId(r.chatId);
 }
 
 function convSub(r: ConvRow): string {
   return r.customer
     ? `${r.customer.code} · ${r.customer.companyName || r.customer.contactPerson}`
-    : r.contact.phone;
+    : r.contact?.phone || phoneFromChatId(r.chatId);
 }
 
 function initials(name: string): string {

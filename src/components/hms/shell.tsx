@@ -31,6 +31,7 @@ import { cn } from "@/lib/utils";
 import { initials } from "@/lib/hms/format";
 import { Loader2, ShieldCheck } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { ModuleErrorBoundary } from "./shared/module-error-boundary";
 import { TopHeader } from "./shell/header";
 import { FloatingNav } from "./shell/floating-nav";
 import { MobileNav } from "./shell/mobile-nav";
@@ -70,6 +71,9 @@ export function AppShell() {
   /** Hash the user asked for while a dirty form blocked navigation. */
   const [pendingNav, setPendingNav] = useState<string | null>(null);
   const { toast } = useToast();
+  // Current page segments for the active module — used to key the module error
+  // boundary so both navigation and Retry clear a crashed module.
+  const activeSeg = useUi((s) => s.pages[activeModule]);
 
   const visible = useMemo(
     () => MODULES.filter((m: ModuleDef) => {
@@ -290,7 +294,11 @@ export function AppShell() {
 
       {/* Content — aligned with the floating navigation grid */}
       <main className="flex-1 mx-auto w-full max-w-[1500px] px-4 sm:px-6 py-5 lg:pb-8" id="main-content">
-        {ActiveComponent ? <ActiveComponent /> : null}
+        {ActiveComponent ? (
+          <ModuleErrorBoundary key={`${activeModule}:${(activeSeg ?? []).join("/")}`} label={activeModule}>
+            <ActiveComponent />
+          </ModuleErrorBoundary>
+        ) : null}
       </main>
 
       {/* Sticky footer */}
