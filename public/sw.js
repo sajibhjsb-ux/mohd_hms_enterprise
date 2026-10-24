@@ -237,8 +237,20 @@ function safePayload(raw) {
   return { title, body, url, tag };
 }
 
+const __hmsShownNotifications = new Map();
 self.addEventListener("push", (event) => {
   const payload = safePayload(event.data);
+  const key = payload.tag || `${payload.title}|${payload.body}`;
+  const now = Date.now();
+  // Deduplicate rapid duplicate pushes
+  if (__hmsShownNotifications.has(key) && now - __hmsShownNotifications.get(key) < 2000) {
+    return;
+  }
+  __hmsShownNotifications.set(key, now);
+  // Prune old entries
+  for (const [k, t] of __hmsShownNotifications.entries()) {
+    if (now - t > 10000) __hmsShownNotifications.delete(k);
+  }
   event.waitUntil(
     self.registration.showNotification(payload.title, {
       body: payload.body,
@@ -246,7 +258,7 @@ self.addEventListener("push", (event) => {
       badge: "/brand/icon-maskable-192.png",
       tag: payload.tag,
       data: { url: payload.url },
-      renotify: false,
+      renotify: true,
     })
   );
 });

@@ -79,13 +79,26 @@ function derivePriority(input: PushPayload): "NORMAL" | "HIGH" | "CRITICAL" {
  */
 export async function sendPushToUser(userId: string, payload: PushPayload): Promise<void> {
   try {
-    const dedupeKey = payload.notificationId ?? "";
+    const dedupeKey = payload.notificationId || payload.eventId || "";
     if (dedupeKey) {
       const existing = await db.pushLog.findFirst({
         where: { userId, dedupeKey, status: { in: ["QUEUED", "SENDING", "SENT"] } },
         select: { id: true },
       });
       if (existing) return; // duplicate suppression (§26)
+    } else {
+      // Also deduplicate by content for same user in recent window
+      const recent = await db.pushLog.findFirst({
+        where: {
+          userId,
+          title: payload.title,
+          body: payload.body,
+          status: { in: ["QUEUED", "SENDING", "SENT"] },
+          createdAt: { gte: new Date(Date.now() - 5000) },
+        },
+        select: { id: true },
+      });
+      if (recent) return;
     }
 
     // Per-user preference gating (push channel only — §19).
@@ -117,19 +130,5 @@ export async function sendPushToUser(userId: string, payload: PushPayload): Prom
     kickPushWorker();
   } catch (e) {
     console.error("push-enqueue-failed", e);
-  }
-}
-
-/**
- * Whether the FCM transport may deliver right now (server config + the
- * existing automation channel toggle). VAPID is always attempted for legacy
- * devices — this gate only controls the NEW Firebase transport.
- */
-export async function fcmTransportEnabled(): Promise<boolean> {
-  if (!fcmConfigured()) return false;
-  try {
-    return (await isAutomationEnabled("push_notifications")) || false;
-  } catch {
-    return false;
   }
 }

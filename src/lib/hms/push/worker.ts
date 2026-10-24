@@ -74,12 +74,11 @@ async function processOne(logId: string): Promise<void> {
   const row = await db.pushLog.findUnique({ where: { id: logId } });
   if (!row) return;
 
-  // Fan-out targets: FCM devices + legacy VAPID subscriptions. A user may have
-  // either, both, or none; every transport is attempted (dedupe by unique keys
-  // makes double registration impossible — one row per token / endpoint).
-  // Admin test sends may target ONE device (spec §31).
+  // Fan-out targets: FCM devices + legacy VAPID subscriptions.
+  // Deduplicate across transports — prefer FCM when present (one logical
+  // notification event must produce only one visible notification per device).
   const deviceFilter = row.targetDeviceId ? { id: row.targetDeviceId } : {};
-  const [devices, subs] = await Promise.all([
+  let [devices, subs] = await Promise.all([
     db.pushDevice.findMany({
       where: { userId: row.userId, active: true, permissionStatus: { not: "DENIED" }, ...deviceFilter },
       select: { id: true, token: true },
@@ -89,6 +88,11 @@ async function processOne(logId: string): Promise<void> {
       select: { id: true, endpoint: true, p256dh: true, auth: true },
     }),
   ]);
+
+  // Mutual exclusivity: if FCM devices exist, skip VAPID to prevent duplicates.
+  if (devices.length > 0 && subs.length > 0) {
+    subs = [];
+  }
 
   const deviceCount = devices.length + subs.length;
   let sentCount = 0;
@@ -314,6 +318,8 @@ export async function runTestSend(input: {
       channel: fcmConfigured() ? "FCM" : "VAPID",
       targetDeviceId: input.targetDeviceId ?? "",
       isTest: true,
+      eventId: `test:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+      dedupeKey: `test:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
     },
   });
   try {

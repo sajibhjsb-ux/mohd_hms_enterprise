@@ -19,8 +19,8 @@ import { runTestSend } from "@/lib/hms/push/worker";
 const testSchema = z.object({
   userId: z.string().min(1),
   deviceId: z.string().min(1).optional(),
-  title: z.string().min(1).max(120).default("Firebase test notification"),
-  body: z.string().min(1).max(300).default("This is a test push from MOHD.HMS ENTERPRISE."),
+  title: z.string().min(1).max(120).default("Push Test"),
+  body: z.string().min(1).max(300).default("Test notification delivered successfully."),
 });
 
 export const POST = handler(
@@ -49,11 +49,12 @@ export const POST = handler(
       }
     }
 
+    // For test, ensure no duplicate by clearing recent test dedupe keys
     const result = await runTestSend({
       userId: body.userId,
       targetDeviceId: body.deviceId,
-      title: body.title,
-      body: body.body,
+      title: body.title || "Push Test",
+      body: body.body || "Test notification delivered successfully.",
     });
     return ok(result);
   },
