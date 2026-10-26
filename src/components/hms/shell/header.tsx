@@ -123,7 +123,7 @@ export function TopHeader({ onSearchNavigate, onOpenQr, onSelectModule, onOpenCh
   return (
     <TooltipProvider delayDuration={250}>
       <header className="sticky top-0 z-40 border-b border-border/50 bg-background/85 backdrop-blur-xl no-print pt-[env(safe-area-inset-top)]">
-        <div className="mx-auto max-w-[1500px] px-3 min-[360px]:px-4 sm:px-6 h-16 md:h-[72px] flex items-center gap-2 sm:gap-4">
+        <div className="mx-auto max-w-[1500px] px-2.5 min-[360px]:px-4 sm:px-6 h-16 md:h-[72px] flex items-center gap-2 sm:gap-4">
           {mobileSearch ? (
             /* MOBILE INLINE SEARCH MODE — the same header, same bar position,
                zero modal/overlay: a full-width field with the results panel
@@ -154,7 +154,7 @@ export function TopHeader({ onSearchNavigate, onOpenQr, onSelectModule, onOpenCh
               or truncated. Desktop (md+) rendering is unchanged. */}
           <button
             onClick={() => onSelectModule("dashboard")}
-            className="flex items-center gap-2 min-[360px]:gap-2.5 mr-1 shrink-0 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="flex items-center gap-2 min-[360px]:gap-2.5 mr-0 min-[360px]:mr-1 shrink-0 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring"
             aria-label="MOHD HMS Enterprise — go to dashboard"
           >
             <BrandLockup />
@@ -510,7 +510,7 @@ function NotifMenu({ notifs, unread, onOpen, markAllRead, markRead }: {
           ) : null}
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-[22rem] sm:w-[26rem] p-0">
+      <DropdownMenuContent align="end" className="w-[22rem] max-w-[calc(100vw-1rem)] sm:w-[26rem] sm:max-w-none p-0">
         <div className="flex items-center justify-between px-3 py-2.5 border-b">
           <span className="font-medium text-sm">Notifications</span>
           <Button variant="ghost" size="sm" onClick={markAllRead} disabled={unread === 0} className="h-7 text-xs">

@@ -119,6 +119,14 @@
   body {
     @apply bg-background text-foreground;
   }
+  html {
+    touch-action: manipulation;
+  }
+}
+
+/* Hidden Recharts tooltips retain their last size and can widen the mobile layout. */
+.recharts-tooltip-wrapper[style*="visibility: hidden"] {
+  display: none;
 }
 
 /* MOHD.HMS enterprise scrollbars */

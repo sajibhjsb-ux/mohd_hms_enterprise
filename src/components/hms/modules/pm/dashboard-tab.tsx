@@ -151,7 +151,7 @@ export function PmDashboard() {
               title="Open PM Work Orders" value={k.openPmWorkOrders} icon={<ClipboardList className="h-5 w-5" />} loading={loading}
               sub="Source: preventive maintenance" onClick={() => navigateTo("work-orders", [], { source: "pm" })}
             />
-            <div className="grid gap-3">
+            <div className="grid gap-3 min-w-0">
               <PctCard
                 title="Compliance" pct={data.compliancePct} loading={loading}
                 formula="Completed on time ÷ due occurrences within the window (skipped/cancelled excluded)."
@@ -263,15 +263,15 @@ function PctCard({ title, pct, tone = "default", loading, formula, detail }: {
 }) {
   const toneCls = { default: "text-primary bg-primary/10", success: "text-emerald-600 bg-emerald-100", warning: "text-amber-600 bg-amber-100" }[tone];
   return (
-    <Card className="shadow-sm">
+    <Card className="shadow-sm min-w-0">
       <CardContent className="p-4">
         <div className="flex items-center gap-3">
           <div className={`h-10 w-10 rounded-lg flex items-center justify-center shrink-0 ${toneCls}`}>
             <Gauge className="h-5 w-5" />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{title}</span>
+            <div className="flex min-w-0 items-center gap-1.5">
+              <span className="truncate text-xs font-medium text-muted-foreground uppercase tracking-wide">{title}</span>
               <TooltipProvider delayDuration={100}>
                 <Tooltip>
                   <TooltipTrigger asChild>
