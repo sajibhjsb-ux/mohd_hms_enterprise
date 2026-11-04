@@ -13,7 +13,7 @@ import { formatCurrency } from "@/lib/hms/format";
 import { missingCustomerFields } from "@/lib/hms/customer-profile";
 import { LOCALIZATION } from "@/lib/hms/constants";
 import { getWebhookSecret, getWhatsAppConfig, recordTraffic } from "./config";
-import { ensureContact, ensureConversation, queueDirect } from "./service";
+import { ensureContact, ensureConversation, queueDirect, queueDirectText } from "./service";
 import { isLidId, normalizePhone, phoneFromWaId } from "./normalize";
 import { loadTemplateByKey, renderTemplate, extractVariables } from "./templates";
 import type { OpenWaWebhookDelivery, OpenWaInboundMessage } from "./types";
@@ -167,6 +167,7 @@ function replyThrottled(chatId: string): boolean {
 
 export async function handleInboundMessage(msg: OpenWaInboundMessage, sessionId: string): Promise<void> {
   void sessionId;
+  const cfg = await getWhatsAppConfig();
   // ── Loop prevention (§40) ──
   if (msg.fromMe) return;
   if ((msg.kind && msg.kind !== "individual") || msg.isGroup) return; // groups/status/broadcast are never auto-processed
@@ -236,6 +237,51 @@ export async function handleInboundMessage(msg: OpenWaInboundMessage, sessionId:
 
   // Realtime: staff inbox updates (existing realtime architecture §45).
   await emit({ type: "WHATSAPP_MESSAGE_RECEIVED", resourceType: "WHATSAPP_MESSAGE", resourceId: inbound.id, payload: { chatId, customerId: contact.customerId }, actorType: "SYSTEM" }).catch(() => undefined);
+
+  // ── AI conversational engine (§4-§16) ──
+  // AI is the normal response engine for customer conversations. It drives the
+  // reply (memory, progressive questioning, real-data tools, complaint
+  // confirmation) and appends + queues the outgoing message. The deterministic
+  // rules router below only runs when AI is disabled.
+  if (cfg.enabled && cfg.autoReplies) {
+    let reply = "";
+    try {
+      const { converse } = await import("../ai/orchestrator");
+      const result = await converse({
+        chatId,
+        text: body,
+        customerId: contact.customerId ?? null,
+        contactId: contact.id,
+      });
+      reply = result.reply ?? "";
+    } catch {
+      reply = ""; // AI unavailable — handled by the safe fallback below.
+    }
+    if (reply) {
+      await queueDirectText({
+        toChatId: chatId,
+        contactId: contact.id,
+        conversationId: conversation.id,
+        body: reply,
+        category: "SUPPORT",
+        relatedType: contact.customerId ? "CUSTOMER" : "",
+        relatedId: contact.customerId ?? "",
+      }).catch(() => undefined);
+    } else {
+      // AI failed or returned nothing: safe fallback, never the static menu and
+      // never silence (§11). Do not claim any action was completed.
+      await queueDirectText({
+        toChatId: chatId,
+        contactId: contact.id,
+        conversationId: conversation.id,
+        body: "I'm having trouble reaching my assistant right now. I'll connect you with our team.",
+        category: "SUPPORT",
+        relatedType: contact.customerId ? "CUSTOMER" : "",
+        relatedId: contact.customerId ?? "",
+      }).catch(() => undefined);
+    }
+    return;
+  }
 
   // ── Automation gates (§26/§41) ──
   if (conversation.state === "HUMAN" || conversation.state === "CLOSED") return; // human handoff: bot silent
@@ -336,11 +382,21 @@ async function aiClassifyIntent(text: string): Promise<InboundIntent | null> {
 }
 
 async function routeIntent(intent: InboundIntent, rawText: string, ctx: ReplyCtx): Promise<void> {
+  const upper = rawText.trim().toUpperCase();
+  const isMenuRequest = /^(MENU|HELP)$/.test(upper);
   switch (intent) {
     case "HELP":
+      // Show the full menu only on an explicit MENU/HELP command so the static
+      // menu is not repeated on every greeting or short message (§4).
+      if (isMenuRequest) {
+        await autoReply(ctx, "WA_HELP", {});
+      } else {
+        await briefReply(ctx, "Hello! I'm here to help with maintenance requests, complaints, work orders and invoices. What can I do for you?");
+      }
+      return;
     case "CONTACT":
     case "UNKNOWN":
-      await autoReply(ctx, "WA_HELP", {});
+      await briefReply(ctx, "I'm here to help. You can tell me what you need in your own words — for example 'My AC is not cooling' or 'Check my complaint'.");
       return;
     case "HUMAN":
       await handoffToHuman(ctx);
@@ -356,6 +412,17 @@ async function routeIntent(intent: InboundIntent, rawText: string, ctx: ReplyCtx
       await handleInvoiceQuery(ctx);
       return;
   }
+}
+
+/** Brief plain-text conversational reply (rules fallback only — AI is the normal engine). */
+async function briefReply(ctx: ReplyCtx, text: string): Promise<void> {
+  await queueDirectText({
+    toChatId: ctx.chatId,
+    contactId: undefined,
+    conversationId: undefined,
+    body: text,
+    category: "SUPPORT",
+  }).catch(() => undefined);
 }
 
 type ReplyCtx = { chatId: string; customerId: string | null; contactName: string };
@@ -381,18 +448,25 @@ async function autoReply(ctx: ReplyCtx, templateKey: string, extra: Record<strin
 
 async function handoffToHuman(ctx: ReplyCtx): Promise<void> {
   await db.whatsAppConversation.updateMany({ where: { chatId: ctx.chatId }, data: { state: "HUMAN" } });
+  // Notifications address the conversation by row id (the inbox route key),
+  // not the provider chatId.
+  const conversation = await db.whatsAppConversation.findFirst({
+    where: { chatId: ctx.chatId },
+    select: { id: true },
+  });
+  const conversationId = conversation?.id ?? ctx.chatId;
   await autoReply(ctx, "WA_HUMAN_HANDOFF", {});
   await notifyRole("SUPERVISOR", {
     title: "WhatsApp support request",
     message: `A customer asked for human support on WhatsApp (${ctx.chatId}). Reply from the WhatsApp Inbox.`,
-    type: "WARNING", resourceType: "WHATSAPP_CONVERSATION", resourceId: ctx.chatId,
+    type: "WARNING", resourceType: "WHATSAPP_CONVERSATION", resourceId: conversationId,
   }).catch(() => undefined);
   await notifyRole("ADMIN", {
     title: "WhatsApp support request",
     message: `A customer asked for human support on WhatsApp (${ctx.chatId}).`,
-    type: "WARNING", resourceType: "WHATSAPP_CONVERSATION", resourceId: ctx.chatId,
+    type: "WARNING", resourceType: "WHATSAPP_CONVERSATION", resourceId: conversationId,
   }).catch(() => undefined);
-  await audit({ action: "WHATSAPP_HUMAN_HANDOFF", resourceType: "WHATSAPP_CONVERSATION", resourceId: ctx.chatId, metadata: { chatId: ctx.chatId } }).catch(() => undefined);
+  await audit({ action: "WHATSAPP_HUMAN_HANDOFF", resourceType: "WHATSAPP_CONVERSATION", resourceId: conversationId, metadata: { chatId: ctx.chatId } }).catch(() => undefined);
 }
 
 /**

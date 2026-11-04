@@ -85,6 +85,55 @@ export async function queueDirect(input: QueueDirectInput): Promise<QueueResult>
   return { ok: true, id: msg.id };
 }
 
+/** Queue a free-form (non-template) text message for the outbound worker. Used
+ * for AI-generated replies where no template applies. */
+export type QueueTextInput = {
+  toChatId: string;
+  contactId?: string | null;
+  conversationId?: string | null;
+  body: string;
+  category?: string;
+  relatedType?: string;
+  relatedId?: string;
+};
+
+export async function queueDirectText(input: QueueTextInput): Promise<QueueResult> {
+  const cfg = await getWhatsAppConfig();
+  if (!cfg.enabled) return { ok: false, reason: "WhatsApp integration is disabled" };
+
+  const contact = input.contactId ? await db.whatsAppContact.findUnique({ where: { id: input.contactId } }) : null;
+  const conversationId = input.conversationId ?? (contact ? await ensureConversation(input.toChatId, contact.id, contact.customerId).then((c) => c.id) : null);
+  const resolvedContactId = contact?.id ?? null;
+  const resolvedCustomerId = contact?.customerId ?? null;
+
+  const body = input.body.slice(0, MAX_PAYLOAD_CHARS);
+  if (!body.trim()) return { ok: false, reason: "Message body is empty" };
+
+  const msg = await db.whatsAppMessage.create({
+    data: {
+      chatId: input.toChatId,
+      contactId: resolvedContactId,
+      conversationId,
+      direction: "OUTBOUND",
+      status: "QUEUED",
+      type: "text",
+      body,
+      templateKey: "",
+      templateVersion: 0,
+      eventId: "",
+      automationId: null,
+      relatedType: input.relatedType ?? "",
+      relatedId: input.relatedId ?? "",
+      maxAttempts: 3,
+      providerMessageId: `pending-${crypto.randomUUID()}`,
+      ...(resolvedCustomerId ? { relatedType: "CUSTOMER", relatedId: resolvedCustomerId } : {}),
+    },
+  });
+
+  void recordTraffic("outbound").catch(() => undefined);
+  return { ok: true, id: msg.id };
+}
+
 type ResolvedTarget =
   | { ok: true; chatId: string; contactId: string | null; conversationId: string | null }
   | { ok: false; reason: string };
