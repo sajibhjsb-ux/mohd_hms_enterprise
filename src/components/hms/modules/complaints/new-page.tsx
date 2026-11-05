@@ -24,9 +24,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
-  AlertCircle, ArrowLeft, ChevronRight, CircleUserRound, Loader2, MapPin, Save, Send, User, X,
+  AlertCircle, ArrowLeft, Camera, CheckCircle2, ChevronRight, CircleUserRound, FileVideo, ImagePlus,
+  Loader2, MapPin, RefreshCw, Save, Send, Trash2, Upload, User, X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { CameraCaptureDialog } from "@/components/hms/shared/photo-capture";
 
 // ── Types ──
 
@@ -91,6 +93,21 @@ export function ComplaintNewPage() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [beforeBusy, setBeforeBusy] = useState(false);
+
+  type BeforeFile = {
+    key: string;
+    file: File;
+    kind: "image" | "video";
+    previewUrl: string;
+    status: "staged" | "uploading" | "done" | "error";
+    progress: number;
+    error?: string;
+    uploadId: string;
+  };
+  const [beforeFiles, setBeforeFiles] = useState<BeforeFile[]>([]);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [shot, setShot] = useState<{ blob: Blob; url: string } | null>(null);
 
   // ── Customer search (API-backed, never loads the whole table) ──
   const [custQuery, setCustQuery] = useState("");
@@ -101,6 +118,8 @@ export function ComplaintNewPage() {
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerOpt | null>(null);
   const [portalCustomerName, setPortalCustomerName] = useState<string | null>(null);
   const searchSeq = useRef(0);
+  const photoInputRef = useRef<HTMLInputElement>(null);
+  const videoInputRef = useRef<HTMLInputElement>(null);
 
   const selectedId = isStaffUser ? draft.value.customerId : (user?.customerId ?? "");
 
@@ -283,11 +302,73 @@ export function ComplaintNewPage() {
     return errs;
   }
 
+  function addBeforeFiles(files: File[]) {
+    if (files.length === 0) return;
+    const next: BeforeFile[] = files.map((file) => ({
+      key: crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+      file,
+      kind: file.type.startsWith("video/") ? "video" : "image",
+      previewUrl: URL.createObjectURL(file),
+      status: "staged",
+      progress: 0,
+      uploadId: crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+    }));
+    setBeforeFiles((prev) => [...prev, ...next]);
+  }
+
+  function removeBeforeFile(key: string) {
+    setBeforeFiles((prev) => {
+      const item = prev.find((f) => f.key === key);
+      if (item) URL.revokeObjectURL(item.previewUrl);
+      return prev.filter((f) => f.key !== key);
+    });
+  }
+
+  function useShot() {
+    if (!shot) return;
+    const file = new File([shot.blob], `photo-${Date.now()}.jpg`, { type: "image/jpeg" });
+    if (shot.url) URL.revokeObjectURL(shot.url);
+    setShot(null);
+    setCameraOpen(false);
+    addBeforeFiles([file]);
+  }
+
+  async function uploadBeforeFiles(complaintId: string): Promise<void> {
+    const pending = beforeFiles.filter((f) => f.status === "staged" || f.status === "error");
+    if (pending.length === 0) return;
+    setBeforeBusy(true);
+    try {
+      for (const file of pending) {
+        setBeforeFiles((prev) => prev.map((f) => (f.key === file.key ? { ...f, status: "uploading", progress: 0, error: undefined } : f)));
+        const fd = new FormData();
+        fd.append("file", file.file);
+        fd.append("phase", "BEFORE");
+        fd.append("uploadId", file.uploadId);
+        try {
+          const res = await api.postForm<{ id: string }>(`/api/v1/complaints/${complaintId}/media`, fd);
+          setBeforeFiles((prev) => prev.map((f) => (f.key === file.key ? { ...f, status: "done", progress: 100 } : f)));
+          // Idempotent retry: if the server already had this uploadId, it returns the existing record.
+          void res;
+        } catch (e) {
+          setBeforeFiles((prev) => prev.map((f) => (f.key === file.key ? { ...f, status: "error", error: e instanceof Error ? e.message : "Upload failed. Please retry." } : f)));
+        }
+      }
+    } finally {
+      setBeforeBusy(false);
+    }
+  }
+
   async function createComplaint() {
     const errs = validate();
     setErrors(errs);
     if (Object.keys(errs).length > 0) {
       toast({ title: "Check the highlighted fields", variant: "destructive" });
+      return;
+    }
+    // §1 — never submit a complaint with evidence still uploading or failed.
+    const unsaved = beforeFiles.some((f) => f.status !== "done");
+    if (beforeFiles.length > 0 && unsaved) {
+      toast({ title: "Evidence still uploading", description: "Please wait for all photos/videos to finish uploading, or retry failed files.", variant: "destructive" });
       return;
     }
     setCreating(true);
@@ -303,24 +384,31 @@ export function ComplaintNewPage() {
         ...(draft.value.equipmentId ? { equipmentId: draft.value.equipmentId } : {}),
       };
       const res = await api.post<{ id: string; code: string }>("/api/v1/complaints", payload);
-      toast({ title: "Complaint created", description: `${res.data.code} logged successfully.` });
+      const complaintId = res.data.id;
+
+      // Upload BEFORE evidence linked to the new complaint before navigating away.
+      if (beforeFiles.length > 0) {
+        setCreating(true);
+        await uploadBeforeFiles(complaintId);
+        const failed = beforeFiles.some((f) => f.status === "error");
+        if (failed) {
+          toast({ title: "Some evidence failed to upload", description: "The complaint was created but not all evidence was stored. Retry failed files on the complaint page.", variant: "destructive" });
+        } else {
+          toast({ title: "Complaint created", description: `${res.data.code} logged with ${beforeFiles.length} evidence file${beforeFiles.length === 1 ? "" : "s"}.` });
+        }
+      } else {
+        toast({ title: "Complaint created", description: `${res.data.code} logged successfully.` });
+      }
       draft.reset(EMPTY_CREATE);
       setSelectedCustomer(null);
       setCustQuery("");
+      setBeforeFiles([]);
       setPageDirty(false);
-      // Continue the existing workflow on the complaint's dedicated detail page.
-      navigateTo("complaints", [res.data.id]);
+      navigateTo("complaints", [complaintId]);
     } catch (e) {
-      // CRITICAL: keep every user-entered value on failure — show the error and allow retry.
       const msg = e instanceof Error ? e.message : "Could not create the complaint. Please try again.";
-      // Backend-authoritative onboarding gate (direct/stale-session case):
-      // route the customer to profile completion instead of a generic error.
       if (e instanceof ClientApiError && e.code === "PROFILE_INCOMPLETE") {
-        toast({
-          title: "Profile completion required",
-          description: msg,
-          variant: "destructive",
-        });
+        toast({ title: "Profile completion required", description: msg, variant: "destructive" });
         void refresh();
         navigateTo("profile", ["complete"]);
         return;
@@ -329,6 +417,7 @@ export function ComplaintNewPage() {
       toast({ title: "Could not create complaint", description: msg, variant: "destructive" });
     } finally {
       setCreating(false);
+      setBeforeBusy(false);
     }
   }
 
@@ -535,6 +624,152 @@ export function ComplaintNewPage() {
             </div>
             {catError ? <p className="text-xs text-destructive">{catError}</p> : null}
             <p className="text-[11px] text-muted-foreground">The catalogue classifies the work; the issue is specific to the selected catalogue.</p>
+
+            {/* §1 — BEFORE WORK evidence: customer captures the problem before submitting. */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="nc-before-evidence">Before Work — Customer Evidence *optional*</Label>
+                <span className="text-[11px] text-muted-foreground tabular-nums">
+                  {beforeFiles.length} file{beforeFiles.length === 1 ? "" : "s"}
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Upload photos or videos showing the reported problem. Evidence is locked once the complaint is submitted.
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  className="min-h-[44px]"
+                  disabled={creating || beforeBusy}
+                  onClick={() => setCameraOpen(true)}
+                >
+                  <Camera className="h-4 w-4 mr-1" aria-hidden /> Take Photo
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="min-h-[44px]"
+                  disabled={creating || beforeBusy}
+                  onClick={() => photoInputRef.current?.click()}
+                >
+                  <ImagePlus className="h-4 w-4 mr-1" aria-hidden /> Choose Photos
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="min-h-[44px]"
+                  disabled={creating || beforeBusy}
+                  onClick={() => videoInputRef.current?.click()}
+                >
+                  <FileVideo className="h-4 w-4 mr-1" aria-hidden /> Choose Videos
+                </Button>
+                <input
+                  ref={photoInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  multiple
+                  className="sr-only"
+                  tabIndex={-1}
+                  aria-label="Choose existing photos"
+                  onChange={(e) => {
+                    addBeforeFiles(Array.from(e.target.files ?? []));
+                    e.target.value = "";
+                  }}
+                />
+                <input
+                  ref={videoInputRef}
+                  type="file"
+                  accept="video/mp4,video/quicktime,video/webm"
+                  multiple
+                  className="sr-only"
+                  tabIndex={-1}
+                  aria-label="Choose existing videos"
+                  onChange={(e) => {
+                    addBeforeFiles(Array.from(e.target.files ?? []));
+                    e.target.value = "";
+                  }}
+                />
+              </div>
+
+              {shot && (
+                <div className="rounded-lg border bg-muted/30 p-2">
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <span className="text-xs font-medium">Captured preview</span>
+                    <Button size="sm" variant="outline" onClick={() => setShot(null)}>Cancel</Button>
+                  </div>
+                  <img src={shot.url} alt="Captured" className="h-32 w-48 object-cover rounded" />
+                  <Button size="sm" onClick={useShot} className="mt-1">
+                    <CheckCircle2 className="h-4 w-4 mr-1" aria-hidden /> Use Photo
+                  </Button>
+                </div>
+              )}
+
+              {beforeFiles.length > 0 ? (
+                <div className="space-y-2">
+                  <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                    {beforeFiles.map((f) => (
+                      <div key={f.key} className="relative overflow-hidden rounded-lg border bg-muted/30">
+                        <div className="aspect-square relative">
+                          {f.kind === "video" ? (
+                            <video
+                              src={f.previewUrl}
+                              className="h-full w-full object-cover"
+                              muted
+                              playsInline
+                              preload="none"
+                            />
+                          ) : (
+                            <img src={f.previewUrl} alt={f.file.name} className="h-full w-full object-cover" />
+                          )}
+                          {f.status === "uploading" && (
+                            <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                              <Loader2 className="h-5 w-5 animate-spin text-white" />
+                            </div>
+                          )}
+                          {f.status === "done" && (
+                            <div className="absolute right-1 top-1 bg-emerald-600 rounded-full p-1">
+                              <CheckCircle2 className="h-3 w-3 text-white" aria-hidden />
+                            </div>
+                          )}
+                          {f.status === "error" && (
+                            <div className="absolute right-1 top-1 bg-destructive rounded-full p-1">
+                              <X className="h-3 w-3 text-white" aria-hidden />
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex items-center justify-between gap-1 border-t bg-card px-1.5 py-1">
+                          <span className="min-w-0 truncate text-[10px] text-muted-foreground" title={f.file.name}>
+                            {f.file.name}
+                          </span>
+                          {f.status === "error" ? (
+                            <span className="text-[10px] text-destructive">failed</span>
+                          ) : null}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => removeBeforeFile(f.key)}
+                          aria-label={`Remove ${f.file.name}`}
+                          className="absolute right-1 top-1 rounded-full bg-black/60 p-1 text-white hover:bg-black/80"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                        {f.error && (
+                          <p className="border-t bg-destructive/5 px-1.5 py-1 text-[10px] leading-tight text-destructive">
+                            {f.error}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  {beforeBusy && (
+                    <p className="text-xs text-muted-foreground">Uploading evidence…</p>
+                  )}
+                </div>
+              ) : null}
+            </div>
           </CardContent>
         </Card>
 
@@ -709,15 +944,53 @@ export function ComplaintNewPage() {
       {/* Sticky mobile action bar */}
       <div className={cn("sticky bottom-[4.4rem] lg:bottom-4 z-20 mt-4 lg:hidden no-print")}>
         <div className="rounded-xl border bg-background/95 backdrop-blur shadow-lg p-3 flex items-center gap-2">
-          <Button variant="outline" className="flex-1" onClick={saveDraft} disabled={creating}>
-            <Save className="h-4 w-4 mr-1.5" /> Save Draft
+          <Button variant="outline" className="flex-1 min-w-0 px-2 text-xs min-[360px]:text-sm" onClick={saveDraft} disabled={creating}>
+            <Save className="h-4 w-4 mr-1.5 shrink-0" /> Save Draft
           </Button>
-          <Button className="flex-1" onClick={createComplaint} disabled={creating}>
-            {creating ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Send className="h-4 w-4 mr-1.5" />}
+          <Button className="flex-1 min-w-0 px-2 text-xs min-[360px]:text-sm" onClick={createComplaint} disabled={creating}>
+            {creating ? <Loader2 className="h-4 w-4 mr-1.5 shrink-0 animate-spin" /> : <Send className="h-4 w-4 mr-1.5 shrink-0" />}
             {creating ? "Creating…" : "Create Complaint"}
           </Button>
         </div>
       </div>
+
+      {/* Camera capture dialog for BEFORE evidence */}
+      <CameraCaptureDialog
+        open={cameraOpen}
+        onClose={() => setCameraOpen(false)}
+        onCapture={(file) => {
+          addBeforeFiles([file]);
+          setCameraOpen(false);
+        }}
+      />
+
+      {/* Live camera shot preview */}
+      {shot && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" role="dialog" aria-modal="true" aria-label="Captured preview">
+          <button
+            type="button"
+            onClick={() => setShot(null)}
+            aria-label="Close preview"
+            className="absolute right-3 top-3 z-10 rounded-full bg-black/60 p-2 text-white hover:bg-black/80"
+          >
+            <X className="h-4 w-4" />
+          </button>
+          <div className="relative max-h-[70vh] w-full max-w-3xl overflow-hidden rounded-xl bg-background shadow-2xl">
+            <img src={shot.url} alt="Captured preview" className="max-h-full max-w-full object-contain" />
+          </div>
+          <div className="border-t p-3 text-xs text-muted-foreground flex justify-between items-center gap-2">
+            <span className="truncate font-medium text-foreground">Captured photo</span>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => setShot(null)}>
+                <RefreshCw className="h-4 w-4 mr-1" aria-hidden /> Retake
+              </Button>
+              <Button size="sm" onClick={useShot}>
+                <CheckCircle2 className="h-4 w-4 mr-1" aria-hidden /> Use Photo
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

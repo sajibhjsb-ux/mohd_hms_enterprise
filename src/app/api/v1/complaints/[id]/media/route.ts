@@ -86,7 +86,11 @@ export const POST = withId(
   async (id, { req, user }) => {
     const complaint = await db.complaint.findUnique({
       where: { id },
-      select: { id: true, code: true, status: true, customerId: true, createdById: true, assignedTechnicianId: true, customer: { select: { portalUser: { select: { id: true } } } } },
+      select: {
+        id: true, code: true, status: true, customerId: true, createdById: true, assignedTechnicianId: true,
+        customer: { select: { portalUser: { select: { id: true } } } },
+        workOrders: { select: { id: true, status: true } },
+      },
     });
     if (!complaint) throw Errors.notFound("Complaint not found.");
     if (["CLOSED", "CANCELLED"].includes(complaint.status)) {
@@ -114,6 +118,27 @@ export const POST = withId(
     const phase = typeof phaseRaw === "string" && (MEDIA_PHASES as readonly string[]).includes(phaseRaw) ? phaseRaw : "DURING";
     const captionRaw = form.get("caption");
     const caption = typeof captionRaw === "string" ? captionRaw.trim().slice(0, 500) : "";
+    // Stable client id lets a retry after a lost response reconcile instead of
+    // creating a second copy. Missing/invalid ids keep the old random behavior.
+    const uploadIdRaw = form.get("uploadId");
+    const uploadId = typeof uploadIdRaw === "string" && /^[a-zA-Z0-9-]{8,64}$/.test(uploadIdRaw) ? uploadIdRaw.toLowerCase() : null;
+
+    // §2/§5 — evidence lifecycle enforcement (backend-authoritative, not UI-only).
+    const hasWorkOrder = (complaint.workOrders ?? []).length > 0;
+    const activeWorkOrder = hasWorkOrder && (complaint.workOrders ?? []).some((w) => !["CLOSED", "CANCELLED"].includes(w.status));
+    if (phase === "BEFORE") {
+      // Before-work evidence belongs to the complaint creation step only: once a
+      // work order exists (or the complaint has left NEW) the original evidence
+      // is locked and may never be replaced.
+      if (hasWorkOrder || complaint.status !== "NEW") {
+        throw Errors.invalidTransition("Before-work evidence can only be added before the complaint is submitted and linked to a work order.");
+      }
+    } else {
+      // DURING / AFTER evidence is recorded against an active linked work order.
+      if (!activeWorkOrder) {
+        throw Errors.invalidTransition("This evidence phase requires an active linked work order. Create or link a work order first.");
+      }
+    }
 
     const buf = Buffer.from(await file.arrayBuffer());
     const sniffed = sniffMediaType(buf);
@@ -129,7 +154,13 @@ export const POST = withId(
       );
     }
 
-    const key = `complaints/${complaint.id}/media/${randomUUID()}.${sniffed.ext}`;
+    const key = `complaints/${complaint.id}/media/${uploadId ?? randomUUID()}.${sniffed.ext}`;
+    if (uploadId) {
+      const existing = await db.document.findFirst({
+        where: { storagePath: key, resourceType: "COMPLAINT", resourceId: complaint.id },
+      });
+      if (existing) return ok({ ...existing, caption: caption || null }, 200);
+    }
     await storage.put(key, buf, sniffed.mime);
 
     const safeName = sanitizeFilename(file.name);
