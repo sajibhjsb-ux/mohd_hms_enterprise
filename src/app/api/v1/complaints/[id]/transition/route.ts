@@ -13,11 +13,9 @@ import type { SessionUser } from "@/lib/hms/auth";
 import { COMPLAINT_DETAIL_INCLUDE, assertViewComplaint, technicianProfileIdFor } from "../../_lib";
 import { emit } from "@/lib/hms/workflows/bus";
 import { EVENT_TYPES } from "@/lib/hms/workflows/types";
+import { assertComplaintNotControlledByWorkOrder } from "@/lib/hms/workflows/complaint-work-order";
 
 type Ctx = { req: NextRequest; user: SessionUser };
-
-// §11/§14 — Work Order statuses that keep a complaint locked (active/unsettled).
-const ACTIVE_WO_STATUSES = ["PENDING", "ACCEPTED", "IN_PROGRESS", "ON_HOLD"];
 
 function withId(fn: (id: string, ctx: Ctx) => Promise<NextResponse>, opts?: Parameters<typeof handler>[1]) {
   return async (req: NextRequest, ctx: { params: Promise<{ id: string }> }) => {
@@ -70,6 +68,8 @@ export const POST = withId(
     switch (body.action) {
       case "assign": {
         if (!roleCan(user.role, PERMISSIONS.complaints_assign)) throw Errors.forbidden();
+        // §11 — once a work order controls this complaint, ownership is fixed.
+        assertComplaintNotControlledByWorkOrder(complaint, "assign");
         assertTransition("ASSIGNED", from);
         if (!body.technicianId) throw Errors.badRequest("technicianId is required to assign a complaint.");
         const tech = await db.technicianProfile.findUnique({ where: { id: body.technicianId }, include: { user: { select: { id: true, name: true, status: true } } } });
@@ -107,6 +107,8 @@ export const POST = withId(
         if (complaint.assignedTechnicianId !== profileId || !profileId) {
           throw Errors.forbidden("Only the assigned technician can start work on this complaint.");
         }
+        // §11 — the linked work order (if any) drives this transition.
+        assertComplaintNotControlledByWorkOrder(complaint, "start");
         if (from === "IN_PROGRESS") return ok(complaint); // idempotent no-op
         assertTransition("IN_PROGRESS", from);
 
@@ -131,6 +133,9 @@ export const POST = withId(
       case "complete": {
         const isAssignedTech = !!profileId && complaint.assignedTechnicianId === profileId;
         if (!isAssignedTech && !roleCan(user.role, PERMISSIONS.complaints_update)) throw Errors.forbidden();
+        // §11 — a linked work order owns the complaint's lifecycle; completion
+        // (and closure) happen automatically when that work order closes.
+        assertComplaintNotControlledByWorkOrder(complaint, "complete");
         assertTransition("COMPLETED", from);
 
         const updated = await guardedUpdate(id, from, {
@@ -162,6 +167,8 @@ export const POST = withId(
         const isPortalOwner = user.role === "CUSTOMER" && !!user.customerId && complaint.customerId === user.customerId;
         const staffUpdater = roleCan(user.role, PERMISSIONS.complaints_update);
         if (!isPortalOwner && !staffUpdater) throw Errors.forbidden();
+        // §11 — confirmation is owned by the linked work order while it exists.
+        assertComplaintNotControlledByWorkOrder(complaint, "confirm");
         assertTransition("CONFIRMED", from);
 
         // §4/§5 transactional outbox: the status change, history and the outbox
@@ -205,12 +212,7 @@ export const POST = withId(
         // §11 — a complaint cannot be closed while its linked work order is
         // still active. Backend enforcement is mandatory (direct API calls
         // must be blocked too), the frontend only mirrors this guard.
-        const activeWo = complaint.workOrders.find((w) => ACTIVE_WO_STATUSES.includes(w.status));
-        if (activeWo) {
-          throw Errors.invalidTransition(
-            `Closure blocked. The linked Work Order ${activeWo.code} is still active — settle it first.`,
-          );
-        }
+        assertComplaintNotControlledByWorkOrder(complaint, "close");
 
         const updated = await guardedUpdate(id, from, { status: "CLOSED", closedAt: now });
         await addHistory(id, from, "CLOSED", user.id, body.note ?? "Complaint closed");
@@ -227,17 +229,10 @@ export const POST = withId(
         assertTransition("CANCELLED", from);
 
         // §13 — once a work order exists for this complaint, cancellation is
-        // locked until that work order is settled (completion auto-closes the
+        // locked until that work order is settled (approved closure auto-closes the
         // complaint instead). Only complaints whose EVERY work order was
         // itself cancelled may still be cancelled. Enforced server-side.
-        const linkedWo = complaint.workOrders.find((w) => w.status !== "CANCELLED");
-        if (linkedWo) {
-          throw Errors.invalidTransition(
-            ACTIVE_WO_STATUSES.includes(linkedWo.status)
-              ? `Cancellation blocked. This complaint has an active linked Work Order (${linkedWo.code}).`
-              : `Cancellation blocked. This complaint is already settled by linked Work Order ${linkedWo.code}.`,
-          );
-        }
+        assertComplaintNotControlledByWorkOrder(complaint, "cancel");
 
         const updated = await guardedUpdate(id, from, { status: "CANCELLED" });
         await addHistory(id, from, "CANCELLED", user.id, body.note ?? "Complaint cancelled");

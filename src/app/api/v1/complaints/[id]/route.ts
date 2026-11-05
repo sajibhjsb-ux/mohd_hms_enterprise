@@ -10,6 +10,7 @@ import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 import { PERMISSIONS, PRIORITIES } from "@/lib/hms/constants";
 import type { SessionUser } from "@/lib/hms/auth";
 import { COMPLAINT_DETAIL_INCLUDE, assertViewComplaint, technicianProfileIdFor } from "../_lib";
+import { assertComplaintNotControlledByWorkOrder } from "@/lib/hms/workflows/complaint-work-order";
 
 type Ctx = { req: NextRequest; user: SessionUser };
 
@@ -68,6 +69,8 @@ export const PATCH = withId(
 
     const isCreator = complaint.createdById === user.id;
     if (!isCreator && !roleCan(user.role, PERMISSIONS.complaints_update)) throw Errors.forbidden();
+    // §11 — a linked work order locks the original complaint as an immutable record.
+    assertComplaintNotControlledByWorkOrder(complaint, "edit");
     if (complaint.status !== "NEW") {
       throw Errors.invalidTransition("Complaint can only be edited while status is NEW.");
     }

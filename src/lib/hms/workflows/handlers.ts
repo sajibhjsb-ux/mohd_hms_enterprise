@@ -12,6 +12,7 @@ import { isAutomationEnabled, automationNumber } from "./settings";
 import { emit } from "./bus";
 import { EVENT_TYPES, type EventType } from "./types";
 import { registerWorkflow, type WorkflowResult } from "./engine";
+import { lockComplaintToWorkOrder } from "./complaint-work-order";
 
 /** §17/§22 — dedupe window: no repeated alerts for the same unresolved condition. */
 async function hasRecentRun(workflow: string, resourceId: string, hours: number): Promise<boolean> {
@@ -177,21 +178,27 @@ async function autoCreateWorkOrder(ctx: { resourceId: string; eventType: string 
     return { result: "SKIPPED", detail: "work order already exists for complaint" };
   }
   const code = await nextNumber("WO");
-  const wo = await db.workOrder.create({
-    data: {
-      code,
-      complaintId: complaint.id,
-      customerId: complaint.customerId,
-      equipmentId: complaint.equipmentId,
-      technicianId: complaint.assignedTechnicianId,
-      title: complaint.title,
-      description: complaint.description,
-      priority: complaint.priority,
-      status: "PENDING",
-      // §9 — explicit source so the source=COMPLAINT filter works.
-      sourceType: "COMPLAINT",
-    },
-    select: { id: true, code: true },
+  const wo = await db.$transaction(async (tx) => {
+    const created = await tx.workOrder.create({
+      data: {
+        code,
+        complaintId: complaint.id,
+        customerId: complaint.customerId,
+        equipmentId: complaint.equipmentId,
+        technicianId: complaint.assignedTechnicianId,
+        title: complaint.title,
+        description: complaint.description,
+        priority: complaint.priority,
+        status: "PENDING",
+        // §9 — explicit source so the source=COMPLAINT filter works.
+        sourceType: "COMPLAINT",
+      },
+      select: { id: true, code: true },
+    });
+    // §11 — creation locks the source complaint: it becomes a read-only record
+    // driven exclusively by this work order's lifecycle.
+    await lockComplaintToWorkOrder(tx, { complaintId: complaint.id, workOrderId: created.id });
+    return created;
   });
   await audit({
     actorEmail: "SYSTEM", action: "AUTO_CREATE_WORK_ORDER",
@@ -468,8 +475,3 @@ registerWorkflow(EVENT_TYPES.WORK_ORDER_CREATED, "AUTO_CHECKLIST_WORK_ORDER", as
   if (detail.startsWith("generated")) return { result: "SUCCESS", detail: `${detail} (${wo.code})` };
   return { result: "SKIPPED", detail };
 });
-
-/** Event types that have at least one registered workflow (observability). */
-export function registeredEventTypes(): EventType[] {
-  return Object.keys(EVENT_TYPES) as EventType[];
-}

@@ -14,7 +14,11 @@ export const COMPLAINT_DETAIL_INCLUDE = {
   ...COMPLAINT_INCLUDE,
   customer: { select: { id: true, companyName: true, contactPerson: true, email: true, phone: true, portalUser: { select: { id: true, name: true, email: true } } } },
   workOrders: {
-    select: { id: true, code: true, title: true, status: true, technician: { select: { id: true, user: { select: { name: true } } } } },
+    select: {
+      id: true, code: true, title: true, status: true,
+      completedAt: true, closedAt: true, approvedAt: true, reopenedAt: true, reopenReason: true,
+      technician: { select: { id: true, user: { select: { name: true } } } },
+    },
     orderBy: { createdAt: "desc" },
   },
   statusHistory: { orderBy: { createdAt: "asc" } },
