@@ -435,6 +435,8 @@ export function ComplaintDetailPage({ id }: { id: string }) {
           <div className="mt-4">
             <ComplaintMediaPanel
               complaintId={detail.id}
+              complaintStatus={detail.status}
+              complaintControlled={complaintControlled}
               canUpload={isAssignedTech || canUpdate || isPortalOwner}
             />
           </div>

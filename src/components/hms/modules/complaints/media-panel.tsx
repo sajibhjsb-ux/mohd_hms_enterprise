@@ -16,11 +16,12 @@ import { useToast } from "@/hooks/use-toast";
 import { useRealtimeEvent } from "@/lib/hms/realtime/hooks";
 import { COMPLAINT_DETAIL_EVENTS } from "@/lib/hms/realtime/matrix";
 import {
-  AlertTriangle, ChevronLeft, ChevronRight, Download, FileVideo, Image as ImageIcon,
-  Loader2, Trash2, Upload, X, ZoomIn,
+  AlertTriangle, ChevronLeft, ChevronRight, Download, FileVideo,
+  Loader2, Lock, Trash2, Upload, X, ZoomIn,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { PhotoUploader } from "@/components/hms/shared/photo-capture";
 import { cn } from "@/lib/utils";
 import { fmtDate, fmtDateTime, fmtTime } from "@/lib/hms/format";
 import {
@@ -46,18 +47,26 @@ const VIDEO_MAX_BYTES = 50 * 1024 * 1024;
 
 const isImage = (m: string) => m.startsWith("image/");
 
-export function ComplaintMediaPanel({ complaintId, canUpload }: { complaintId: string; canUpload: boolean }) {
+export function ComplaintMediaPanel({
+  complaintId,
+  canUpload = false,
+  complaintStatus,
+  complaintControlled,
+}: {
+  complaintId: string;
+  canUpload?: boolean;
+  complaintStatus?: string;
+  complaintControlled?: boolean;
+}) {
   const { user } = useSession();
   const { toast } = useToast();
   const [items, setItems] = useState<MediaRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploadingKind, setUploadingKind] = useState<"image" | "video" | null>(null);
-  const [phase, setPhase] = useState<string>("DURING");
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const [zoomed, setZoomed] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<MediaRow | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const photoInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
 
   const canUpdate = hasPerm(user, PERMISSIONS.complaints_update);
@@ -65,6 +74,11 @@ export function ComplaintMediaPanel({ complaintId, canUpload }: { complaintId: s
     (m: MediaRow) => canUpdate || (!!m.uploadedById && m.uploadedById === user?.id),
     [canUpdate, user?.id]
   );
+  const canUploadMedia = canUpload ?? false;
+  const beforeAllowed = complaintStatus === "NEW" && !complaintControlled;
+  const duringAfterAllowed = complaintControlled && complaintStatus !== "CLOSED" && complaintStatus !== "CANCELLED";
+  const anyPhaseAllowed = beforeAllowed || duringAfterAllowed;
+  const [phase, setPhase] = useState<string>(beforeAllowed ? "BEFORE" : duringAfterAllowed ? "DURING" : "BEFORE");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -86,25 +100,28 @@ export function ComplaintMediaPanel({ complaintId, canUpload }: { complaintId: s
     if (!ev.aggregate_id || ev.aggregate_id === complaintId) void load();
   });
 
-  const upload = async (file: File, kind: "image" | "video") => {
-    const limit = kind === "image" ? IMAGE_MAX_BYTES : VIDEO_MAX_BYTES;
-    if (file.size > limit) {
-      toast({
-        title: "File too large",
-        description: kind === "image" ? "Images must be 15 MB or smaller." : "Videos must be 50 MB or smaller.",
-        variant: "destructive",
-      });
+  const uploadPhoto = async (file: File, ctx: { uploadId: string }) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("phase", phase);
+    fd.append("uploadId", ctx.uploadId);
+    // POST persists to MinIO + PostgreSQL before resolving — the uploader only
+    // shows "Uploaded" after the authoritative server response.
+    await api.postForm<MediaRow>(`/api/v1/complaints/${complaintId}/media`, fd);
+  };
+
+  const uploadVideo = async (file: File) => {
+    if (file.size > VIDEO_MAX_BYTES) {
+      toast({ title: "File too large", description: "Videos must be 50 MB or smaller.", variant: "destructive" });
       return;
     }
-    setUploadingKind(kind);
+    setUploadingKind("video");
     try {
       const fd = new FormData();
       fd.append("file", file);
       fd.append("phase", phase);
-      // POST persists to MinIO + PostgreSQL before responding — the toast below
-      // fires only after the authoritative 201 (§12: no fake success).
       await api.postForm<MediaRow>(`/api/v1/complaints/${complaintId}/media`, fd);
-      toast({ title: "Media uploaded", description: `${file.name} added to this complaint's evidence.` });
+      toast({ title: "Video uploaded", description: `${file.name} added to this complaint's evidence.` });
       await load();
     } catch (e) {
       toast({ title: "Upload failed", description: e instanceof Error ? e.message : "Please try again.", variant: "destructive" });
@@ -149,6 +166,19 @@ export function ComplaintMediaPanel({ complaintId, canUpload }: { complaintId: s
     setZoomed(false);
   };
 
+  // Bottom notice shown below the gallery, depending on lifecycle state.
+  const bottomMessage = !anyPhaseAllowed ? (
+    <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+      <Lock className="h-3 w-3" aria-hidden />
+      Evidence locked — this complaint is controlled by its linked work order.
+    </p>
+  ) : anyPhaseAllowed && !canUploadMedia ? (
+    <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+      <Upload className="h-3 w-3" aria-hidden />
+      Viewing only — authorized staff can attach evidence for this stage.
+    </p>
+  ) : null;
+
   return (
     <div className="rounded-xl border bg-card shadow-sm p-4 sm:p-5 space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -159,12 +189,12 @@ export function ComplaintMediaPanel({ complaintId, canUpload }: { complaintId: s
         <span className="text-xs text-muted-foreground tabular-nums">{items.length} file{items.length === 1 ? "" : "s"}</span>
       </div>
 
-      {canUpload ? (
+      {anyPhaseAllowed && canUploadMedia ? (
         <div className="space-y-3 rounded-lg border border-dashed bg-muted/20 p-3">
           <div className="flex flex-wrap items-center gap-2">
             <Label className="text-xs uppercase tracking-wide text-muted-foreground">Evidence phase</Label>
             <div className="flex items-center gap-1">
-              {PHASES.map((p) => (
+              {PHASES.filter((p) => p === "BEFORE" ? beforeAllowed : duringAfterAllowed).map((p) => (
                 <button
                   key={p}
                   type="button"
@@ -177,19 +207,21 @@ export function ComplaintMediaPanel({ complaintId, canUpload }: { complaintId: s
                   {p}
                 </button>
               ))}
+              {!beforeAllowed && !duringAfterAllowed ? (
+                <span className="text-xs text-muted-foreground">Evidence locked for this stage</span>
+              ) : null}
             </div>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              size="sm"
-              disabled={!!uploadingKind}
-              onClick={() => photoInputRef.current?.click()}
-              className="min-h-[44px]"
-            >
-              {uploadingKind === "image" ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <ImageIcon className="h-4 w-4 mr-1.5" aria-hidden />}
-              {uploadingKind === "image" ? "Uploading…" : "Add Photos"}
-            </Button>
+          <PhotoUploader
+            multiple
+            maxBytes={IMAGE_MAX_BYTES}
+            disabled={!!uploadingKind}
+            uploadLabel="Upload photos"
+            hint="Take photos or choose existing images. Each upload is stored privately and appears only after the server confirms."
+            onUpload={uploadPhoto}
+            onUploaded={() => void load()}
+          />
+          <div className="flex flex-wrap items-center gap-2">
             <Button
               type="button"
               size="sm"
@@ -203,20 +235,8 @@ export function ComplaintMediaPanel({ complaintId, canUpload }: { complaintId: s
             </Button>
           </div>
           <p className="text-xs text-muted-foreground">
-            JPEG / PNG / WebP up to 15 MB · MP4 / MOV / WebM up to 50 MB. Uploads land in private object storage and only appear after the server confirms.
+            JPEG / PNG / WebP up to 15 MB · MP4 / MOV / WebM up to 50 MB.
           </p>
-          <input
-            ref={photoInputRef}
-            type="file"
-            accept="image/jpeg,image/png,image/webp"
-            className="sr-only"
-            disabled={!!uploadingKind}
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              e.target.value = "";
-              if (f) void upload(f, "image");
-            }}
-          />
           <input
             ref={videoInputRef}
             type="file"
@@ -226,7 +246,7 @@ export function ComplaintMediaPanel({ complaintId, canUpload }: { complaintId: s
             onChange={(e) => {
               const f = e.target.files?.[0];
               e.target.value = "";
-              if (f) void upload(f, "video");
+              if (f) void uploadVideo(f);
             }}
           />
         </div>
@@ -414,12 +434,7 @@ export function ComplaintMediaPanel({ complaintId, canUpload }: { complaintId: s
         </AlertDialogContent>
       </AlertDialog>
 
-      {canUpload ? null : (
-        <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <Upload className="h-3 w-3" aria-hidden />
-          Viewing only — the assigned technician, authorized staff and the owning customer can attach evidence.
-        </p>
-      )}
+      {bottomMessage}
     </div>
   );
 }
