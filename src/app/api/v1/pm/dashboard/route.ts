@@ -93,6 +93,7 @@ export const GET = handler(
       compliance: {
         windowDays: metrics.windowDays,
         dueOccurrences: metrics.dueOccurrences,
+        completed: metrics.completed,
         completedOnTime: metrics.completedOnTime,
         excluded: metrics.excluded,
         graceDays: metrics.graceDays,

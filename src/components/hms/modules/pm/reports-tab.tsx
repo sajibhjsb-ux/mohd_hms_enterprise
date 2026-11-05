@@ -28,7 +28,7 @@ import { Gauge, PlayCircle, ShieldAlert, TrendingUp, UserCog } from "lucide-reac
 
 type ReportPayload = {
   windowDays: number;
-  compliance: { compliancePct: number; completionPct: number; dueOccurrences: number; completedOnTime: number; excluded: number };
+  compliance: { compliancePct: number; completionPct: number; dueOccurrences: number; completed: number; completedOnTime: number; excluded: number };
   overdue: {
     id: string; code: string; dueDate: string; daysOverdue: number; priority: string | null; status: string;
     equipmentName: string; equipmentAssetTag: string; customerName: string | null; technicianName: string | null; planName: string | null;

@@ -142,6 +142,7 @@ export const POST = handler(
       const start = body.startDate ? new Date(body.startDate) : new Date();
       nextDue = endOfDay(start);
     }
+    let nextDueMeter: number | null = null;
     if (meterType) {
       // First meter cycle due at current reading + interval.
       const meter = await db.equipmentMeter.findUnique({ where: { id: body.meterId as string } });
@@ -152,7 +153,6 @@ export const POST = handler(
     const items = parseChecklistTemplate(serializeChecklistTemplate(
       body.checklistTemplate.map((raw) => (typeof raw === "string" ? { label: raw, required: false, responseType: "CHECKBOX" } : raw))
     ));
-    let nextDueMeter: number | null = null;
 
     const code = await nextNumber("PM");
     const plan = await db.pmPlan.create({
