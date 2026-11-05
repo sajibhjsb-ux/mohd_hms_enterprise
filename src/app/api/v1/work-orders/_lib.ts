@@ -10,12 +10,13 @@ export const WO_INCLUDE = {
   technician: { select: { id: true, user: { select: { id: true, name: true } } } },
   complaint: { select: { id: true, code: true } },
   pmTask: { select: { id: true, code: true, planId: true } },
+  checklist: { where: { removedAt: null }, orderBy: { sortOrder: "asc" } },
 } satisfies Prisma.WorkOrderInclude;
 
 export const WO_DETAIL_INCLUDE = {
   ...WO_INCLUDE,
   customer: { select: { id: true, companyName: true, contactPerson: true, portalUser: { select: { id: true, name: true, email: true } } } },
-  checklist: { orderBy: { sortOrder: "asc" } },
+  checklist: { where: { removedAt: null }, orderBy: { sortOrder: "asc" } },
   materials: {
     orderBy: { id: "asc" },
     include: {

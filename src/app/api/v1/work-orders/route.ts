@@ -1,5 +1,5 @@
 // MOHD.HMS ENTERPRISE — Work Orders API: list + create.
-// Workflow: PENDING → ACCEPTED → IN_PROGRESS → COMPLETED (+ ON_HOLD, CANCELLED).
+// Workflow: PENDING → ACCEPTED → IN_PROGRESS → COMPLETED (review) → CLOSED (+ ON_HOLD, CANCELLED).
 // Money is integer cents. Stock deduction happens at completion (transition route).
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
@@ -7,9 +7,11 @@ import { ciContains, normalizeSearchTerm } from "@/lib/hms/text-search";
 import { db } from "@/lib/db";
 import { handler, ok, okList, parseBody, listQuery, pagedMeta, Errors } from "@/lib/hms/api";
 import { audit, nextNumber, notify } from "@/lib/hms/services";
+import { ensureChecklistForNewWorkOrderTx } from "@/lib/hms/checklist/engine";
 import { emit } from "@/lib/hms/workflows/bus";
 import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 import { dedupeSubmission } from "@/lib/hms/workflows/idempotency";
+import { syncComplaintFromWorkOrder } from "@/lib/hms/workflows/complaint-work-order";
 import { PERMISSIONS, PRIORITIES } from "@/lib/hms/constants";
 import { WO_INCLUDE, WO_DETAIL_INCLUDE } from "./_lib";
 import { ensureQr } from "@/lib/hms/qr/service";
@@ -93,8 +95,9 @@ export const POST = handler(
     const customer = await db.customer.findUnique({ where: { id: body.customerId }, select: { id: true } });
     if (!customer) throw Errors.badRequest("Customer not found.");
 
+    let equipment: { id: string; customerId: string | null; category: string } | null = null;
     if (body.equipmentId) {
-      const equipment = await db.equipment.findUnique({ where: { id: body.equipmentId }, select: { id: true, customerId: true } });
+      equipment = await db.equipment.findUnique({ where: { id: body.equipmentId }, select: { id: true, customerId: true, category: true } });
       if (!equipment) throw Errors.badRequest("Equipment not found.");
       if (equipment.customerId !== body.customerId) throw Errors.badRequest("Equipment does not belong to the selected customer.");
     }
@@ -107,14 +110,18 @@ export const POST = handler(
         include: WO_DETAIL_INCLUDE,
         orderBy: { createdAt: "asc" },
       });
-      if (existing) return ok({ alreadyLinked: true, workOrder: existing }, 200);
+      if (existing) {
+        // Heal legacy links created before the lock was persisted.
+        await db.complaint.updateMany({ where: { id: body.complaintId, lockedAt: null }, data: { lockedAt: new Date() } });
+        return ok({ alreadyLinked: true, workOrder: existing }, 200);
+      }
     }
 
-    let complaintForLink: { id: string; customerId: string; status: string; priority: string; equipmentId: string | null; assignedTechnicianId: string | null } | null = null;
+    let complaintForLink: { id: string; title: string; description: string; customerId: string; status: string; priority: string; equipmentId: string | null; assignedTechnicianId: string | null } | null = null;
     if (body.complaintId) {
       const complaint = await db.complaint.findUnique({
         where: { id: body.complaintId },
-        select: { id: true, customerId: true, status: true, priority: true, equipmentId: true, assignedTechnicianId: true },
+        select: { id: true, title: true, description: true, customerId: true, status: true, priority: true, equipmentId: true, assignedTechnicianId: true },
       });
       if (!complaint) throw Errors.badRequest("Complaint not found.");
       if (complaint.customerId !== body.customerId) throw Errors.badRequest("Complaint does not belong to the selected customer.");
@@ -137,6 +144,7 @@ export const POST = handler(
 
     const code = await nextNumber("WO");
     const now = new Date();
+    let checklistResult: { instanceId: string | null; created: boolean; origin: string; itemCount: number } | null = null;
 
     // §9/§10/§44 — the work order, the relationship and the complaint status
     // move are ONE PostgreSQL transaction: if any step fails, nothing is
@@ -159,9 +167,6 @@ export const POST = handler(
         labourTotalCents: 0,
         materialsTotalCents,
         totalCents: materialsTotalCents,
-        checklist: {
-          create: (body.checklist ?? []).map((label, index) => ({ label, sortOrder: index })),
-        },
         materials: {
           create: materials.map((m) => {
             const totalCents = Math.round(m.quantity * (m.unitCostCents ?? 0));
@@ -180,52 +185,78 @@ export const POST = handler(
       },
       });
 
-      // §10 — a successful work-order creation moves the complaint to
-      // IN_PROGRESS (only when it has not progressed beyond it already).
-      if (complaintForLink && ["NEW", "ASSIGNED"].includes(complaintForLink.status)) {
+      // §9/§10 — link + initialize the complaint. The work order is the
+      // authoritative controller of the complaint's lifecycle: at PENDING it
+      // maps to the complaint's pending-equivalent (ASSIGNED), never straight to
+      // IN_PROGRESS — work has not started until the work order is started.
+      if (complaintForLink) {
         await tx.complaint.update({
           where: { id: complaintForLink.id },
           data: {
-            status: "IN_PROGRESS",
-            startedAt: now,
             assignedTechnicianId: complaintForLink.assignedTechnicianId ?? body.technicianId ?? null,
             assignedAt: complaintForLink.assignedTechnicianId ? undefined : now,
           },
         });
-        await tx.complaintStatusHistory.create({
-          data: {
-            complaintId: complaintForLink.id,
-            fromStatus: complaintForLink.status,
-            toStatus: "IN_PROGRESS",
-            changedById: user.id,
-            note: `Work order ${code} created`,
-          },
+        await syncComplaintFromWorkOrder(tx, {
+          workOrderId: workOrder.id,
+          changedById: user.id,
+          note: `Work order ${code} created`,
         });
       }
+
+      // §23 — the initial checklist is created in the same transaction as the
+      // work order, so a failed checklist never leaves a bare work order.
+      const equipmentCategory = equipment?.category ?? null;
+      checklistResult = await ensureChecklistForNewWorkOrderTx(tx, {
+        workOrderId: workOrder.id,
+        title: body.title,
+        description: body.description ?? "",
+        sourceType: workOrder.sourceType,
+        complaintId: body.complaintId ?? null,
+        complaintTitle: complaintForLink?.title ?? null,
+        complaintDescription: complaintForLink?.description ?? null,
+        equipmentCategory,
+        manualLabels: body.checklist ?? [],
+        actorId: user.id,
+      });
+
       return workOrder;
     });
 
-    const detailed = await db.workOrder.findUnique({ where: { id: created.id }, include: WO_DETAIL_INCLUDE });
+    const checklist = checklistResult ?? { instanceId: null, created: false, origin: "SKIPPED", itemCount: 0 };
+    const createdWo = created;
+    const detailed = await db.workOrder.findUnique({ where: { id: createdWo.id }, include: WO_DETAIL_INCLUDE });
 
     await audit({
       actorId: user.id, actorEmail: user.email, action: "WORK_ORDER_CREATED",
-      resourceType: "WORK_ORDER", resourceId: created.id,
-      metadata: { code, customerId: body.customerId, complaintId: body.complaintId ?? null, technicianId: body.technicianId ?? null },
+      resourceType: "WORK_ORDER", resourceId: createdWo.id,
+      metadata: {
+        code, customerId: body.customerId, complaintId: body.complaintId ?? null, technicianId: body.technicianId ?? null,
+        checklistCreated: !!checklist?.created, checklistOrigin: checklist?.origin ?? null, checklistItemCount: checklist?.itemCount ?? null,
+      },
     });
+    if (body.complaintId) {
+      // §11 — make the complaint lock visible on its workflow timeline.
+      await audit({
+        actorId: user.id, actorEmail: user.email, action: "COMPLAINT_LOCKED",
+        resourceType: "COMPLAINT", resourceId: body.complaintId,
+        metadata: { workOrderCode: code, workOrderId: createdWo.id, reason: "Linked work order created" },
+      });
+    }
     if (technicianUserId) {
       await notify({
         userId: technicianUserId, title: "New work order",
         message: `Work order ${code} has been assigned to you: ${body.title}`,
-        type: "INFO", resourceType: "WORK_ORDER", resourceId: created.id,
+        type: "INFO", resourceType: "WORK_ORDER", resourceId: createdWo.id,
       });
     }
     // Realtime (STEP 13/39): technician + staff + customer see the new WO live.
-    await emit({ type: EVENT_TYPES.WORK_ORDER_CREATED, resourceType: "WORK_ORDER", resourceId: created.id, payload: { code, workOrderId: created.id, customerId: body.customerId }, actorType: "USER", actorId: user.id });
+    await emit({ type: EVENT_TYPES.WORK_ORDER_CREATED, resourceType: "WORK_ORDER", resourceId: createdWo.id, payload: { code, workOrderId: createdWo.id, customerId: body.customerId }, actorType: "USER", actorId: user.id });
 
     // Central QR identity at creation (ch.35 §60) — infrastructure only (§59).
-    await ensureQr("WORK_ORDER", created.id, { issuedById: user.id, auditContext: "work-order-created" });
+    await ensureQr("WORK_ORDER", createdWo.id, { issuedById: user.id, auditContext: "work-order-created" });
 
-    return ok(detailed ?? created, 201);
+    return ok(detailed ?? createdWo, 201);
   },
   { permission: PERMISSIONS.work_orders_create }
 );

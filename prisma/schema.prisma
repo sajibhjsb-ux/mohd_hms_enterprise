@@ -745,6 +745,13 @@ model Complaint {
   completedAt          DateTime?
   confirmedAt          DateTime?
   closedAt             DateTime?
+  // Complaint–Work Order control (work-order lifecycle spec): once a work order
+  // is linked the original complaint is locked (immutable) and its status is
+  // driven exclusively by that work order. Closure is recorded with its source
+  // so an automatic WORK_ORDER closure is distinguishable from a manual one.
+  lockedAt             DateTime?
+  closureSource        String             @default("") // "" | WORK_ORDER
+  closedByWorkOrderId  String?
   resolutionNotes      String             @default("")
   customerFeedback     String             @default("")
   customerRating       Int?
@@ -820,10 +827,18 @@ model WorkOrder {
   priority            String             @default("MEDIUM")
   // GENERAL | COMPLAINT | PM | CORRECTIVE (PM §22 — PM jobs reuse the canonical work-order system)
   sourceType          String             @default("GENERAL")
-  status              String             @default("PENDING") // PENDING | ACCEPTED | IN_PROGRESS | ON_HOLD | COMPLETED | CANCELLED
+  status              String             @default("PENDING") // PENDING | ACCEPTED | IN_PROGRESS | ON_HOLD | COMPLETED | CLOSED | CANCELLED
   scheduledDate       DateTime?
   startedAt           DateTime?
   completedAt         DateTime?
+  // Review → closure (work-order lifecycle spec): a technician completing the
+  // job only SUBMITS it for review. A supervisor/manager closes (approves) it;
+  // that final CLOSED transition is what closes the linked complaint.
+  closedAt            DateTime?
+  approvedAt          DateTime?
+  approvedById        String?
+  reopenedAt          DateTime?
+  reopenReason        String             @default("")
   labourHours         Float              @default(0)
   labourRateCents     Int                @default(0)
   labourTotalCents    Int                @default(0)
@@ -875,6 +890,16 @@ model WorkOrderChecklistItem {
   unit                String  @default("") // observation unit for NUMERIC (V, A, °C, bar…)
   requiresPhoto       Boolean @default(false) // completion validation demands a checklist photo
   failRequiresFinding Boolean @default(false) // a FAIL/NO answer must carry a technician note
+
+  // ── Task lifecycle: PENDING | IN_PROGRESS | COMPLETED | NOT_APPLICABLE | BLOCKED.
+  // done is a derived mirror (done=true only for COMPLETED). Removal is soft.
+  status        String   @default("PENDING")
+  statusReason  String   @default("")
+  group         String   @default("")
+  completedById String?
+  removedAt     DateTime?
+  removedById   String?
+  removalReason String   @default("")
 }
 
 model WorkOrderMaterial {
@@ -1087,6 +1112,11 @@ model ChecklistInstance {
   approvedById     String?
   approvedAt       DateTime?
   rejectedReason   String             @default("")
+  // Checklist lifecycle timestamps on the attached Work Order execution.
+  submittedAt      DateTime?
+  reviewedAt       DateTime?
+  reviewedById     String?
+  reviewNotes      String             @default("")
   // §30/§63 — AI summary derived ONLY from recorded results (never invented).
   aiSummary        String             @default("")
   aiSummaryAt      DateTime?

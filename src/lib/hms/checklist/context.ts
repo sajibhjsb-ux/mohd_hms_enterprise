@@ -50,7 +50,29 @@ const CATEGORY_KEYWORDS: [RegExp, string][] = [
   [/\b(wall|ceiling|floor|roof|door|window|paint|concrete|civil)\b/i, "BUILDING"],
 ];
 
-function inferCategory(...texts: string[]): string {
+/** Canonical category aliases so legacy equipment/template categories match. */
+const CATEGORY_ALIASES: Record<string, string> = {
+  POWER: "ELECTRICAL", ELEC: "ELECTRICAL", ELECTRIC: "ELECTRICAL",
+  FIRE_SAFETY: "FIRE_PROTECTION", FIRE: "FIRE_PROTECTION",
+  VERTICAL_TRANSPORT: "LIFT", ELEVATOR: "LIFT", LIFT_ESCALATOR: "LIFT",
+  BUILDING_MAINTENANCE: "BUILDING", CIVIL_WORKS: "CIVIL", PEST: "PEST_CONTROL",
+};
+
+const KNOWN_CATEGORIES = new Set([
+  "HVAC", "ELECTRICAL", "PLUMBING", "FIRE_PROTECTION", "GENERATOR", "LIFT",
+  "BUILDING", "CIVIL", "MECHANICAL", "PEST_CONTROL", "CLEANING", "LANDSCAPE", "GENERAL",
+]);
+
+export function canonicalizeCategory(raw: string | null | undefined): string {
+  const v = String(raw ?? "").trim().toUpperCase().replace(/[\s-]+/g, "_");
+  if (!v) return "GENERAL";
+  const alias = CATEGORY_ALIASES[v];
+  if (alias) return alias;
+  if (KNOWN_CATEGORIES.has(v)) return v;
+  return "GENERAL";
+}
+
+export function inferCategory(...texts: string[]): string {
   const joined = texts.filter(Boolean).join(" \n ");
   for (const [re, cat] of CATEGORY_KEYWORDS) {
     if (re.test(joined)) return cat;
@@ -58,7 +80,7 @@ function inferCategory(...texts: string[]): string {
   return "GENERAL";
 }
 
-function inferWorkType(sourceType: string, title: string, description: string): string {
+export function inferWorkType(sourceType: string, title: string, description: string): string {
   const text = `${title} ${description}`;
   if (sourceType === "PM") return "PREVENTIVE";
   if (sourceType === "IRMS") return "INSPECTION";
@@ -80,7 +102,7 @@ async function equipmentHistory(equipmentId: string | null) {
       select: { title: true, severity: true, recommendation: true },
     }),
     db.workOrder.findFirst({
-      where: { equipmentId, status: "COMPLETED" },
+      where: { equipmentId, status: { in: ["COMPLETED", "CLOSED"] } },
       orderBy: { completedAt: "desc" },
       select: { code: true, checklist: { select: { label: true, response: true, done: true }, orderBy: { sortOrder: "asc" }, take: 20 } },
     }),
@@ -153,13 +175,13 @@ export async function buildChecklistContext(
         location: eq.location?.name ?? "",
       };
       ctx.location = eq.location?.name ?? "";
-      ctx.category = eq.category && eq.category !== "GENERAL" ? eq.category : inferCategory(complaint.title, complaint.description);
+      ctx.category = canonicalizeCategory(eq.category && eq.category !== "GENERAL" ? eq.category : inferCategory(complaint.title, complaint.description));
       const hist = await equipmentHistory(eq.id);
       ctx.previousFindings = hist.findings;
       ctx.lastServiceResults = hist.lastResults;
       ctx.recentComplaints = hist.complaints;
     } else {
-      ctx.category = inferCategory(complaint.title, complaint.description);
+      ctx.category = canonicalizeCategory(inferCategory(complaint.title, complaint.description));
       ctx.missing.push("No equipment linked to this complaint");
     }
   } else if (sourceType === "WORK_ORDER" || sourceType === "PM") {
@@ -200,13 +222,13 @@ export async function buildChecklistContext(
         location: eq.location?.name ?? "",
       };
       ctx.location = eq.location?.name ?? "";
-      ctx.category = eq.category && eq.category !== "GENERAL" ? eq.category : inferCategory(ctx.title, ctx.description);
+      ctx.category = canonicalizeCategory(eq.category && eq.category !== "GENERAL" ? eq.category : inferCategory(ctx.title, ctx.description));
       const hist = await equipmentHistory(eq.id);
       ctx.previousFindings = hist.findings;
       ctx.lastServiceResults = hist.lastResults;
       ctx.recentComplaints = hist.complaints;
     } else {
-      ctx.category = inferCategory(ctx.title, ctx.description);
+      ctx.category = canonicalizeCategory(inferCategory(ctx.title, ctx.description));
       ctx.missing.push("No equipment linked to this work order");
     }
   } else if (sourceType === "IRMS") {
@@ -236,12 +258,12 @@ export async function buildChecklistContext(
         model: eq.model, serialNumber: eq.serialNumber, criticality: eq.criticality,
         location: eq.location?.name ?? "",
       };
-      ctx.category = eq.category && eq.category !== "GENERAL" ? eq.category : inferCategory(ctx.title, ctx.description);
+      ctx.category = canonicalizeCategory(eq.category && eq.category !== "GENERAL" ? eq.category : inferCategory(ctx.title, ctx.description));
       const hist = await equipmentHistory(eq.id);
       ctx.previousFindings = hist.findings;
       ctx.lastServiceResults = hist.lastResults;
     } else {
-      ctx.category = inferCategory(ctx.title, ctx.description);
+      ctx.category = canonicalizeCategory(inferCategory(ctx.title, ctx.description));
       ctx.missing.push("No equipment linked to this inspection");
     }
   }
