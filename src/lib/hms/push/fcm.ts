@@ -249,11 +249,11 @@ export async function sendFcmToTokens(tokens: string[], payload: FcmPayload): Pr
     body: payload.body.slice(0, 300),
     url: payload.route,
     tag: payload.tag.slice(0, 80),
-    notificationId: payload.notificationId,
-    type: payload.type,
-    resourceType: payload.resourceType,
-    resourceId: payload.resourceId,
-    priority: payload.priority,
+    notificationId: payload.notificationId || "",
+    type: payload.type || "",
+    resourceType: payload.resourceType || "",
+    resourceId: payload.resourceId || "",
+    priority: payload.priority || "NORMAL",
   };
   const urgency = payload.priority === "NORMAL" ? "normal" : "high";
   const message = {

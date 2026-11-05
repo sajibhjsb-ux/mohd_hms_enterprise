@@ -6,7 +6,6 @@
 
 export type ChecklistSourceType = "COMPLAINT" | "WORK_ORDER" | "PM" | "IRMS";
 export type ChecklistOrigin = "AI" | "TEMPLATE" | "MANUAL" | "HYBRID";
-export type ChecklistStatus = "DRAFT" | "PENDING_APPROVAL" | "APPROVED" | "REJECTED" | "ACTIVE" | "COMPLETED" | "ARCHIVED";
 export type ChecklistResponseType = "CHECKBOX" | "PASSFAIL" | "YESNO" | "NUMERIC" | "TEXT";
 export type ChecklistTaskPriority = "ROUTINE" | "IMPORTANT" | "SAFETY" | "CRITICAL";
 
@@ -24,6 +23,8 @@ export type ChecklistItemSpec = {
   unit?: string;
   requiresPhoto?: boolean;
   failRequiresFinding?: boolean;
+  /** Optional task group/category for display and filtering. */
+  group?: string;
   /** Per-item provenance (spec §64) — AI items inside a human-edited draft stay labelled. */
   origin?: ChecklistOrigin;
 };

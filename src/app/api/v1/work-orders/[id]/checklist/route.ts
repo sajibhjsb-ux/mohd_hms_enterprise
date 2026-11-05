@@ -33,13 +33,20 @@ const postSchema = z.object({
   label: z.string().min(1, "Checklist item label is required.").max(300),
   required: z.boolean().optional(),
   responseType: z.enum(["CHECKBOX", "PASSFAIL", "YESNO", "NUMERIC", "TEXT"]).optional(),
+  priority: z.string().max(40).optional(),
+  group: z.string().max(80).optional(),
+  expectedResult: z.string().max(1000).optional(),
+  unit: z.string().max(40).optional(),
+  requiresPhoto: z.boolean().optional(),
+  safetyCritical: z.boolean().optional(),
+  notes: z.string().max(2000).optional(),
 });
 
 export const POST = withId(
   async (id, { req, user }) => {
     const body = await parseBody(req, postSchema);
     const wo = await loadEditable(id, user);
-    if (["COMPLETED", "CANCELLED"].includes(wo.status)) {
+    if (["COMPLETED", "CLOSED", "CANCELLED"].includes(wo.status)) {
       throw Errors.invalidTransition(`Checklist items cannot be added to a ${wo.status.toLowerCase()} work order.`);
     }
     const count = await db.workOrderChecklistItem.count({ where: { workOrderId: id } });
@@ -47,12 +54,20 @@ export const POST = withId(
       data: {
         workOrderId: id,
         label: body.label,
+        status: "PENDING",
         required: body.required ?? false,
         responseType: body.responseType ?? "CHECKBOX",
+        priority: body.priority ?? "ROUTINE",
+        group: body.group ?? "",
+        expectedResult: body.expectedResult ?? "",
+        unit: body.unit ?? "",
+        requiresPhoto: !!body.requiresPhoto,
+        safetyCritical: !!body.safetyCritical,
+        notes: body.notes ?? "",
         sortOrder: count,
       },
     });
-    await audit({ actorId: user.id, actorEmail: user.email, action: "WO_CHECKLIST_ADDED", resourceType: "WORK_ORDER", resourceId: id, metadata: { code: wo.code, label: body.label } });
+    await audit({ actorId: user.id, actorEmail: user.email, action: "WO_CHECKLIST_ADDED", resourceType: "WORK_ORDER", resourceId: id, metadata: { code: wo.code, item } });
     return ok(item, 201);
   },
   { permission: PERMISSIONS.work_orders_read }
@@ -75,7 +90,7 @@ export const PATCH = withId(
   async (id, { req, user }) => {
     const body = await parseBody(req, patchSchema);
     const wo = await loadEditable(id, user);
-    if (wo.status === "COMPLETED") {
+    if (["COMPLETED", "CLOSED"].includes(wo.status)) {
       throw Errors.invalidTransition("Checklist cannot be changed after the work order is completed.");
     }
     const item = await db.workOrderChecklistItem.findUnique({ where: { id: body.itemId } });

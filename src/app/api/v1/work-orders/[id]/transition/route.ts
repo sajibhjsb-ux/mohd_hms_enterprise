@@ -6,18 +6,20 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { handler, ok, parseBody, Errors } from "@/lib/hms/api";
+import { handler, ok, parseBody, Errors, ApiError } from "@/lib/hms/api";
 import { roleCan } from "@/lib/hms/rbac";
 import { audit, notify, notifyRole } from "@/lib/hms/services";
 import { WO_TRANSITIONS, PERMISSIONS } from "@/lib/hms/constants";
 import { automationNumber } from "@/lib/hms/workflows/settings";
 import type { SessionUser } from "@/lib/hms/auth";
-import { WO_DETAIL_INCLUDE, assertViewWorkOrder, isAssignedTechnician, assertWoTransition } from "../../_lib";
+import { WO_DETAIL_INCLUDE, assertViewWorkOrder, isAssignedTechnician, isSupervisorPlus, assertWoTransition } from "../../_lib";
 import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 import { emit } from "@/lib/hms/workflows/bus";
 import { dedupeSubmission } from "@/lib/hms/workflows/idempotency";
+import { syncComplaintFromWorkOrder, reopenComplaintFromWorkOrder } from "@/lib/hms/workflows/complaint-work-order";
 import { computeNextDue } from "@/lib/hms/pm/schedule";
 import { applyStockMovement, consumeReservation } from "@/lib/hms/inventory";
+import { validateChecklistForSubmission, type ChecklistExecutionItem } from "@/lib/hms/checklist/execution";
 
 /** Consume this WO's active reservation for an item inside the caller's transaction. */
 function consumeReservationInTx(tx: Parameters<Parameters<typeof db.$transaction>[0]>[0], itemId: string, quantity: number, workOrderId: string) {
@@ -34,8 +36,9 @@ function withId(fn: (id: string, ctx: Ctx) => Promise<NextResponse>, opts?: Para
 }
 
 const transitionSchema = z.object({
-  action: z.enum(["accept", "start", "hold", "resume", "complete", "cancel"]),
+  action: z.enum(["accept", "start", "hold", "resume", "complete", "close", "reopen", "return", "cancel"]),
   note: z.string().max(2000).optional(),
+  reason: z.string().max(2000).optional(),
 });
 
 export const POST = withId(
@@ -61,6 +64,14 @@ export const POST = withId(
       const allowed = assigned || roleCan(user.role, PERMISSIONS.work_orders_complete);
       if (!allowed) throw Errors.forbidden();
     }
+    if (body.action === "close" || body.action === "reopen" || body.action === "return") {
+      // Review/closure/return is a supervisor-or-above responsibility.
+      // Technicians may submit (complete) but must never approve their own work,
+      // even via API.
+      if (!isSupervisorPlus(user.role)) {
+        throw Errors.forbidden("Only a supervisor or manager can close, reopen or return a work order.");
+      }
+    }
     if (body.action === "cancel") {
       const allowed = assigned || roleCan(user.role, PERMISSIONS.work_orders_assign);
       if (!allowed) throw Errors.forbidden();
@@ -79,6 +90,9 @@ export const POST = withId(
 
       case "start": {
         assertWoTransition("IN_PROGRESS", from, WO_TRANSITIONS);
+        if (from === "CLOSED") {
+          throw Errors.invalidTransition("A closed work order can only be reopened by a supervisor using the reopen action.");
+        }
 
         // ── §15/§18 — PRE-WORK GATE (backend-authoritative, never UI-only) ──
         // Starting work requires: (1) a configurable minimum number of REAL
@@ -99,25 +113,35 @@ export const POST = withId(
           photoCount = await db.document.count({
             where: { resourceType: "WORK_ORDER", resourceId: id, category: "WORK_ORDER", mimeType: { startsWith: "image/" } },
           });
+          // §15/§40 — evidence the customer/staff already attached to the SOURCE
+          // COMPLAINT counts as before-work evidence too: the same fault was
+          // documented at intake, so the technician is not asked to re-shoot it.
+          if (wo.complaintId) {
+            photoCount += await db.document.count({
+              where: {
+                resourceType: "COMPLAINT",
+                resourceId: wo.complaintId,
+                category: "COMPLAINT",
+                mimeType: { startsWith: "image/" },
+              },
+            });
+          }
           if (photoCount < beforePhotosMin) {
             missing.push(`Before-work photo evidence (${photoCount}/${beforePhotosMin} required)`);
           }
         }
 
-        const checklist = await db.workOrderChecklistItem.findMany({
-          where: { workOrderId: id },
-          select: { label: true, done: true, required: true, responseType: true, response: true },
+        const startItems = await db.workOrderChecklistItem.findMany({
+          where: { workOrderId: id, removedAt: null },
+          select: { id: true, label: true, status: true, statusReason: true, done: true, required: true, responseType: true, response: true, notes: true, requiresPhoto: true, failRequiresFinding: true, safetyCritical: true },
         });
+        const startValidation = validateChecklistForSubmission(startItems as unknown as ChecklistExecutionItem[], {}, "START");
         // §16/§31 — ONLY required items block the start; optional items stay
         // advisory (the UI shows completion counts either way).
-        const unanswered = checklist.filter((c) => c.required && (!c.done || (c.responseType !== "CHECKBOX" && c.response.trim() === "")));
-        // §16/§18 — a pre-work checklist must EXIST, not merely be empty-complete:
-        // a work order with zero checklist items has no verifiable pre-work
-        // evidence, so Start stays blocked (AI/template/manual paths remain available).
-        if (checklist.length === 0) {
+        if (startItems.length === 0) {
           missing.push("No pre-work checklist attached — generate one with AI, use a template, or add items manually");
-        } else if (unanswered.length > 0) {
-          missing.push(`Mandatory checklist result: ${unanswered[0].label}${unanswered.length > 1 ? ` (+${unanswered.length - 1} more)` : ""}`);
+        } else if (!startValidation.ok) {
+          missing.push(...startValidation.missing);
         }
 
         if (missing.length > 0) {
@@ -136,9 +160,9 @@ export const POST = withId(
             },
             checklist: {
               required: true,
-              completed: checklist.length > 0 && unanswered.length === 0,
-              requiredTotal: checklist.filter((c) => c.required).length,
-              requiredDone: checklist.filter((c) => c.required && c.done && (c.responseType === "CHECKBOX" || c.response.trim() !== "")).length,
+              completed: startItems.length > 0 && startValidation.ok,
+              requiredTotal: startItems.filter((c) => c.required).length,
+              requiredDone: startItems.filter((c) => c.required && c.done && (c.responseType === "CHECKBOX" || c.response.trim() !== "")).length,
             },
           };
           return NextResponse.json(
@@ -159,15 +183,10 @@ export const POST = withId(
           const row = await tx.workOrder.update({
             where: { id }, data: { status: "IN_PROGRESS", startedAt: now }, include: WO_DETAIL_INCLUDE,
           });
-          // Cascade: a linked complaint still waiting moves into progress with its own history row.
+          // Rule C — the linked complaint follows the authoritative work order
+          // into IN_PROGRESS (monotonic; history row written by the helper).
           if (row.complaintId) {
-            const complaint = await tx.complaint.findUnique({ where: { id: row.complaintId }, select: { id: true, status: true, code: true } });
-            if (complaint && complaint.status === "ASSIGNED") {
-              await tx.complaint.update({ where: { id: complaint.id }, data: { status: "IN_PROGRESS", acceptedAt: now, startedAt: now } });
-              await tx.complaintStatusHistory.create({
-                data: { complaintId: complaint.id, fromStatus: "ASSIGNED", toStatus: "IN_PROGRESS", changedById: user.id, note: `Work order ${code} started` },
-              });
-            }
+            await syncComplaintFromWorkOrder(tx, { workOrderId: id, changedById: user.id, note: `Work order ${code} started` });
           }
           // PM §25 — mirror the canonical work-order state onto the PM occurrence.
           if (row.pmTaskId) {
@@ -195,6 +214,9 @@ export const POST = withId(
 
       case "resume": {
         assertWoTransition("IN_PROGRESS", from, WO_TRANSITIONS);
+        if (from === "CLOSED") {
+          throw Errors.invalidTransition("A closed work order can only be reopened by a supervisor using the reopen action.");
+        }
         const updated = await db.workOrder.update({
           where: { id }, data: { status: "IN_PROGRESS" }, include: WO_DETAIL_INCLUDE,
         });
@@ -203,11 +225,10 @@ export const POST = withId(
       }
 
       case "complete": {
+        // Technician submission for supervisor review. NOT final approval: the
+        // complaint is not closed and no invoice is generated until CLOSED.
         assertWoTransition("COMPLETED", from, WO_TRANSITIONS);
-        // Holder object — TS control-flow can't track assignments made inside the
-        // transaction callback, so the completed instance rides out in a ref.
-        const ref: { completedInstance: { id: string; code: string } | null; autoClosedComplaint: { id: string; code: string; fromStatus: string } | null } = { completedInstance: null, autoClosedComplaint: null };
-        const { updated, lowStockItems } = await db.$transaction(async (tx) => {
+        const { updated } = await db.$transaction(async (tx) => {
           // Re-read inside the transaction — guards idempotency (a concurrent
           // completion flips the status and this update throws via the guard below).
           const current = await tx.workOrder.findUnique({
@@ -229,28 +250,46 @@ export const POST = withId(
           // For required rich items (PASSFAIL/YESNO/NUMERIC/TEXT) a recorded
           // response is also mandatory — an unticked required item blocks completion.
           // Checklist engine §32 — required photos + failed-task notes also block.
-          const checklist = await tx.workOrderChecklistItem.findMany({
-            where: { workOrderId: id },
-            select: { label: true, done: true, required: true, responseType: true, response: true, notes: true, requiresPhoto: true, failRequiresFinding: true },
+          const items = await tx.workOrderChecklistItem.findMany({
+            where: { workOrderId: id, removedAt: null },
+            select: { id: true, label: true, status: true, statusReason: true, done: true, required: true, responseType: true, response: true, notes: true, requiresPhoto: true, failRequiresFinding: true, safetyCritical: true },
           });
-          const pending = checklist.filter((c) => !c.done || (c.required && c.responseType !== "CHECKBOX" && c.response.trim() === ""));
-          const failedNoNote = checklist.filter((c) => c.failRequiresFinding && ["FAIL", "NO"].includes(c.response.trim().toUpperCase()) && c.notes.trim() === "");
-          const photoRequiredItems = checklist.filter((c) => c.requiresPhoto);
-          let checklistPhotos = 0;
-          if (photoRequiredItems.length > 0) {
-            checklistPhotos = await tx.document.count({
-              where: { resourceType: "WORK_ORDER", resourceId: id, category: "WORK_ORDER" },
+          const photoCounts: Record<string, number> = {};
+          const photoItems = items.filter((c) => c.requiresPhoto);
+          if (photoItems.length > 0) {
+            const photoRows = await tx.document.findMany({
+              where: {
+                resourceType: "WORK_ORDER",
+                resourceId: id,
+                category: "WORK_ORDER",
+                label: { in: photoItems.map((c) => c.id) },
+              },
+              select: { label: true },
             });
+            for (const p of photoRows) photoCounts[p.label] = (photoCounts[p.label] ?? 0) + 1;
           }
-          const missing: string[] = [];
-          if (pending.length > 0) missing.push(...pending.slice(0, 3).map((c) => `Task result: ${c.label}`));
-          if (failedNoNote.length > 0) missing.push(...failedNoNote.slice(0, 3).map((c) => `Note for failed task: ${c.label}`));
-          if (photoRequiredItems.length > checklistPhotos) {
-            missing.push(`Checklist photo evidence (${checklistPhotos}/${photoRequiredItems.length} uploaded)`);
+          const validation = validateChecklistForSubmission(items as unknown as ChecklistExecutionItem[], photoCounts, "SUBMIT");
+          if (!validation.ok) {
+            throw new ApiError(
+              422,
+              "INVALID_TRANSITION",
+              `Cannot complete work order. Missing: ${validation.missing.slice(0, 5).join("; ")}${validation.missing.length > 5 ? "…" : ""}.`,
+              { missing: validation.missing },
+            );
           }
-          if (missing.length > 0) {
-            throw Errors.invalidTransition(
-              `Cannot complete work order. Missing: ${missing.slice(0, 5).join("; ")}${missing.length > 5 ? "…" : ""}.`
+
+          // §15/§40 — completion is provable: at least one AFTER (completion)
+          // photo or video must exist before the work order can be completed.
+          // Distinct error code so the client can prompt for the capture.
+          const completionEvidence = await tx.document.count({
+            where: { resourceType: "WORK_ORDER", resourceId: id, category: "WORK_ORDER", label: "AFTER" },
+          });
+          if (completionEvidence < 1) {
+            throw new ApiError(
+              422,
+              "COMPLETION_EVIDENCE_REQUIRED",
+              "A completion photo or video is required before this work order can be completed.",
+              { required: 1, present: completionEvidence },
             );
           }
 
@@ -287,15 +326,9 @@ export const POST = withId(
             if (mv.lowStock || mv.outOfStock) lowStock.push({ id: item.id });
           }
 
-          // Transactional outbox (§5): completion event commits with the stock
-          // deduction — the auto-invoice workflow can never be lost or orphaned.
-          await tx.domainEvent.create({
-            data: {
-              type: EVENT_TYPES.WORK_ORDER_COMPLETED, resourceType: "WORK_ORDER", resourceId: id,
-              payload: JSON.stringify({ code: current.code, totalCents: labourTotalCents + materialsTotalCents }),
-              actorType: "USER", actorId: user.id,
-            },
-          });
+          // Stock consumption is final at technician submission. The invoice /
+          // completion event is NOT emitted here: a supervisor must first
+          // approve and CLOSE the work order (see the close case below).
           for (const item of lowStock) {
             await tx.domainEvent.create({
               data: {
@@ -312,18 +345,112 @@ export const POST = withId(
             include: WO_DETAIL_INCLUDE,
           });
 
-          // PM §2/§25/§31 — completing a PM work order closes its occurrence and
-          // triggers the next maintenance cycle (backend-authoritative, same tx).
-          if (current.pmTaskId) {
-            const task = await tx.pmTask.findUnique({
-              where: { id: current.pmTaskId },
-              include: { plan: true },
+          // §8 — technician submission timestamps the checklist instance.
+          const inst = await tx.checklistInstance.findUnique({ where: { workOrderId: id }, select: { id: true, code: true, status: true } });
+          if (inst && inst.status === "ACTIVE") {
+            await tx.checklistInstance.update({ where: { id: inst.id }, data: { submittedAt: now } });
+          }
+
+          return { updated: row, lowStockItems: lowStock };
+        });
+
+        // Submitted for review — the supervisor decides whether it is accepted.
+        await audit({ actorId: user.id, actorEmail: user.email, action: "WORK_ORDER_SUBMITTED_FOR_REVIEW", resourceType: "WORK_ORDER", resourceId: id, metadata: { code, totalCents: updated.totalCents } });
+        const submittedInst = await db.checklistInstance.findUnique({ where: { workOrderId: id }, select: { id: true, code: true } });
+        if (submittedInst) {
+          await audit({ actorId: user.id, actorEmail: user.email, action: "CHECKLIST_SUBMITTED", resourceType: "CHECKLIST_INSTANCE", resourceId: submittedInst.id, metadata: { code: submittedInst.code, workOrderCode: code } });
+        }
+        await notifyRole("SUPERVISOR", {
+          title: "Work order awaiting review",
+          message: `${code} was submitted by ${user.name}. Review the evidence, then approve and close it.`,
+          type: "INFO", resourceType: "WORK_ORDER", resourceId: id,
+        });
+        return ok(updated);
+      }
+
+      case "close": {
+        // Supervisor/manager final approval. Re-verifies the completion gates
+        // inside the transaction (never trust an earlier client/tech state),
+        // then closes the linked complaint and releases the invoice event.
+        assertWoTransition("CLOSED", from, WO_TRANSITIONS);
+        const ref: {
+          completedInstance: { id: string; code: string } | null;
+          autoClosedComplaint: { id: string; code: string; fromStatus: string } | null;
+        } = { completedInstance: null, autoClosedComplaint: null };
+
+        const updated = await db.$transaction(async (tx) => {
+          const current = await tx.workOrder.findUnique({
+            where: { id },
+            include: { materials: true, customer: { select: { id: true, portalUser: { select: { id: true } } } } },
+          });
+          if (!current) throw Errors.notFound("Work order not found.");
+          if (current.status !== "COMPLETED") {
+            throw Errors.invalidTransition(`${current.status} → CLOSED is not allowed`);
+          }
+
+          const items = await tx.workOrderChecklistItem.findMany({
+            where: { workOrderId: id, removedAt: null },
+            select: { id: true, label: true, status: true, statusReason: true, done: true, required: true, responseType: true, response: true, notes: true, requiresPhoto: true, failRequiresFinding: true, safetyCritical: true },
+          });
+          const photoCounts: Record<string, number> = {};
+          const photoItems = items.filter((c) => c.requiresPhoto);
+          if (photoItems.length > 0) {
+            const photoRows = await tx.document.findMany({
+              where: {
+                resourceType: "WORK_ORDER",
+                resourceId: id,
+                category: "WORK_ORDER",
+                label: { in: photoItems.map((c) => c.id) },
+              },
+              select: { label: true },
             });
+            for (const p of photoRows) photoCounts[p.label] = (photoCounts[p.label] ?? 0) + 1;
+          }
+          const validation = validateChecklistForSubmission(items as unknown as ChecklistExecutionItem[], photoCounts, "SUBMIT");
+          if (!validation.ok) {
+            throw new ApiError(
+              422,
+              "INVALID_TRANSITION",
+              `Cannot close work order. Missing: ${validation.missing.slice(0, 5).join("; ")}${validation.missing.length > 5 ? "…" : ""}.`,
+              { missing: validation.missing },
+            );
+          }
+          const completionEvidence = await tx.document.count({
+            where: { resourceType: "WORK_ORDER", resourceId: id, category: "WORK_ORDER", label: "AFTER" },
+          });
+          if (completionEvidence < 1) {
+            throw new ApiError(
+              422,
+              "COMPLETION_EVIDENCE_REQUIRED",
+              "A completion photo or video is required before this work order can be closed.",
+              { required: 1, present: completionEvidence },
+            );
+          }
+
+          const materialsTotalCents = current.materials.reduce((s, m) => s + m.totalCents, 0);
+          const labourTotalCents = Math.round(current.labourHours * current.labourRateCents);
+          const totalCents = labourTotalCents + materialsTotalCents;
+
+          const row = await tx.workOrder.update({
+            where: { id },
+            data: {
+              status: "CLOSED",
+              closedAt: now,
+              approvedAt: now,
+              approvedById: user.id,
+              labourTotalCents,
+              materialsTotalCents,
+              totalCents,
+              ...(body.note ? { notes: body.note } : {}),
+            },
+            include: WO_DETAIL_INCLUDE,
+          });
+
+          // PM §2/§25/§31 — the occurrence is settled only on approved closure.
+          if (current.pmTaskId) {
+            const task = await tx.pmTask.findUnique({ where: { id: current.pmTaskId }, include: { plan: true } });
             if (task && task.status !== "COMPLETED" && task.status !== "SKIPPED" && task.status !== "CANCELLED") {
-              await tx.pmTask.update({
-                where: { id: task.id },
-                data: { status: "COMPLETED", completedAt: now },
-              });
+              await tx.pmTask.update({ where: { id: task.id }, data: { status: "COMPLETED", completedAt: now } });
               const plan = task.plan;
               if (plan) {
                 const next = computeNextDue(plan, task.dueDate);
@@ -338,70 +465,198 @@ export const POST = withId(
               }
             }
           }
-          // Checklist engine — the work order's checklist instance completes WITH
-          // the work order (one lifecycle, same transaction — §36/§51).
+          // Checklist engine — completes with the approved closure (§36/§51).
           const inst = await tx.checklistInstance.findUnique({ where: { workOrderId: id }, select: { id: true, code: true, status: true } });
           if (inst && inst.status === "ACTIVE") {
-            await tx.checklistInstance.update({ where: { id: inst.id }, data: { status: "COMPLETED", completedAt: now } });
+            await tx.checklistInstance.update({
+              where: { id: inst.id },
+              data: {
+                status: "COMPLETED",
+                completedAt: now,
+                reviewedAt: now,
+                reviewedById: user.id,
+                reviewNotes: body.note ?? "",
+              },
+            });
             ref.completedInstance = { id: inst.id, code: inst.code };
           }
 
-          // §15 — a COMPLETED work order auto-closes its source complaint
-          // (backend business rule, same transaction — no partial states). Any
-          // non-terminal complaint state collapses to CLOSED: the linked work
-          // is settled, so the complaint lifecycle is over. No INCOMPLETE final
-          // status exists in this work-order machine (§16 n/a).
+          // §15 — ONLY the final CLOSED state auto-closes the linked complaint.
           if (current.complaintId) {
-            const complaint = await tx.complaint.findUnique({
-              where: { id: current.complaintId },
-              select: { id: true, code: true, status: true, completedAt: true },
+            const closed = await syncComplaintFromWorkOrder(tx, {
+              workOrderId: id,
+              changedById: user.id,
+              note: `Complaint automatically closed after linked Work Order ${current.code} was approved and closed.`,
             });
-            if (complaint && !["CLOSED", "CANCELLED"].includes(complaint.status)) {
-              await tx.complaint.update({
-                where: { id: complaint.id },
-                data: { status: "CLOSED", closedAt: now, completedAt: complaint.completedAt ?? now },
-              });
-              await tx.complaintStatusHistory.create({
-                data: {
-                  complaintId: complaint.id,
-                  fromStatus: complaint.status,
-                  toStatus: "CLOSED",
-                  changedById: user.id,
-                  note: `Complaint automatically closed after linked Work Order ${current.code} was completed.`,
-                },
-              });
+            if (closed) {
               await tx.domainEvent.create({
                 data: {
-                  type: EVENT_TYPES.COMPLAINT_CLOSED, resourceType: "COMPLAINT", resourceId: complaint.id,
-                  payload: JSON.stringify({ code: complaint.code, reason: "WORK_ORDER_COMPLETED", workOrderCode: current.code }),
+                  type: EVENT_TYPES.COMPLAINT_CLOSED, resourceType: "COMPLAINT", resourceId: closed.id,
+                  payload: JSON.stringify({ code: closed.code, reason: "WORK_ORDER_CLOSED", workOrderCode: current.code }),
                   actorType: "USER", actorId: user.id,
                 },
               });
-              ref.autoClosedComplaint = { id: complaint.id, code: complaint.code, fromStatus: complaint.status };
+              ref.autoClosedComplaint = { id: closed.id, code: closed.code, fromStatus: closed.fromStatus };
             }
           }
-          return { updated: row, lowStockItems: lowStock };
+
+          // Transactional outbox (§5): completion/invoicing becomes final only
+          // now, together with the closure — never on technician submission.
+          await tx.domainEvent.create({
+            data: {
+              type: EVENT_TYPES.WORK_ORDER_COMPLETED, resourceType: "WORK_ORDER", resourceId: id,
+              payload: JSON.stringify({ code: current.code, totalCents, approvedById: user.id }),
+              actorType: "USER", actorId: user.id,
+            },
+          });
+          return row;
         });
 
-        await audit({ actorId: user.id, actorEmail: user.email, action: "WORK_ORDER_COMPLETED", resourceType: "WORK_ORDER", resourceId: id, metadata: { code, totalCents: updated.totalCents } });
+        await audit({ actorId: user.id, actorEmail: user.email, action: "WORK_ORDER_CLOSED", resourceType: "WORK_ORDER", resourceId: id, metadata: { code, totalCents: updated.totalCents, approvedById: user.id } });
         if (ref.autoClosedComplaint) {
-          // §15 — audit trail on the COMPLAINT so the auto-close shows on its
-          // timeline (WorkflowTimeline reads COMPLAINT audit rows).
-          await audit({ actorId: user.id, actorEmail: user.email, action: "COMPLAINT_AUTO_CLOSED", resourceType: "COMPLAINT", resourceId: ref.autoClosedComplaint.id, metadata: { code: ref.autoClosedComplaint.code, reason: "Linked work order completed", workOrderCode: code, fromStatus: ref.autoClosedComplaint.fromStatus } });
+          await audit({ actorId: user.id, actorEmail: user.email, action: "COMPLAINT_AUTO_CLOSED", resourceType: "COMPLAINT", resourceId: ref.autoClosedComplaint.id, metadata: { code: ref.autoClosedComplaint.code, reason: "Linked work order approved and closed", workOrderCode: code, fromStatus: ref.autoClosedComplaint.fromStatus } });
         }
         if (ref.completedInstance) {
           await audit({ actorId: user.id, actorEmail: user.email, action: "CHECKLIST_COMPLETED", resourceType: "CHECKLIST_INSTANCE", resourceId: ref.completedInstance.id, metadata: { code: ref.completedInstance.code, workOrderCode: code } });
           await emit({ type: EVENT_TYPES.CHECKLIST_COMPLETED, resourceType: "CHECKLIST_INSTANCE", resourceId: ref.completedInstance.id, payload: { code: ref.completedInstance.code, workOrderCode: code }, actorType: "USER", actorId: user.id });
         }
-        await notifyRole("SUPERVISOR", { title: "Work order completed", message: `${code} completed by ${user.name}.`, type: "SUCCESS", resourceType: "WORK_ORDER", resourceId: id });
-        if (portalUserId) {
-          await notify({ userId: portalUserId, title: "Work order completed", message: `Work order ${code} for your site has been completed.`, type: "SUCCESS", resourceType: "WORK_ORDER", resourceId: id });
-        }
-        // PM §72 — PM completion audit + supervisor notification (occurrence closed,
-        // next cycle already computed inside the transaction above).
         if (updated.pmTaskId) {
           await audit({ actorId: user.id, actorEmail: user.email, action: "PM_COMPLETED", resourceType: "PM_TASK", resourceId: updated.pmTaskId, metadata: { taskCode: updated.pmTask?.code ?? null, workOrderCode: code } });
-          await notifyRole("SUPERVISOR", { title: "PM completed", message: `PM occurrence ${updated.pmTask?.code ?? ""} (${code}) completed by ${user.name}. Review when ready.`, type: "SUCCESS", resourceType: "PM_TASK", resourceId: updated.pmTaskId });
+          await notifyRole("SUPERVISOR", { title: "PM completed", message: `PM occurrence ${updated.pmTask?.code ?? ""} (${code}) approved and closed by ${user.name}.`, type: "SUCCESS", resourceType: "PM_TASK", resourceId: updated.pmTaskId });
+        }
+        if (wo.technician?.user?.id && wo.technician.user.id !== user.id) {
+          await notify({ userId: wo.technician.user.id, title: "Work order approved", message: `Work order ${code} was reviewed, approved and closed.`, type: "SUCCESS", resourceType: "WORK_ORDER", resourceId: id });
+        }
+        if (portalUserId) {
+          await notify({ userId: portalUserId, title: "Work order completed", message: `Work order ${code} for your site has been completed and approved.`, type: "SUCCESS", resourceType: "WORK_ORDER", resourceId: id });
+        }
+        return ok(updated);
+      }
+
+      case "reopen": {
+        assertWoTransition("IN_PROGRESS", from, WO_TRANSITIONS);
+        const reason = (body.reason ?? body.note ?? "").trim();
+        if (!reason) throw Errors.badRequest("A reopen reason is required.");
+        const ref: { reopenedComplaint: { id: string; code: string } | null } = { reopenedComplaint: null };
+
+        const updated = await db.$transaction(async (tx) => {
+          const current = await tx.workOrder.findUnique({
+            where: { id },
+            select: { id: true, code: true, complaintId: true, pmTaskId: true, status: true },
+          });
+          if (!current) throw Errors.notFound("Work order not found.");
+          if (current.status !== "CLOSED") {
+            throw Errors.invalidTransition(`${current.status} → IN_PROGRESS (reopen) is not allowed`);
+          }
+
+          const row = await tx.workOrder.update({
+            where: { id },
+            data: {
+              status: "IN_PROGRESS",
+              reopenedAt: now,
+              reopenReason: reason,
+              // A reopened job is no longer approved/completed; new evidence and
+              // a fresh supervisor approval are required before it can close again.
+              closedAt: null,
+              approvedAt: null,
+              approvedById: null,
+              completedAt: null,
+              ...(body.note ? { notes: body.note } : {}),
+            },
+            include: WO_DETAIL_INCLUDE,
+          });
+
+          // ponytail: the PM occurrence is reopened, but the next-cycle date that
+          // was advanced on closure is not rolled back (no previous value stored).
+          // Add an occurrence snapshot if PM reopen dates must be exact.
+          if (current.pmTaskId) {
+            await tx.pmTask.updateMany({
+              where: { id: current.pmTaskId, status: "COMPLETED" },
+              data: { status: "IN_PROGRESS", completedAt: null },
+            });
+          }
+          // The checklist must accept new evidence during the rework cycle.
+          await tx.checklistInstance.updateMany({
+            where: { workOrderId: id, status: "COMPLETED" },
+            data: { status: "ACTIVE", completedAt: null, submittedAt: null, reviewedAt: null, reviewedById: null, reviewNotes: "" },
+          });
+          if (current.complaintId) {
+            const reopened = await reopenComplaintFromWorkOrder(tx, {
+              workOrderId: id,
+              changedById: user.id,
+              reason,
+            });
+            if (reopened) {
+              await tx.domainEvent.create({
+                data: {
+                  type: EVENT_TYPES.COMPLAINT_UPDATED, resourceType: "COMPLAINT", resourceId: reopened.id,
+                  payload: JSON.stringify({ code: reopened.code, status: reopened.toStatus, reason: "WORK_ORDER_REOPENED", workOrderCode: current.code }),
+                  actorType: "USER", actorId: user.id,
+                },
+              });
+              ref.reopenedComplaint = { id: reopened.id, code: reopened.code };
+            }
+          }
+          return row;
+        });
+
+        await audit({ actorId: user.id, actorEmail: user.email, action: "WORK_ORDER_REOPENED", resourceType: "WORK_ORDER", resourceId: id, metadata: { code, reason } });
+        if (ref.reopenedComplaint) {
+          await audit({ actorId: user.id, actorEmail: user.email, action: "COMPLAINT_REOPENED", resourceType: "COMPLAINT", resourceId: ref.reopenedComplaint.id, metadata: { code: ref.reopenedComplaint.code, reason, workOrderCode: code } });
+        }
+        if (wo.technician?.user?.id && wo.technician.user.id !== user.id) {
+          await notify({ userId: wo.technician.user.id, title: "Work order reopened", message: `Work order ${code} was reopened by ${user.name}: ${reason}`, type: "WARNING", resourceType: "WORK_ORDER", resourceId: id });
+        }
+        if (portalUserId) {
+          await notify({ userId: portalUserId, title: "Work order reopened", message: `Work order ${code} is being re-checked. Reason: ${reason}`, type: "WARNING", resourceType: "WORK_ORDER", resourceId: id });
+        }
+        return ok(updated);
+      }
+
+      case "return": {
+        // Supervisor correction path: COMPLETED → IN_PROGRESS. It returns the
+        // job to the technician for rework; it never emits the completion /
+        // invoice event and never closes the linked complaint.
+        assertWoTransition("IN_PROGRESS", from, WO_TRANSITIONS);
+        if (from !== "COMPLETED") {
+          throw Errors.invalidTransition("Return is only available for a submitted work order.");
+        }
+        const reason = (body.reason ?? body.note ?? "").trim();
+        if (!reason) throw Errors.badRequest("A return reason is required.");
+
+        const updated = await db.$transaction(async (tx) => {
+          const current = await tx.workOrder.findUnique({
+            where: { id },
+            select: { id: true, code: true, status: true, technicianId: true },
+          });
+          if (!current) throw Errors.notFound("Work order not found.");
+          if (current.status !== "COMPLETED") {
+            throw Errors.invalidTransition(`${current.status} → IN_PROGRESS (return) is not allowed`);
+          }
+
+          const row = await tx.workOrder.update({
+            where: { id },
+            data: { status: "IN_PROGRESS", completedAt: null, ...(body.note ? { notes: body.note } : {}) },
+            include: WO_DETAIL_INCLUDE,
+          });
+
+          await tx.checklistInstance.updateMany({
+            where: { workOrderId: id },
+            data: { status: "ACTIVE", completedAt: null, submittedAt: null, reviewedAt: null, reviewedById: null, reviewNotes: "" },
+          });
+          return row;
+        });
+
+        const inst = await db.checklistInstance.findUnique({ where: { workOrderId: id }, select: { id: true, code: true } });
+        await audit({ actorId: user.id, actorEmail: user.email, action: "WORK_ORDER_RETURNED", resourceType: "WORK_ORDER", resourceId: id, metadata: { code, reason } });
+        if (inst) {
+          await audit({ actorId: user.id, actorEmail: user.email, action: "CHECKLIST_RETURNED", resourceType: "CHECKLIST_INSTANCE", resourceId: inst.id, metadata: { code: inst.code, workOrderCode: code, reason } });
+        }
+        if (updated.technician?.user?.id && updated.technician.user.id !== user.id) {
+          await notify({ userId: updated.technician.user.id, title: "Work order returned", message: `Work order ${code} was returned by ${user.name} for rework: ${reason}`, type: "WARNING", resourceType: "WORK_ORDER", resourceId: id });
+        }
+        if (portalUserId) {
+          await notify({ userId: portalUserId, title: "Work order returned", message: `Work order ${code} was returned for rework. Reason: ${reason}`, type: "WARNING", resourceType: "WORK_ORDER", resourceId: id });
         }
         return ok(updated);
       }

@@ -10,9 +10,8 @@ generator client {
 
 datasource db {
   // NOTE: the running datastore is the SQLite file DB (db/custom.db, see .env).
-  // Production may point PostgreSQL — flip provider + DATABASE_URL together;
-  // the CLI rejects a postgres:// provider with a file: URL.
-  provider = "sqlite"
+  // Production points PostgreSQL — provider + DATABASE_URL together.
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -746,6 +745,13 @@ model Complaint {
   completedAt          DateTime?
   confirmedAt          DateTime?
   closedAt             DateTime?
+  // Complaint–Work Order control (work-order lifecycle spec): once a work order
+  // is linked the original complaint is locked (immutable) and its status is
+  // driven exclusively by that work order. Closure is recorded with its source
+  // so an automatic WORK_ORDER closure is distinguishable from a manual one.
+  lockedAt             DateTime?
+  closureSource        String             @default("") // "" | WORK_ORDER
+  closedByWorkOrderId  String?
   resolutionNotes      String             @default("")
   customerFeedback     String             @default("")
   customerRating       Int?
@@ -821,10 +827,18 @@ model WorkOrder {
   priority            String             @default("MEDIUM")
   // GENERAL | COMPLAINT | PM | CORRECTIVE (PM §22 — PM jobs reuse the canonical work-order system)
   sourceType          String             @default("GENERAL")
-  status              String             @default("PENDING") // PENDING | ACCEPTED | IN_PROGRESS | ON_HOLD | COMPLETED | CANCELLED
+  status              String             @default("PENDING") // PENDING | ACCEPTED | IN_PROGRESS | ON_HOLD | COMPLETED | CLOSED | CANCELLED
   scheduledDate       DateTime?
   startedAt           DateTime?
   completedAt         DateTime?
+  // Review → closure (work-order lifecycle spec): a technician completing the
+  // job only SUBMITS it for review. A supervisor/manager closes (approves) it;
+  // that final CLOSED transition is what closes the linked complaint.
+  closedAt            DateTime?
+  approvedAt          DateTime?
+  approvedById        String?
+  reopenedAt          DateTime?
+  reopenReason        String             @default("")
   labourHours         Float              @default(0)
   labourRateCents     Int                @default(0)
   labourTotalCents    Int                @default(0)
@@ -876,6 +890,16 @@ model WorkOrderChecklistItem {
   unit                String  @default("") // observation unit for NUMERIC (V, A, °C, bar…)
   requiresPhoto       Boolean @default(false) // completion validation demands a checklist photo
   failRequiresFinding Boolean @default(false) // a FAIL/NO answer must carry a technician note
+
+  // ── Task lifecycle: PENDING | IN_PROGRESS | COMPLETED | NOT_APPLICABLE | BLOCKED.
+  // done is a derived mirror (done=true only for COMPLETED). Removal is soft.
+  status        String   @default("PENDING")
+  statusReason  String   @default("")
+  group         String   @default("")
+  completedById String?
+  removedAt     DateTime?
+  removedById   String?
+  removalReason String   @default("")
 }
 
 model WorkOrderMaterial {
@@ -1088,6 +1112,11 @@ model ChecklistInstance {
   approvedById     String?
   approvedAt       DateTime?
   rejectedReason   String             @default("")
+  // Checklist lifecycle timestamps on the attached Work Order execution.
+  submittedAt      DateTime?
+  reviewedAt       DateTime?
+  reviewedById     String?
+  reviewNotes      String             @default("")
   // §30/§63 — AI summary derived ONLY from recorded results (never invented).
   aiSummary        String             @default("")
   aiSummaryAt      DateTime?
@@ -3191,4 +3220,176 @@ model DocumentTemplateSnapshot {
   @@unique([entityType, entityId])
   @@index([templateId])
   @@map("document_template_snapshots")
+}
+
+// ─────────────────────────── WHATSAPP AI CONVERSATIONAL LAYER ────────────────
+// AI-powered conversational assistant for WhatsApp (spec §1-§47). Additive only;
+// existing tables untouched. One conversation per WhatsApp chatId.
+
+model AiConversation {
+  id            String   @id @default(cuid())
+  chatId        String   @unique // canonical "<digits>@c.us"
+  contactId     String?
+  customerId    String?
+  // AI = bot drives, HUMAN = human handoff (bot silent), HYBRID = AI suggests human sends, CLOSED = archived
+  state         String   @default("AI") // AI | HUMAN | HYBRID | CLOSED
+  mode          String   @default("AI") // AI | HUMAN | HYBRID
+  intent        String   @default("") // detected intent
+  confidence    String   @default("") // HIGH | MEDIUM | LOW
+  // Information still needed to complete the current workflow
+  missingInfo   String   @default("[]") // JSON string[]
+  // Questions already asked / answered this conversation
+  questionsAnswered String @default("{}") // JSON {questionId: answer}
+  // Extracted entities (location, equipment, category, issue, urgency, …)
+  entities      String   @default("{}") // JSON
+  lastMessageAt DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  messages      AiMessage[]
+  toolCalls     AiToolCall[]
+  actions       AiAction[]
+  handovers     AiHandover[]
+  summaries     AiSummary[]
+
+  @@index([state])
+  @@index([customerId])
+  @@index([chatId])
+  @@map("ai_conversations")
+}
+
+model AiMessage {
+  id            String   @id @default(cuid())
+  conversationId String
+  conversation  AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  chatId        String
+  // INBOUND | OUTBOUND
+  direction     String
+  // user | assistant | system | tool
+  role          String
+  content       String
+  intent        String   @default("")
+  confidence    String   @default("")
+  provider      String   @default("")
+  model         String   @default("")
+  tokens        Int      @default(0)
+  // Links this assistant message to the tool call it resulted from
+  toolCallId    String?
+  toolCall      AiToolCall? @relation("AiToolCallMessages", fields: [toolCallId], references: [id], onDelete: SetNull)
+  createdAt     DateTime @default(now())
+
+  @@index([conversationId, createdAt])
+  @@index([chatId, createdAt])
+  @@map("ai_messages")
+}
+
+model AiToolCall {
+  id            String   @id @default(cuid())
+  conversationId String
+  conversation  AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  toolName      String   // getCustomer | getComplaints | getWorkOrder | getEquipment | getInvoice | getQuotation | getAppointment
+  args          String   @default("{}") // JSON
+  result        String   @default("{}") // JSON
+  status        String   @default("PENDING") // PENDING | SUCCESS | FAILED
+  error         String   @default("")
+  durationMs    Int      @default(0)
+  createdAt     DateTime @default(now())
+  messages      AiMessage[] @relation("AiToolCallMessages")
+
+  @@index([conversationId, createdAt])
+  @@index([toolName, status])
+  @@map("ai_tool_calls")
+}
+
+model AiAction {
+  id            String   @id @default(cuid())
+  conversationId String
+  conversation  AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  // CREATE_COMPLAINT | CREATE_WORK_ORDER | ...
+  actionType    String
+  payload       String   @default("{}") // JSON — proposed action details
+  // PROPOSED | APPROVED | REJECTED | EXECUTED | FAILED
+  status        String   @default("PROPOSED")
+  approvedById  String?
+  approvedAt    DateTime?
+  result        String   @default("{}") // JSON — backend result (complaint code, etc.)
+  error         String   @default("")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  approvals AiApproval[]
+  @@index([conversationId, status])
+  @@index([actionType])
+  @@map("ai_actions")
+}
+
+model AiApproval {
+  id        String   @id @default(cuid())
+  actionId  String
+  action    AiAction @relation(fields: [actionId], references: [id], onDelete: Cascade)
+  // APPROVED | REJECTED
+  decision  String
+  comment   String   @default("")
+  byUserId  String
+  createdAt DateTime @default(now())
+
+  @@index([actionId])
+  @@map("ai_approvals")
+}
+
+model AiHandover {
+  id            String   @id @default(cuid())
+  conversationId String
+  conversation  AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  reason        String   @default("") // HUMAN_REQUEST | AI_FAILURE | MANUAL | ESCALATION
+  assignedToId  String?
+  // PENDING | ACTIVE | RESOLVED
+  status        String   @default("PENDING")
+  createdAt     DateTime @default(now())
+  resolvedAt    DateTime?
+
+  @@index([conversationId])
+  @@index([status])
+  @@map("ai_handovers")
+}
+
+model AiSummary {
+  id            String   @id @default(cuid())
+  conversationId String
+  conversation  AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  content       String
+  version       Int      @default(1)
+  messageCount  Int      @default(0)
+  createdAt     DateTime @default(now())
+
+  @@index([conversationId])
+  @@map("ai_summaries")
+}
+
+model AiRateLimit {
+  id        String   @id @default(cuid())
+  scope     String   // customer | conversation | provider
+  key       String   @unique // e.g. "customer:<id>" | "conversation:<chatId>" | "provider:<provider>"
+  count     Int      @default(0)
+  windowStart DateTime @default(now())
+  resetAt   DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([scope])
+  @@index([resetAt])
+  @@map("ai_rate_limits")
+}
+
+model AiKnowledgeBase {
+  id          String   @id @default(cuid())
+  title       String
+  content     String
+  category    String   @default("GENERAL") // COMPANY | SERVICES | CATEGORIES | PROCEDURES | FAQ | POLICIES
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([category, active])
+  @@map("ai_knowledge_base")
 }

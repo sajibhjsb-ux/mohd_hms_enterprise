@@ -27,13 +27,14 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { BeforeWorkPanel } from "@/components/hms/modules/work-orders/before-work-panel";
+import { ChecklistItemEvidence } from "@/components/hms/modules/work-orders/checklist-item-evidence";
 import { ClientApiError } from "@/lib/hms/api-client";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
-  ArrowUpRight, CircleDollarSign, Hammer, ListChecks, PauseCircle, PlayCircle, Plus, Sparkles, Trash2, Wrench,
+  ArrowUpRight, CheckCircle2, CircleDollarSign, Hammer, ListChecks, PauseCircle, PlayCircle, Plus, Sparkles, Trash2, Wrench,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -57,8 +58,11 @@ type WORow = {
 type ChecklistItem = {
   id: string;
   label: string;
+  status: string; // PENDING | IN_PROGRESS | COMPLETED | NOT_APPLICABLE | BLOCKED
+  statusReason: string;
   done: boolean;
   doneAt: string | null;
+  completedById: string | null;
   sortOrder: number;
   required: boolean;
   responseType: string; // CHECKBOX | PASSFAIL | YESNO | NUMERIC | TEXT
@@ -69,6 +73,9 @@ type ChecklistItem = {
   expectedResult: string;
   origin: string;
   priority: string;
+  group: string;
+  requiresPhoto: boolean;
+  removedAt: string | null;
 };
 type MaterialRow = {
   id: string; name: string; quantity: number; unit: string; unitCostCents: number; totalCents: number;
@@ -81,6 +88,11 @@ type WODetail = WORow & {
   customerId: string;
   startedAt: string | null;
   completedAt: string | null;
+  closedAt?: string | null;
+  approvedAt?: string | null;
+  approvedById?: string | null;
+  reopenedAt?: string | null;
+  reopenReason?: string;
   labourHours: number;
   labourRateCents: number;
   labourTotalCents: number;
@@ -91,6 +103,16 @@ type WODetail = WORow & {
 
 type WOMaterialForm = { name: string; qty: string; cost: string };
 
+function statusVariant(status: string) {
+  switch (status) {
+    case "COMPLETED": return "default";
+    case "IN_PROGRESS": return "secondary";
+    case "NOT_APPLICABLE": return "outline";
+    case "BLOCKED": return "destructive";
+    default: return "outline";
+  }
+}
+
 // ── Page ──
 
 export function WorkOrderDetailPage({ id }: { id: string }) {
@@ -100,6 +122,7 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
   const canUpdate = hasPerm(user, PERMISSIONS.work_orders_update);
   const canAssign = hasPerm(user, PERMISSIONS.work_orders_assign);
   const canComplete = hasPerm(user, PERMISSIONS.work_orders_complete);
+  const isSupervisor = ["SUPER_ADMIN", "ADMIN", "SUPERVISOR"].includes(user?.role ?? "");
 
   const [detail, setDetail] = useState<WODetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -108,6 +131,7 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
 
   // Embedded editors (formerly dialog-local state — now page state).
   const [completeNote, setCompleteNote] = useState("");
+  const [reopenReason, setReopenReason] = useState("");
   const [newItem, setNewItem] = useState("");
   const [matForm, setMatForm] = useState<WOMaterialForm>({ name: "", qty: "1", cost: "0" });
   const [labourHours, setLabourHours] = useState("0");
@@ -172,11 +196,17 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
     }
   }, [detail, refreshDetail, toast]);
 
-  async function patchChecklist(item: ChecklistItem, patch: { done?: boolean; response?: string; notes?: string }) {
+  async function patchChecklist(item: ChecklistItem, patch: { done?: boolean; response?: string; notes?: string; status?: string; statusReason?: string }) {
     if (!detail) return;
     setBusy(true);
     try {
-      await api.patch(`/api/v1/work-orders/${detail.id}/checklist`, { itemId: item.id, ...patch });
+      const body: Record<string, unknown> = {};
+      if (patch.done !== undefined) body.status = patch.done ? "COMPLETED" : "PENDING";
+      if (patch.response !== undefined) body.response = patch.response;
+      if (patch.notes !== undefined) body.notes = patch.notes;
+      if (patch.status !== undefined) body.status = patch.status;
+      if (patch.statusReason !== undefined) body.statusReason = patch.statusReason;
+      await api.patch(`/api/v1/work-orders/${detail.id}/checklist/${item.id}`, body);
       await refreshDetail();
     } catch (e) {
       toast({ title: "Could not update checklist", description: e instanceof Error ? e.message : undefined, variant: "destructive" });
@@ -187,6 +217,35 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
 
   async function toggleChecklist(item: ChecklistItem, done: boolean) {
     await patchChecklist(item, { done });
+  }
+
+  async function setItemStatus(item: ChecklistItem, status: string) {
+    if (!detail) return;
+    const reason =
+      status === "NOT_APPLICABLE" || status === "BLOCKED"
+        ? window.prompt(`Reason for ${status.toLowerCase()}:`)
+        : null;
+    if (reason === null) return;
+    if ((status === "NOT_APPLICABLE" || status === "BLOCKED") && !reason?.trim()) {
+      toast({ title: "Reason required", description: `${status} needs a reason.`, variant: "destructive" });
+      return;
+    }
+    await patchChecklist(item, { status, statusReason: status === "PENDING" ? "" : reason ?? undefined });
+  }
+
+  async function removeChecklistItem(item: ChecklistItem) {
+    if (!detail) return;
+    const reason = window.prompt(`Reason for removing “${item.label}”:`);
+    if (!reason?.trim()) return;
+    setBusy(true);
+    try {
+      await api.del(`/api/v1/work-orders/${detail.id}/checklist/${item.id}?${qs({ reason: reason.trim() })}`);
+      await refreshDetail();
+    } catch (e) {
+      toast({ title: "Could not remove item", description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function addChecklistItem() {
@@ -266,11 +325,15 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
   const isAssignedTech = !!detail && !!user && detail.technician?.user?.id === user.id;
   const canOperate = !!detail && (isAssignedTech || canUpdate);
   const woStatus = detail?.status;
-  const woEditable = !!woStatus && !["COMPLETED", "CANCELLED"].includes(woStatus);
+  const woEditable = !!woStatus && !["COMPLETED", "CLOSED", "CANCELLED"].includes(woStatus);
   const canEditLabour = woStatus === "IN_PROGRESS" && canOperate;
-  const checklistDone = (detail?.checklist ?? []).filter((c) => c.done).length;
-  const requiredPending = (detail?.checklist ?? []).filter(
-    (c) => c.required && (!c.done || (c.responseType !== "CHECKBOX" && c.response.trim() === ""))
+  const checklist = detail?.checklist ?? [];
+  const checklistDone = checklist.filter((c) => c.status === "COMPLETED").length;
+  const checklistInProgress = checklist.filter((c) => c.status === "PENDING" || c.status === "IN_PROGRESS").length;
+  const checklistBlocked = checklist.filter((c) => c.status === "BLOCKED").length;
+  const checklistNA = checklist.filter((c) => c.status === "NOT_APPLICABLE").length;
+  const requiredPending = checklist.filter(
+    (c) => c.required && c.status !== "COMPLETED" && c.status !== "NOT_APPLICABLE"
   ).length;
 
   if (loading && !detail) {
@@ -314,7 +377,7 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
     >
       <div className="grid gap-4 lg:grid-cols-3">
         {/* ── Main column ── */}
-        <div className="lg:col-span-2 space-y-4">
+        <div className="order-2 min-w-0 space-y-4 lg:order-1 lg:col-span-2">
           {/* Central QR verification identity (ch.35 §18) */}
           <QrSection entityType="WORK_ORDER" entityId={detail.id} label="QR Verification — work order authenticity" />
 
@@ -344,7 +407,7 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
                 <button
                   type="button"
                   onClick={() => navigateTo("complaints", [detail.complaint!.id])}
-                  className="text-xs text-muted-foreground hover:text-foreground hover:underline underline-offset-2"
+                  className="inline-flex min-h-11 items-center text-xs text-muted-foreground hover:text-foreground hover:underline underline-offset-2"
                 >
                   Complaint {detail.complaint.code}
                 </button>
@@ -378,27 +441,36 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
             ) : null}
 
             {/* Totals */}
-            <div className="grid grid-cols-3 gap-3">
-              <div className="rounded-lg border p-3">
-                <p className="text-xs text-muted-foreground uppercase tracking-wide">Labour</p>
-                <p className="font-semibold tabular-nums">{money(detail.labourTotalCents)}</p>
-                <p className="text-xs text-muted-foreground">{detail.labourHours}h × {money(detail.labourRateCents)}/h</p>
+            <div className="grid grid-cols-1 min-[380px]:grid-cols-3 gap-2 sm:gap-3">
+              <div className="rounded-lg border p-2.5 sm:p-3">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wide sm:text-xs">Labour</p>
+                <p className="font-semibold tabular-nums break-words">{money(detail.labourTotalCents)}</p>
+                <p className="text-[11px] text-muted-foreground sm:text-xs">{detail.labourHours}h × {money(detail.labourRateCents)}/h</p>
               </div>
-              <div className="rounded-lg border p-3">
-                <p className="text-xs text-muted-foreground uppercase tracking-wide">Materials</p>
-                <p className="font-semibold tabular-nums">{money(detail.materialsTotalCents)}</p>
-                <p className="text-xs text-muted-foreground">{detail.materials.length} item{detail.materials.length === 1 ? "" : "s"}</p>
+              <div className="rounded-lg border p-2.5 sm:p-3">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wide sm:text-xs">Materials</p>
+                <p className="font-semibold tabular-nums break-words">{money(detail.materialsTotalCents)}</p>
+                <p className="text-[11px] text-muted-foreground sm:text-xs">{detail.materials.length} item{detail.materials.length === 1 ? "" : "s"}</p>
               </div>
-              <div className="rounded-lg border p-3 bg-primary/5">
-                <p className="text-xs text-muted-foreground uppercase tracking-wide">Total</p>
-                <p className="font-semibold tabular-nums text-primary">{money(detail.totalCents)}</p>
+              <div className="rounded-lg border p-2.5 sm:p-3 bg-primary/5">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wide sm:text-xs">Total</p>
+                <p className="font-semibold tabular-nums text-primary break-words">{money(detail.totalCents)}</p>
               </div>
             </div>
           </div>
 
-          {/* §15/§18 — before-work evidence (feeds the Start Work gate) */}
-          {woEditable ? (
-            <BeforeWorkPanel workOrderId={detail.id} canUpload={canOperate} />
+          {/* §15/§18 — before-work evidence (feeds the Start Work gate). It stays
+              visible after completion as the permanent evidence record. */}
+          <BeforeWorkPanel workOrderId={detail.id} canUpload={canOperate && woEditable} />
+
+          {/* §15/§40 — completion evidence (required by the backend to complete).
+              Upload opens only after work starts; the record stays visible after. */}
+          {["IN_PROGRESS", "ON_HOLD", "COMPLETED", "CLOSED"].includes(woStatus ?? "") ? (
+            <BeforeWorkPanel
+              workOrderId={detail.id}
+              phase="AFTER"
+              canUpload={canOperate && woEditable}
+            />
           ) : null}
 
           {/* Checklist — §17/§20/§30: generated AFTER work-order creation from
@@ -409,16 +481,21 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
               <CardTitle className="text-base flex flex-wrap items-center justify-between gap-2">
                 <span className="flex items-center gap-2">
                   <ListChecks className="h-4 w-4 text-muted-foreground" aria-hidden />
-                  Checklist ({checklistDone}/{detail.checklist.length} done)
-                  {requiredPending > 0 ? (
+                  Checklist ({checklistDone}/{checklist.length} done)
+                  {checklistBlocked > 0 ? (
+                    <Badge variant="destructive" className="text-[10px]">{checklistBlocked} blocked</Badge>
+                  ) : checklistNA > 0 ? (
+                    <Badge className="bg-slate-600 text-[10px] text-white">{checklistNA} not applicable</Badge>
+                  ) : requiredPending > 0 ? (
                     <Badge variant="destructive" className="text-[10px]">{requiredPending} required pending</Badge>
-                  ) : detail.checklist.length > 0 ? (
+                  ) : checklist.length > 0 ? (
                     <Badge className="bg-emerald-600 text-[10px] text-white">Required complete</Badge>
                   ) : null}
+                  <span className="text-xs text-muted-foreground ml-auto">{checklistInProgress} in progress</span>
                 </span>
                 {canOperate && woEditable ? (
-                  <div className="flex items-center gap-2">
-                    <Badge variant="outline" className="text-[10px]">You can edit</Badge>
+                  <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+                    <Badge variant="outline" className="hidden text-[10px] sm:inline-flex">You can edit</Badge>
                     <Button
                       size="sm"
                       variant="outline"
@@ -448,110 +525,174 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
                 </div>
               ) : (
                 <ul className="space-y-1.5">
-                  {detail.checklist.map((item) => (
-                    <li key={item.id} className="rounded-lg border p-2.5 space-y-2">
-                      <div className="flex items-center gap-2.5">
-                        {item.responseType === "CHECKBOX" ? (
-                          <Checkbox
-                            checked={item.done}
-                            disabled={busy || !canOperate || !woEditable}
-                            onCheckedChange={(checked) => toggleChecklist(item, checked === true)}
-                            aria-label={`Toggle ${item.label}`}
-                          />
-                        ) : (
-                          <span
-                            className={cn(
-                              "flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px] font-semibold",
-                              item.done ? "border-emerald-600 bg-emerald-600 text-white" : "border-muted-foreground/40 text-muted-foreground"
-                            )}
-                            aria-hidden
-                          >
-                            {item.done ? "✓" : ""}
-                          </span>
-                        )}
-                        <span className={cn("text-sm flex-1", item.done && item.responseType === "CHECKBOX" && "line-through text-muted-foreground")}>
-                          {item.label}
-                          {item.required ? <span className="ml-1.5 text-[10px] font-semibold uppercase text-destructive">required</span> : null}
-                          {item.unit ? <span className="ml-1 text-[11px] text-muted-foreground">({item.unit})</span> : null}
-                        </span>
-                        {item.doneAt ? <span className="text-[11px] text-muted-foreground whitespace-nowrap">{fmtDateTime(item.doneAt)}</span> : null}
-                      </div>
-                      {/* §30 — rich recording for non-checkbox items (mirror of the
-                          backend PATCH validation: PASSFAIL/YESNO segmented, NUMERIC
-                          reading, TEXT observation; FAIL/NO demands a finding note). */}
-                      {item.responseType !== "CHECKBOX" && canOperate && woEditable ? (
-                        <div className="flex flex-wrap items-center gap-2 pl-7">
-                          {item.responseType === "PASSFAIL" || item.responseType === "YESNO" ? (
-                            <div className="flex items-center gap-1">
-                              {(item.responseType === "PASSFAIL" ? ["PASS", "FAIL"] : ["YES", "NO"]).map((opt) => (
-                                <button
-                                  key={opt}
-                                  type="button"
-                                  disabled={busy}
-                                  onClick={() => patchChecklist(item, { response: opt })}
-                                  className={cn(
-                                    "rounded-full border px-3 py-1 text-xs font-medium transition-colors min-h-[32px]",
-                                    item.response === opt
-                                      ? opt === "PASS" || opt === "YES"
-                                        ? "bg-emerald-600 text-white border-emerald-600"
-                                        : "bg-destructive text-white border-destructive"
-                                      : "border-input text-muted-foreground hover:bg-accent"
-                                  )}
-                                  aria-pressed={item.response === opt}
-                                >
-                                  {opt}
-                                </button>
-                              ))}
-                            </div>
-                          ) : item.responseType === "NUMERIC" ? (
-                            <Input
-                              type="number"
-                              inputMode="decimal"
-                              defaultValue={item.response}
-                              placeholder={`Reading${item.unit ? ` in ${item.unit}` : ""}`}
-                              className="h-9 max-w-[12rem]"
-                              onBlur={(e) => {
-                                const v = e.target.value.trim();
-                                if (v !== "" && v !== item.response) void patchChecklist(item, { response: v });
-                              }}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                              }}
-                              aria-label={`Reading for ${item.label}`}
+                  {detail.checklist.map((item) => {
+                    const canEditItem = canOperate && (woEditable || (isSupervisor && woStatus === "COMPLETED"));
+                    return (
+                      <li key={item.id} className="rounded-lg border p-2.5 space-y-2">
+                        <div className="flex flex-wrap items-start gap-2.5">
+                          {item.responseType === "CHECKBOX" ? (
+                            <Checkbox
+                              id={`checklist-${item.id}`}
+                              checked={item.done}
+                              disabled={busy || !canEditItem}
+                              onCheckedChange={(checked) => toggleChecklist(item, checked === true)}
+                              aria-label={`Toggle ${item.label}`}
                             />
                           ) : (
-                            <Input
-                              defaultValue={item.response}
-                              placeholder="Record observation…"
-                              className="h-9 max-w-md"
-                              onBlur={(e) => {
-                                const v = e.target.value.trim();
-                                if (v !== item.response) void patchChecklist(item, { response: v });
-                              }}
-                              aria-label={`Observation for ${item.label}`}
-                            />
+                            <span
+                              className={cn(
+                                "flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px] font-semibold",
+                                item.done ? "border-emerald-600 bg-emerald-600 text-white" : "border-muted-foreground/40 text-muted-foreground"
+                              )}
+                              aria-hidden
+                            >
+                              {item.done ? "✓" : ""}
+                            </span>
                           )}
-                          {item.failRequiresFinding || item.expectedResult ? (
-                            <Input
-                              defaultValue={item.notes}
-                              placeholder={item.expectedResult ? `Expected: ${item.expectedResult}` : "Finding note (required on FAIL/NO)…"}
-                              className="h-9 max-w-md flex-1"
-                              onBlur={(e) => {
-                                const v = e.target.value.trim();
-                                if (v !== item.notes) void patchChecklist(item, { notes: v });
-                              }}
-                              aria-label={`Notes for ${item.label}`}
-                            />
-                          ) : null}
+                          <div className="min-w-0 flex-1 basis-[12rem]">
+                            <div className="flex items-center gap-1.5">
+                              <span className={cn("text-sm", item.status === "COMPLETED" && "line-through text-muted-foreground")}>
+                                {item.label}
+                              </span>
+                              <Badge variant={statusVariant(item.status)} className="text-[10px]">
+                                {item.status}
+                              </Badge>
+                              {item.required ? <span className="ml-1.5 text-[10px] font-semibold uppercase text-destructive">required</span> : null}
+                              {item.group ? <span className="ml-1 text-[10px] text-muted-foreground">[{item.group}]</span> : null}
+                              {item.statusReason ? (
+                                <span className="ml-1 text-[10px] text-muted-foreground" title={item.statusReason}>
+                                  {item.statusReason}
+                                </span>
+                              ) : null}
+                            </div>
+                            {item.expectedResult ? (
+                              <p className="text-[10px] text-muted-foreground">{item.expectedResult}</p>
+                            ) : null}
+                          </div>
+                          <div className="ml-auto flex flex-col gap-1">
+                            {item.doneAt ? (
+                              <span className="text-[11px] text-muted-foreground whitespace-nowrap">{fmtDateTime(item.doneAt)}</span>
+                            ) : null}
+                            <div className="flex items-center gap-1">
+                              {canEditItem && item.status !== "COMPLETED" && (
+                                <>
+                                  <Button size="sm" variant="outline" onClick={() => setItemStatus(item, "COMPLETED")} disabled={busy}>
+                                    Complete
+                                  </Button>
+                                  <Button size="sm" variant="outline" onClick={() => setItemStatus(item, "NOT_APPLICABLE")} disabled={busy}>
+                                    N/A
+                                  </Button>
+                                  <Button size="sm" variant="outline" onClick={() => setItemStatus(item, "BLOCKED")} disabled={busy}>
+                                    Blocked
+                                  </Button>
+                                </>
+                              )}
+                              {((canEditItem && item.status === "IN_PROGRESS") || (isSupervisor && item.status === "COMPLETED")) ? (
+                                <Button size="sm" variant="outline" onClick={() => setItemStatus(item, "PENDING")} disabled={busy}>
+                                  Reopen
+                                </Button>
+                              ) : null}
+                              {((canEditItem || (isSupervisor && item.status === "COMPLETED")) && !item.required && item.status !== "COMPLETED") ? (
+                                <Button size="sm" variant="destructive" onClick={() => removeChecklistItem(item)} disabled={busy}>
+                                  Remove
+                                </Button>
+                              ) : null}
+                              {(isSupervisor && item.status === "COMPLETED") ? (
+                                <Button size="sm" variant="destructive" onClick={() => removeChecklistItem(item)} disabled={busy}>
+                                  Remove
+                                </Button>
+                              ) : null}
+                            </div>
+                          </div>
                         </div>
-                      ) : item.responseType !== "CHECKBOX" && item.response ? (
-                        <p className="pl-7 text-xs text-muted-foreground">
-                          Recorded: <span className="font-medium text-foreground">{item.response}</span>
-                          {item.notes ? ` — ${item.notes}` : ""}
-                        </p>
-                      ) : null}
-                    </li>
-                  ))}
+
+                        {/* §30 — rich recording for non-checkbox items. */}
+                        {item.responseType !== "CHECKBOX" && canEditItem ? (
+                          <div className="flex flex-wrap items-center gap-2 pl-0 sm:pl-7">
+                            {item.responseType === "PASSFAIL" || item.responseType === "YESNO" ? (
+                              <div className="flex items-center gap-1">
+                                {(item.responseType === "PASSFAIL" ? ["PASS", "FAIL"] : ["YES", "NO"]).map((opt) => (
+                                  <button
+                                    key={opt}
+                                    type="button"
+                                    disabled={busy}
+                                    onClick={() => patchChecklist(item, { response: opt })}
+                                    className={cn(
+                                      "rounded-full border px-3.5 py-1 text-xs font-medium transition-colors min-h-11",
+                                      item.response === opt
+                                        ? opt === "PASS" || opt === "YES"
+                                          ? "bg-emerald-600 text-white border-emerald-600"
+                                          : "bg-destructive text-white border-destructive"
+                                        : "border-input text-muted-foreground hover:bg-accent"
+                                    )}
+                                    aria-pressed={item.response === opt}
+                                  >
+                                    {opt}
+                                  </button>
+                                ))}
+                              </div>
+                            ) : item.responseType === "NUMERIC" ? (
+                              <Input
+                                type="number"
+                                inputMode="decimal"
+                                defaultValue={item.response}
+                                placeholder={`Reading${item.unit ? ` in ${item.unit}` : ""}`}
+                                className="h-9 max-w-[12rem]"
+                                disabled={busy || !canEditItem}
+                                onBlur={(e) => {
+                                  const v = e.target.value.trim();
+                                  if (v !== "" && v !== item.response) void patchChecklist(item, { response: v });
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                                }}
+                                aria-label={`Reading for ${item.label}`}
+                              />
+                            ) : (
+                              <Input
+                                defaultValue={item.response}
+                                placeholder="Record observation…"
+                                className="h-9 max-w-md"
+                                disabled={busy || !canEditItem}
+                                onBlur={(e) => {
+                                  const v = e.target.value.trim();
+                                  if (v !== item.response) void patchChecklist(item, { response: v });
+                                }}
+                                aria-label={`Observation for ${item.label}`}
+                              />
+                            )}
+                            {item.failRequiresFinding || item.expectedResult ? (
+                              <Input
+                                defaultValue={item.notes}
+                                placeholder={item.expectedResult ? `Expected: ${item.expectedResult}` : "Finding note (required on FAIL/NO)…"}
+                                className="h-9 max-w-md flex-1"
+                                disabled={busy || !canEditItem}
+                                onBlur={(e) => {
+                                  const v = e.target.value.trim();
+                                  if (v !== item.notes) void patchChecklist(item, { notes: v });
+                                }}
+                                aria-label={`Notes for ${item.label}`}
+                              />
+                            ) : null}
+                          </div>
+                        ) : item.responseType !== "CHECKBOX" && item.response ? (
+                          <p className="pl-7 text-xs text-muted-foreground">
+                            Recorded: <span className="font-medium text-foreground">{item.response}</span>
+                            {item.notes ? ` — ${item.notes}` : ""}
+                          </p>
+                        ) : null}
+
+                        {item.requiresPhoto && (
+                          <ChecklistItemEvidence
+                            workOrderId={detail.id}
+                            itemId={item.id}
+                            canUpload={canEditItem}
+                            requiresPhoto={item.requiresPhoto}
+                          />
+                        )}
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
               {canOperate && woEditable ? (
@@ -581,7 +722,30 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
               {detail.materials.length === 0 ? (
                 <p className="text-sm text-muted-foreground">No materials recorded.</p>
               ) : (
-                <div className="rounded-lg border overflow-x-auto">
+                <>
+                <div className="space-y-2 sm:hidden">
+                  {detail.materials.map((m) => (
+                    <div key={m.id} className="rounded-lg border p-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 text-sm font-medium break-words">
+                          {m.name}
+                          {m.inventoryItem ? <Badge variant="outline" className="ml-1.5 text-[10px]">stock</Badge> : null}
+                        </div>
+                        {canOperate && woEditable ? (
+                          <Button variant="ghost" size="icon" className="h-11 w-11 shrink-0" onClick={() => removeMaterial(m.id)} disabled={busy} aria-label={`Remove ${m.name}`}>
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
+                        ) : null}
+                      </div>
+                      <dl className="mt-2 grid grid-cols-3 gap-2 border-t pt-2 text-xs">
+                        <div><dt className="text-muted-foreground">Qty</dt><dd className="tabular-nums font-medium">{m.quantity}</dd></div>
+                        <div><dt className="text-muted-foreground">Unit</dt><dd className="tabular-nums font-medium">{money(m.unitCostCents)}</dd></div>
+                        <div className="text-right"><dt className="text-muted-foreground">Total</dt><dd className="tabular-nums font-semibold">{money(m.totalCents)}</dd></div>
+                      </dl>
+                    </div>
+                  ))}
+                </div>
+                <div className="hidden rounded-lg border overflow-x-auto sm:block">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
@@ -614,13 +778,14 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
                     </tbody>
                   </table>
                 </div>
+                </>
               )}
               {canOperate && woEditable ? (
                 <div className="grid grid-cols-2 sm:grid-cols-[1fr_90px_120px_auto] gap-2">
-                  <Input value={matForm.name} onChange={(e) => setMatForm((f) => ({ ...f, name: e.target.value }))} placeholder="Material name" maxLength={200} aria-label="Material name" />
+                  <Input className="col-span-2 sm:col-span-1" value={matForm.name} onChange={(e) => setMatForm((f) => ({ ...f, name: e.target.value }))} placeholder="Material name" maxLength={200} aria-label="Material name" />
                   <Input value={matForm.qty} onChange={(e) => setMatForm((f) => ({ ...f, qty: e.target.value }))} placeholder="Qty" inputMode="decimal" aria-label="Quantity" />
                   <Input value={matForm.cost} onChange={(e) => setMatForm((f) => ({ ...f, cost: e.target.value }))} placeholder="Cost (BND)" inputMode="decimal" aria-label="Unit cost in BND" />
-                  <Button variant="outline" onClick={addMaterial} disabled={busy}><Plus className="h-4 w-4 mr-1" /> Add</Button>
+                  <Button className="col-span-2 sm:col-span-1" variant="outline" onClick={addMaterial} disabled={busy}><Plus className="h-4 w-4 mr-1" /> Add</Button>
                 </div>
               ) : null}
             </CardContent>
@@ -651,8 +816,8 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
           ) : null}
         </div>
 
-        {/* ── Workflow action column ── */}
-        <div className="space-y-3">
+        {/* ── Workflow action column (first on phones so actions are reachable) ── */}
+        <div className="order-1 min-w-0 space-y-3 lg:order-2">
           <div className="rounded-xl border bg-card shadow-sm p-4 space-y-3">
             <p className="text-xs uppercase tracking-wide text-muted-foreground">Workflow actions</p>
 
@@ -703,7 +868,44 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
                 ) : null}
                 <Textarea id="wo-complete-note" value={completeNote} onChange={(e) => setCompleteNote(e.target.value)} placeholder="Summary of work performed…" rows={2} />
                 <Button disabled={busy} onClick={() => runTransition("complete", { note: completeNote || undefined })} className="w-full">
-                  <Hammer className="h-4 w-4 mr-1.5" /> Mark Completed
+                  <Hammer className="h-4 w-4 mr-1.5" /> Submit for Review
+                </Button>
+                <p className="text-[11px] text-muted-foreground">
+                  A supervisor/manager must review and approve before the work order — and its linked complaint — is closed and invoiced.
+                </p>
+              </div>
+            ) : null}
+
+            {woStatus === "COMPLETED" ? (
+              <div className="rounded-lg border p-3 space-y-2">
+                <p className="text-sm font-medium">Submitted — awaiting supervisor review</p>
+                <p className="text-xs text-muted-foreground">
+                  The work is finished and evidence is locked. Approve to close the work order, close the linked complaint, and release invoicing.
+                </p>
+                {canAssign ? (
+                  <>
+                    <Label htmlFor="wo-approve-note" className="text-xs uppercase tracking-wide text-muted-foreground">Approval note (optional)</Label>
+                    <Textarea id="wo-approve-note" value={completeNote} onChange={(e) => setCompleteNote(e.target.value)} placeholder="Reviewed and approved…" rows={2} />
+                    <Button disabled={busy} onClick={() => runTransition("close", { note: completeNote || undefined })} className="w-full">
+                      <CheckCircle2 className="h-4 w-4 mr-1.5" /> Approve &amp; Close
+                    </Button>
+                  </>
+                ) : (
+                  <p className="text-xs text-muted-foreground">Only a supervisor or manager can approve and close.</p>
+                )}
+              </div>
+            ) : null}
+
+            {woStatus === "CLOSED" && canAssign ? (
+              <div className="rounded-lg border p-3 space-y-2">
+                <p className="text-sm font-medium">Reopen work order</p>
+                <p className="text-xs text-muted-foreground">
+                  Reopens the work order and its closed complaint. A new completion and approval cycle is required.
+                </p>
+                <Label htmlFor="wo-reopen-reason" className="text-xs uppercase tracking-wide text-muted-foreground">Reason (required)</Label>
+                <Textarea id="wo-reopen-reason" value={reopenReason} onChange={(e) => setReopenReason(e.target.value)} placeholder="Why does this work need to be reopened?" rows={2} />
+                <Button variant="outline" disabled={busy || reopenReason.trim().length < 3} onClick={() => runTransition("reopen", { reason: reopenReason.trim() })} className="w-full">
+                  Reopen Work Order
                 </Button>
               </div>
             ) : null}
@@ -717,13 +919,11 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
               </div>
             ) : null}
 
-            {!(woStatus && ["PENDING", "ACCEPTED", "IN_PROGRESS", "ON_HOLD"].includes(woStatus) && (isAssignedTech || canUpdate || canComplete || canAssign)) ? (
+            {!(woStatus && ["PENDING", "ACCEPTED", "IN_PROGRESS", "ON_HOLD"].includes(woStatus) && (isAssignedTech || canUpdate || canComplete || canAssign)) && woStatus !== "COMPLETED" && woStatus !== "CLOSED" ? (
               <p className="text-sm text-muted-foreground">
-                {woStatus === "COMPLETED"
-                  ? "This work order is completed — record is read-only."
-                  : woStatus === "CANCELLED"
-                    ? "This work order was cancelled — record is read-only."
-                    : "No workflow actions available for your role."}
+                {woStatus === "CANCELLED"
+                  ? "This work order was cancelled — record is read-only."
+                  : "No workflow actions available for your role."}
               </p>
             ) : null}
           </div>
@@ -736,7 +936,7 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
                 <CircleDollarSign className="h-4 w-4 text-primary" aria-hidden /> {money(detail.totalCents)}
               </span>
             </div>
-            <p className="text-xs text-muted-foreground">Labour and materials feed the customer invoice once the work order is completed.</p>
+            <p className="text-xs text-muted-foreground">Labour and materials feed the customer invoice once the work order is approved and closed.</p>
           </div>
         </div>
       </div>

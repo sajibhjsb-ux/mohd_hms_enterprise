@@ -11,7 +11,7 @@ import { db } from "@/lib/db";
 import { ApiError, Errors } from "@/lib/hms/api";
 import { audit, notify, notifyRole } from "@/lib/hms/services";
 import { isAutomationEnabled, automationNumber } from "@/lib/hms/workflows/settings";
-import { buildChecklistContext, contextFingerprint, type ChecklistContext } from "./context";
+import { buildChecklistContext, canonicalizeCategory, contextFingerprint, inferCategory, inferWorkType, type ChecklistContext } from "./context";
 import { CHECKLIST_PROMPT_VERSION, buildChecklistPrompt, buildSummaryPrompt } from "./prompt";
 import { callChecklistAi, callChecklistSummaryAi } from "./ai";
 import { validateAiChecklist, validateManualItem } from "./validate";
@@ -19,24 +19,41 @@ import { parseChecklistItems, type ChecklistItemSpec, type ChecklistOrigin, type
 
 // ── Template library ─────────────────────────────────────────────────────────
 
-/** Find the best approved template for a context: category+workType first, then category, then workType. */
-export async function findBestTemplate(ctx: { category: string; workType: string }): Promise<{ id: string; name: string; version: number; items: ChecklistItemSpec[]; approvalRequired: boolean } | null> {
-  const templates = await db.checklistTemplate.findMany({
+type TemplateRow = {
+  id: string; name: string; version: number; items: string; category: string; workType: string; equipmentCategory: string; approvalRequired: boolean;
+};
+
+function parseTemplateRow(t: TemplateRow) {
+  return {
+    id: t.id, name: t.name, version: t.version,
+    items: parseChecklistItems(t.items), approvalRequired: t.approvalRequired,
+  };
+}
+
+/** Find the best approved template for a context inside the caller's transaction. */
+async function findBestTemplateTx(tx: Parameters<Parameters<typeof db.$transaction>[0]>[0], ctx: { category: string; workType: string }) {
+  const templates = await tx.checklistTemplate.findMany({
     where: { status: "ACTIVE" },
     orderBy: [{ category: "asc" }, { workType: "asc" }],
     take: 200,
     select: { id: true, name: true, version: true, items: true, category: true, workType: true, equipmentCategory: true, approvalRequired: true },
   });
   if (templates.length === 0) return null;
-  const parse = (t: (typeof templates)[number]) => ({ id: t.id, name: t.name, version: t.version, items: parseChecklistItems(t.items), approvalRequired: t.approvalRequired });
-  const exact = templates.find((t) => t.category === ctx.category && t.workType === ctx.workType);
-  if (exact) return parse(exact);
-  const catOnly = templates.find((t) => t.category === ctx.category);
-  if (catOnly) return parse(catOnly);
-  const typeOnly = templates.find((t) => t.workType === ctx.workType);
-  if (typeOnly) return parse(typeOnly);
-  const general = templates.find((t) => t.category === "GENERAL" && t.workType === "GENERAL");
-  return general ? parse(general) : null;
+  const category = canonicalizeCategory(ctx.category);
+  const workType = ctx.workType;
+  const exact = templates.find((t) => canonicalizeCategory(t.category) === category && t.workType === workType);
+  if (exact) return parseTemplateRow(exact);
+  const catOnly = templates.find((t) => canonicalizeCategory(t.category) === category);
+  if (catOnly) return parseTemplateRow(catOnly);
+  const typeOnly = templates.find((t) => t.workType === workType);
+  if (typeOnly) return parseTemplateRow(typeOnly);
+  const general = templates.find((t) => canonicalizeCategory(t.category) === "GENERAL" && t.workType === "GENERAL");
+  return general ? parseTemplateRow(general) : null;
+}
+
+/** Find the best approved template for a context: category+workType first, then category, then workType. */
+export async function findBestTemplate(ctx: { category: string; workType: string }): Promise<{ id: string; name: string; version: number; items: ChecklistItemSpec[]; approvalRequired: boolean } | null> {
+  return findBestTemplateTx(db, ctx);
 }
 
 async function loadTemplateById(templateId: string) {
@@ -101,7 +118,7 @@ export async function materializeInstance(tx: Parameters<Parameters<typeof db.$t
   if (["COMPLETED", "CANCELLED"].includes(wo.status)) {
     throw Errors.invalidTransition(`Checklists cannot be attached to a ${wo.status.toLowerCase()} work order.`);
   }
-  const existing = await tx.workOrderChecklistItem.count({ where: { workOrderId: wo.id } });
+  const existing = await tx.workOrderChecklistItem.count({ where: { workOrderId: wo.id, removedAt: null } });
   if (existing > 0) {
     throw Errors.conflict(`Work order ${wo.code} already has ${existing} checklist item(s). Attach is blocked to protect the existing checklist snapshot.`);
   }
@@ -199,6 +216,129 @@ async function persistDraft(opts: {
     }
     return { id: instance.id, code: instance.code, status: instance.status };
   });
+}
+
+// Built-in fallback used only when no approved database template matches.
+export const GENERAL_FALLBACK_ITEMS: ChecklistItemSpec[] = [
+  { label: "Confirm reported fault and scope", required: true, responseType: "CHECKBOX", priority: "IMPORTANT" },
+  { label: "Identify root cause", required: true, responseType: "CHECKBOX", priority: "IMPORTANT" },
+  { label: "Perform approved corrective action", required: true, responseType: "CHECKBOX", priority: "IMPORTANT" },
+  { label: "Functional test after work", required: true, responseType: "PASSFAIL", priority: "CRITICAL", failRequiresFinding: true },
+  { label: "Clean work area", required: true, responseType: "CHECKBOX", priority: "ROUTINE" },
+  { label: "Record final result and notes", required: true, responseType: "TEXT", priority: "ROUTINE" },
+];
+
+/**
+ * Create the initial Work Order checklist inside the same transaction that
+ * creates the Work Order. Idempotent: retries and the workflow event handler
+ * return the existing result instead of duplicating instances or items.
+ */
+export async function ensureChecklistForNewWorkOrderTx(
+  tx: Parameters<Parameters<typeof db.$transaction>[0]>[0],
+  input: {
+    workOrderId: string;
+    title: string;
+    description: string;
+    sourceType: string;
+    complaintId?: string | null;
+    complaintTitle?: string | null;
+    complaintDescription?: string | null;
+    equipmentCategory?: string | null;
+    manualLabels?: string[];
+    actorId?: string | null;
+  },
+): Promise<{ instanceId: string | null; created: boolean; origin: string; itemCount: number }> {
+  const enabled = await isAutomationEnabled("auto_checklist_for_work_orders");
+  if (!enabled) {
+    return { instanceId: null, created: false, origin: "SKIPPED", itemCount: 0 };
+  }
+
+  const existingItems = await tx.workOrderChecklistItem.count({ where: { workOrderId: input.workOrderId } });
+  const existingInstance = await tx.checklistInstance.findFirst({
+    where: { workOrderId: input.workOrderId },
+    orderBy: { createdAt: "desc" },
+  });
+  if (existingItems > 0 || existingInstance) {
+    return {
+      instanceId: existingInstance?.id ?? null,
+      created: false,
+      origin: existingInstance?.origin ?? "EXISTING",
+      itemCount: existingItems,
+    };
+  }
+
+  let items: ChecklistItemSpec[];
+  let origin: ChecklistOrigin = "TEMPLATE";
+  let templateId: string | null = null;
+  let templateVersion: number | null = null;
+
+  if (input.complaintId) {
+    const approved = await tx.checklistInstance.findFirst({
+      where: { sourceType: "COMPLAINT", sourceId: input.complaintId, status: "APPROVED", workOrderId: null },
+      orderBy: { createdAt: "desc" },
+    });
+    if (approved) {
+      items = parseChecklistItems(approved.itemsJson);
+      if (items.length === 0) throw Errors.badRequest("Approved complaint checklist has no items to attach.");
+      origin = (approved.origin as ChecklistOrigin) ?? "MANUAL";
+      const instance = await tx.checklistInstance.create({
+        data: {
+          code: await nextChecklistCode(tx),
+          title: input.title,
+          sourceType: "WORK_ORDER",
+          sourceId: input.workOrderId,
+          workOrderId: input.workOrderId,
+          origin,
+          status: "ACTIVE",
+          itemsJson: approved.itemsJson,
+          templateId: approved.templateId,
+          templateVersion: approved.templateVersion,
+          createdById: input.actorId ?? null,
+          approvalRequired: false,
+        },
+      });
+      await materializeInstance(tx, instance.id, input.workOrderId);
+      return { instanceId: instance.id, created: true, origin, itemCount: items.length };
+    }
+  }
+
+  if (input.manualLabels?.length) {
+    items = input.manualLabels.map((label) => ({ label, required: true, responseType: "CHECKBOX", priority: "ROUTINE", origin: "MANUAL" as ChecklistOrigin }));
+    origin = "MANUAL";
+  } else {
+    const category = canonicalizeCategory(input.equipmentCategory ?? null)
+      || canonicalizeCategory(inferCategory(input.complaintTitle ?? "", input.complaintDescription ?? "", input.title, input.description));
+    const workType = inferWorkType(input.sourceType, input.title, input.description);
+    const template = await findBestTemplateTx(tx, { category, workType });
+    if (template) {
+      items = template.items.map((it) => ({ ...it, origin: "TEMPLATE" as ChecklistOrigin }));
+      origin = "TEMPLATE";
+      templateId = template.id;
+      templateVersion = template.version;
+    } else {
+      items = GENERAL_FALLBACK_ITEMS.map((it) => ({ ...it, origin: "MANUAL" as ChecklistOrigin }));
+      origin = "MANUAL";
+    }
+  }
+
+  const instance = await tx.checklistInstance.create({
+    data: {
+      code: await nextChecklistCode(tx),
+      title: input.title,
+      sourceType: "WORK_ORDER",
+      sourceId: input.workOrderId,
+      workOrderId: input.workOrderId,
+      origin,
+      status: "ACTIVE",
+      itemsJson: JSON.stringify(items),
+      templateId,
+      templateVersion,
+      createdById: input.actorId ?? null,
+      approvalRequired: false,
+    },
+  });
+  await materializeInstance(tx, instance.id, input.workOrderId);
+  return { instanceId: instance.id, created: true, origin, itemCount: items.length };
 }
 
 async function nextChecklistCode(tx: Parameters<Parameters<typeof db.$transaction>[0]>[0]): Promise<string> {
@@ -479,9 +619,9 @@ export async function autoAttachForComplaint(complaintId: string): Promise<strin
   if (!complaint || complaint.workOrders.length === 0) return "no work order for complaint yet";
   const instance = await findInstanceForSource("COMPLAINT", complaintId);
   if (!instance || instance.status !== "APPROVED" || instance.workOrderId) return `complaint checklist status=${instance?.status ?? "none"} — not attaching`;
-  const target = complaint.workOrders.find((w) => !["COMPLETED", "CANCELLED"].includes(w.status));
+  const target = complaint.workOrders.find((w) => !["COMPLETED", "CANCELLED", "CLOSED"].includes(w.status));
   if (!target) return "no open work order";
-  const items = await db.workOrderChecklistItem.count({ where: { workOrderId: target.id } });
+  const items = await db.workOrderChecklistItem.count({ where: { workOrderId: target.id, removedAt: null } });
   if (items > 0) return "work order already has checklist items";
   try {
     await db.$transaction(async (tx) => materializeInstance(tx, instance.id, target.id));
@@ -502,8 +642,8 @@ export async function autoAttachForComplaint(complaintId: string): Promise<strin
  */
 export async function autoGenerateForWorkOrder(workOrderId: string, actorEmail = "SYSTEM"): Promise<string> {
   const wo = await db.workOrder.findUnique({ where: { id: workOrderId }, select: { id: true, status: true } });
-  if (!wo || ["COMPLETED", "CANCELLED"].includes(wo.status)) return "work order not open";
-  const itemCount = await db.workOrderChecklistItem.count({ where: { workOrderId: wo.id } });
+  if (!wo || ["COMPLETED", "CANCELLED", "CLOSED"].includes(wo.status)) return "work order not open";
+  const itemCount = await db.workOrderChecklistItem.count({ where: { workOrderId: wo.id, removedAt: null } });
   if (itemCount > 0) return "work order already has checklist items";
   const existing = await db.checklistInstance.findFirst({ where: { workOrderId: wo.id }, select: { id: true, status: true } });
   if (existing) return `instance already ${existing.status}`;

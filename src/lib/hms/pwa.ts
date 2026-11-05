@@ -351,7 +351,22 @@ export async function enablePush(): Promise<{ ok: boolean; error?: string; trans
     if (status.fcm.configured && status.fcm.clientConfig) {
       const { enableFcm } = await import("@/lib/hms/push-client");
       const res = await enableFcm(status.fcm.clientConfig);
-      if (res.ok) return { ok: true, transport: "FCM" };
+      if (res.ok) {
+        // Clean up legacy VAPID subscription when using FCM to avoid duplicates
+        try {
+          if ("serviceWorker" in navigator) {
+            const registration = store.registration ?? (await navigator.serviceWorker.ready);
+            const sub = await registration.pushManager.getSubscription();
+            const endpoint = sub?.endpoint;
+            if (sub) await sub.unsubscribe();
+            if (endpoint) {
+              const { api } = await import("@/lib/hms/api-client");
+              await api.del("/api/v1/push/subscribe?endpoint=" + encodeURIComponent(endpoint)).catch(() => undefined);
+            }
+          }
+        } catch { /* best-effort */ }
+        return { ok: true, transport: "FCM" };
+      }
       return res;
     }
 
@@ -405,14 +420,4 @@ export async function disablePush(): Promise<void> {
       }
     }
   } catch { /* best-effort */ }
-}
-
-/** Register a background-sync flush for locally saved drafts (where supported). */
-export async function requestDraftSync(): Promise<void> {
-  try {
-    const registration = (navigator.serviceWorker && (store.registration ?? (await navigator.serviceWorker.ready))) as
-      | (ServiceWorkerRegistration & { sync?: { register: (tag: string) => Promise<void> } })
-      | null;
-    await registration?.sync?.register("hms-draft-flush");
-  } catch { /* Background Sync unsupported — online-flush covers it */ }
 }

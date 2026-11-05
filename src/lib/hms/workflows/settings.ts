@@ -46,7 +46,7 @@ export const AUTOMATION_SETTING_DEFAULTS = {
   /** §23: auto-generate a DRAFT checklist when a complaint is created (template-first). */
   auto_checklist_for_complaints: "off",
   /** §23: auto-attach/generate a checklist when a work order is created (template-first). */
-  auto_checklist_for_work_orders: "off",
+  auto_checklist_for_work_orders: "on",
   /** §24: NEW AI-generated checklists require supervisor approval before activation. */
   checklist_require_approval: "on",
   /** §59: maximum number of tasks the AI may produce (configurable, not hardcoded). */
