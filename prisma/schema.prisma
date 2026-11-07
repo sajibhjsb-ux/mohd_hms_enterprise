@@ -3393,3 +3393,42 @@ model AiKnowledgeBase {
   @@index([category, active])
   @@map("ai_knowledge_base")
 }
+
+// §CMS — Visual page builder. A page is a slug-addressed document whose
+// content is a page-builder JSON document (blocks/elements). Every publish
+// creates an immutable revision so previous versions stay recoverable.
+model Page {
+  id             String      @id @default(cuid())
+  slug           String      @unique
+  title          String
+  status         String      @default("DRAFT") // DRAFT | PUBLISHED | ARCHIVED
+  content        Json        @default("{}") // { blocks: [{ id, type, props, children }] }
+  seoTitle       String      @default("")
+  seoDescription String      @default("")
+  seoImage       String      @default("") // MinIO object key
+  publishedAt    DateTime?
+  updatedById    String?     // user id (stored denormalized; no User relation to keep the User model untouched)
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  revisions      PageRevision[] @relation("CmsPageRevisions")
+
+  @@index([slug, status])
+  @@map("cms_pages")
+}
+
+model PageRevision {
+  id            String   @id @default(cuid())
+  pageId        String
+  page          Page     @relation("CmsPageRevisions", fields: [pageId], references: [id], onDelete: Cascade)
+  version       Int
+  content       Json     @default("{}")
+  changeSummary String   @default("")
+  authorId      String?     // user id (stored denormalized; no User relation)
+  published     Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  @@index([pageId, version])
+  @@unique([pageId, version])
+  @@map("cms_page_revisions")
+}
