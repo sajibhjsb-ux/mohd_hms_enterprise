@@ -43,10 +43,6 @@ export function letterTypeLabel(type: string): string {
   return LETTER_TYPE_META[type as LetterType]?.label ?? type;
 }
 
-export function letterTypeSensitive(type: string): boolean {
-  return LETTER_TYPE_META[type as LetterType]?.sensitive ?? false;
-}
-
 // ── Template field model (§7) ──
 
 export const TEMPLATE_FIELD_TYPES = [
@@ -234,7 +230,6 @@ export const LETTER_AI_ACTION_LABEL: Record<LetterAiAction, string> = {
 // ── Workflow actions (§16) ──
 
 export const LETTER_WORKFLOW_ACTIONS = ["submit", "approve", "reject", "finalize", "send", "share", "archive", "reopen"] as const;
-export type LetterWorkflowAction = (typeof LETTER_WORKFLOW_ACTIONS)[number];
 
 // ── Template version DTO ──
 
@@ -244,17 +239,3 @@ export type LetterTemplateVersionDto = {
   createdByName: string;
   createdAt: string;
 };
-
-// ── Placeholder extraction (shared: template editor shows unresolved keys) ──
-
-export function extractPlaceholders(text: string): string[] {
-  const out = new Set<string>();
-  for (const m of text.matchAll(/\{\{([A-Z0-9_]+)\}\}/g)) out.add(m[1]);
-  return [...out];
-}
-
-// ── Storage layout (§23) — also used by QA scripts ──
-
-export function letterObjectPrefix(letterId: string, letterType: string, createdAt: Date): string {
-  return `letters/${createdAt.getFullYear()}/${letterType}/${letterId}`;
-}

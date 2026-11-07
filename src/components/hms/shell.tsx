@@ -282,7 +282,7 @@ export function AppShell() {
     <SelfSessionSync />
     {/* --hms-mobile-nav-h is measured by MobileNav (bar + safe-area + QR rise +
         gap) so the footer and every page element clear the floating bottom nav */}
-    <div className="min-h-screen flex flex-col bg-[radial-gradient(60rem_30rem_at_50%_-10%,oklch(0.95_0.05_152/0.6),transparent)] dark:bg-none pb-[var(--hms-mobile-nav-h,102px)] lg:pb-0">
+    <div className="min-h-screen flex flex-col overflow-x-hidden bg-[radial-gradient(60rem_30rem_at_50%_-10%,oklch(0.95_0.05_152/0.6),transparent)] dark:bg-none pb-[var(--hms-mobile-nav-h,102px)] lg:pb-0">
       <TopHeader
         onSearchNavigate={navigateFromSearch}
         onOpenQr={() => setQrOpen(true)}
@@ -313,14 +313,14 @@ export function AppShell() {
             <button
               type="button"
               onClick={() => navigateTo("terms")}
-              className="underline-offset-4 hover:underline hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
+              className="inline-flex min-h-11 items-center rounded-sm underline-offset-4 hover:underline hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               Terms &amp; Conditions
             </button>
             <button
               type="button"
               onClick={() => navigateTo("privacy")}
-              className="underline-offset-4 hover:underline hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
+              className="inline-flex min-h-11 items-center rounded-sm underline-offset-4 hover:underline hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               Privacy Policy
             </button>
@@ -328,12 +328,19 @@ export function AppShell() {
               href="https://www.mohdhms.com"
               target="_blank"
               rel="noopener noreferrer"
-              className="hidden sm:inline underline-offset-4 hover:underline hover:text-foreground"
+              className="hidden min-h-11 items-center underline-offset-4 hover:underline hover:text-foreground sm:inline-flex"
             >
               www.mohdhms.com
             </a>
-            <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700 border-emerald-200">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 mr-1 inline-block" aria-hidden /> System healthy
+            <Badge variant="outline" asChild className="text-[10px] bg-emerald-50 text-emerald-700 border-emerald-200">
+              <a
+                href="/email"
+                className="flex items-center gap-1 hover:text-emerald-800 hover:underline"
+                onClick={(e) => { e.preventDefault(); navigateTo("email"); }}
+              >
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 mr-1 inline-block" aria-hidden />
+                Mail status
+              </a>
             </Badge>
           </div>
         </div>

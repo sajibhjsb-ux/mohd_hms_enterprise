@@ -28,6 +28,9 @@ export const metadata: Metadata = {
     ],
     apple: "/brand/apple-touch-icon.png",
   },
+  // The app is a gated SPA: never index it. Public legal pages override this
+  // with `robots: { index: true }` in their own generateMetadata.
+  robots: { index: false, follow: false },
 };
 
 export const viewport: Viewport = {

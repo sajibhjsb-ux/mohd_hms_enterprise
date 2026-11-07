@@ -163,8 +163,3 @@ export function renderLetterModel(input: RenderInput): LetterPreviewModel {
     status: input.status,
   };
 }
-
-/** Fields available in template placeholder docs (for editor hint UI). */
-export function fieldKeys(fields: TemplateField[]): string[] {
-  return fields.map((f) => f.key);
-}

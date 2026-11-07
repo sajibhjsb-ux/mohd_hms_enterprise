@@ -160,7 +160,7 @@ export const POST = handler(
       title: "New user account created",
       message: `${created.name} (${created.email}) was added as ${created.role} by ${user.name}.`,
       type: "INFO",
-      resourceType: "USER",
+      resourceType: "USER_DIRECTORY",
       resourceId: created.id,
     });
 

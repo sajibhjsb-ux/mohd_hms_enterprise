@@ -156,7 +156,3 @@ export const AI_FEATURES: Record<string, AiFeatureDef> = {
 export function getAiFeature(id: string): AiFeatureDef | null {
   return AI_FEATURES[id] ?? null;
 }
-
-export function listAiFeatures(): AiFeatureDef[] {
-  return Object.values(AI_FEATURES);
-}

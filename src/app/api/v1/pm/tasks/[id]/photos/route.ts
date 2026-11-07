@@ -106,6 +106,9 @@ export const POST = withId(
     if (!(file instanceof File) || file.size <= 0) {
       throw Errors.badRequest("No file was uploaded (field name: file).");
     }
+    // Stable client id makes retries idempotent after a lost response.
+    const uploadIdRaw = form.get("uploadId");
+    const uploadId = typeof uploadIdRaw === "string" && /^[a-zA-Z0-9-]{8,64}$/.test(uploadIdRaw) ? uploadIdRaw.toLowerCase() : null;
 
     const buf = Buffer.from(await file.arrayBuffer());
     const sniffed = sniffMediaType(buf);
@@ -121,7 +124,13 @@ export const POST = withId(
       );
     }
 
-    const key = `pm/${task.id}/${phase}/${randomUUID()}.${sniffed.ext}`;
+    const key = `pm/${task.id}/${phase}/${uploadId ?? randomUUID()}.${sniffed.ext}`;
+    if (uploadId) {
+      const existing = await db.document.findFirst({
+        where: { storagePath: key, resourceType: "PM_TASK", resourceId: task.id },
+      });
+      if (existing) return ok(existing, 200);
+    }
     await storage.put(key, buf, sniffed.mime);
 
     const safeName = sanitizeFilename(file.name);

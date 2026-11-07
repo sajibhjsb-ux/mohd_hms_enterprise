@@ -44,7 +44,7 @@ export const POST = withIds(
     const wo = await db.workOrder.findUnique({ where: { id }, select: { id: true, code: true, status: true, customerId: true, technicianId: true } });
     if (!wo) throw Errors.notFound("Work order not found.");
     await assertViewWorkOrder(user, wo);
-    if (["COMPLETED", "CANCELLED"].includes(wo.status)) {
+    if (["COMPLETED", "CLOSED", "CANCELLED"].includes(wo.status)) {
       throw Errors.invalidTransition(`Materials cannot change on a ${wo.status.toLowerCase()} work order.`);
     }
 

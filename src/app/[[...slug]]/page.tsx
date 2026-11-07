@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { db } from "@/lib/db";
 import { SessionProvider } from "@/components/hms/session";
 import { Gate } from "@/components/hms/gate";
+import { NativeRuntime } from "@/lib/hms/native/runtime";
 
 type Params = { slug?: string[] };
 
@@ -45,6 +46,7 @@ export async function generateMetadata({ params }: { params: Promise<Params> }):
 export default function Page() {
   return (
     <SessionProvider>
+      <NativeRuntime />
       <Gate />
     </SessionProvider>
   );

@@ -159,7 +159,7 @@ export const POST = handler(async ({ req, user }) => {
       include: { materials: true, customer: { select: customerSelect } },
     });
     if (!wo) throw Errors.notFound("Work order not found.");
-    if (wo.status !== "COMPLETED") throw Errors.invalidTransition("Only completed work orders can be invoiced.");
+    if (!["COMPLETED", "CLOSED"].includes(wo.status)) throw Errors.invalidTransition("Only completed or closed work orders can be invoiced.");
     if (wo.invoiceId) throw Errors.conflict("This work order has already been invoiced.");
 
     const items: ComputedItem[] = [];

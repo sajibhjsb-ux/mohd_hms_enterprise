@@ -151,7 +151,7 @@ export function PmDashboard() {
               title="Open PM Work Orders" value={k.openPmWorkOrders} icon={<ClipboardList className="h-5 w-5" />} loading={loading}
               sub="Source: preventive maintenance" onClick={() => navigateTo("work-orders", [], { source: "pm" })}
             />
-            <div className="grid gap-3">
+            <div className="grid gap-3 min-w-0">
               <PctCard
                 title="Compliance" pct={data.compliancePct} loading={loading}
                 formula="Completed on time ÷ due occurrences within the window (skipped/cancelled excluded)."
@@ -231,9 +231,9 @@ export function PmDashboard() {
                         className="flex w-full flex-wrap sm:flex-nowrap items-center gap-x-3 gap-y-1 rounded-lg border px-3 py-2.5 min-h-[44px] text-left hover:bg-accent/60 transition-colors"
                       >
                         <span className="font-mono text-xs text-muted-foreground w-24 shrink-0">{t.code}</span>
-                        <span className="min-w-0 flex-1">
+                        <span className="min-w-0 flex-1 basis-full sm:basis-0">
                           <span className="block truncate text-sm font-medium">{t.plan?.name ?? "—"}</span>
-                          <span className="block truncate text-xs text-muted-foreground">
+                          <span className="block line-clamp-2 text-xs text-muted-foreground">
                             {t.equipment ? `${t.equipment.name} (${t.equipment.assetTag})` : "—"}
                             {t.technicianName ? ` · ${t.technicianName}` : ""}
                           </span>
@@ -263,15 +263,15 @@ function PctCard({ title, pct, tone = "default", loading, formula, detail }: {
 }) {
   const toneCls = { default: "text-primary bg-primary/10", success: "text-emerald-600 bg-emerald-100", warning: "text-amber-600 bg-amber-100" }[tone];
   return (
-    <Card className="shadow-sm">
+    <Card className="shadow-sm min-w-0">
       <CardContent className="p-4">
         <div className="flex items-center gap-3">
-          <div className={`h-10 w-10 rounded-lg flex items-center justify-center shrink-0 ${toneCls}`}>
+          <div className={`hidden lg:flex h-10 w-10 rounded-lg items-center justify-center shrink-0 ${toneCls}`}>
             <Gauge className="h-5 w-5" />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{title}</span>
+            <div className="flex min-w-0 items-center gap-1.5">
+              <span className="truncate text-xs font-medium text-muted-foreground uppercase tracking-wide">{title}</span>
               <TooltipProvider delayDuration={100}>
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -295,7 +295,7 @@ function PctCard({ title, pct, tone = "default", loading, formula, detail }: {
           </div>
         </div>
         <Progress value={Math.min(100, Math.max(0, pct ?? 0))} className="mt-3 h-1.5" aria-label={`${title} percentage`} />
-        {detail && !loading ? <p className="mt-1.5 text-[11px] text-muted-foreground truncate" title={detail}>{detail}</p> : null}
+        {detail && !loading ? <p className="mt-1.5 text-[11px] text-muted-foreground line-clamp-2" title={detail}>{detail}</p> : null}
       </CardContent>
     </Card>
   );

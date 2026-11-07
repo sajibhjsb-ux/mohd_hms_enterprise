@@ -169,14 +169,14 @@ export function AuthLoginScreen({
               onClick={() => setShowPassword((v) => !v)}
               aria-label={showPassword ? "Hide password" : "Show password"}
               aria-pressed={showPassword}
-              className="absolute right-1.5 top-1/2 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="absolute right-0.5 top-1/2 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               {showPassword ? <EyeOff className="h-[1.05rem] w-[1.05rem]" aria-hidden /> : <Eye className="h-[1.05rem] w-[1.05rem]" aria-hidden />}
             </button>
           </div>
         </div>
 
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <Checkbox
               id="auth-remember"
@@ -191,7 +191,7 @@ export function AuthLoginScreen({
           </div>
           <button
             type="button"
-            className="text-sm font-semibold text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
+            className="inline-flex min-h-11 items-center text-sm font-semibold text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
             onClick={onForgotPassword}
           >
             Forgot Password?
@@ -236,7 +236,7 @@ export function AuthLoginScreen({
           type="button"
           onClick={startGoogle}
           disabled={busy || googleBusy}
-          className="font-semibold text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm disabled:opacity-60"
+          className="inline-flex min-h-11 items-center font-semibold text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm disabled:opacity-60"
         >
           Sign up with Google
         </button>

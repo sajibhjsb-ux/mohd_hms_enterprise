@@ -53,12 +53,3 @@ export async function emit(input: EmitInput): Promise<string> {
     return "";
   }
 }
-
-/**
- * Emit several events after the caller's transaction has committed successfully.
- * Use this when the emission site sits outside the interactive transaction but
- * should still only run on success (no false automation on rollback, §4).
- */
-export async function emitAll(inputs: EmitInput[]): Promise<void> {
-  for (const input of inputs) await emit(input);
-}

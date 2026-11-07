@@ -20,6 +20,16 @@ import { syncComplaintFromWorkOrder, reopenComplaintFromWorkOrder } from "@/lib/
 import { computeNextDue } from "@/lib/hms/pm/schedule";
 import { applyStockMovement, consumeReservation } from "@/lib/hms/inventory";
 import { validateChecklistForSubmission, type ChecklistExecutionItem } from "@/lib/hms/checklist/execution";
+import {
+  notifyWoAccepted,
+  notifyComplaintUser,
+  notifyWorkOrderStaff,
+  notifyWoStarted,
+  notifyWoOnHold,
+  notifyWoSubmitted,
+  notifyWoClosed,
+  notifyWoReopened,
+} from "@/lib/hms/complaint-notifications";
 
 /** Consume this WO's active reservation for an item inside the caller's transaction. */
 function consumeReservationInTx(tx: Parameters<Parameters<typeof db.$transaction>[0]>[0], itemId: string, quantity: number, workOrderId: string) {
@@ -84,6 +94,17 @@ export const POST = withId(
           where: { id }, data: { status: "ACCEPTED" }, include: WO_DETAIL_INCLUDE,
         });
         await audit({ actorId: user.id, actorEmail: user.email, action: "WORK_ORDER_ACCEPTED", resourceType: "WORK_ORDER", resourceId: id, metadata: { code } });
+        await notifyWoAccepted({
+          workOrderId: id,
+          workOrderCode: code,
+          complaintId: wo.complaintId ?? null,
+          complaintCode: wo.complaint?.code ?? null,
+          acceptedBy: user.name,
+          customerId: wo.customerId,
+          createdById: wo.customer?.portalUser?.id ?? "",
+          technicianUserId: updated.technician?.user?.id ?? null,
+        });
+        await emit({ type: EVENT_TYPES.WORK_ORDER_ACCEPTED, resourceType: "WORK_ORDER", resourceId: id, payload: { code, workOrderId: id }, actorType: "USER", actorId: user.id });
         await notifyRole("SUPERVISOR", { title: "Work order accepted", message: `${code} accepted by ${user.name}.`, type: "INFO", resourceType: "WORK_ORDER", resourceId: id });
         return ok(updated);
       }
@@ -198,6 +219,17 @@ export const POST = withId(
           return row;
         });
         await audit({ actorId: user.id, actorEmail: user.email, action: "WORK_ORDER_STARTED", resourceType: "WORK_ORDER", resourceId: id, metadata: { code } });
+        await notifyWoStarted({
+          workOrderId: id,
+          workOrderCode: code,
+          complaintId: wo.complaintId ?? null,
+          complaintCode: wo.complaint?.code ?? null,
+          startedBy: user.name,
+          customerId: wo.customerId,
+          createdById: wo.customer?.portalUser?.id ?? "",
+          technicianUserId: updated.technician?.user?.id ?? null,
+        });
+        await emit({ type: EVENT_TYPES.WORK_ORDER_STARTED, resourceType: "WORK_ORDER", resourceId: id, payload: { code, workOrderId: id }, actorType: "USER", actorId: user.id });
         await notifyRole("SUPERVISOR", { title: "Work order started", message: `${code} started by ${user.name}.`, type: "INFO", resourceType: "WORK_ORDER", resourceId: id });
         return ok(updated);
       }
@@ -208,6 +240,18 @@ export const POST = withId(
           where: { id }, data: { status: "ON_HOLD", ...(body.note ? { notes: body.note } : {}) }, include: WO_DETAIL_INCLUDE,
         });
         await audit({ actorId: user.id, actorEmail: user.email, action: "WORK_ORDER_ON_HOLD", resourceType: "WORK_ORDER", resourceId: id, metadata: { code, note: body.note ?? "" } });
+        await notifyWoOnHold({
+          workOrderId: id,
+          workOrderCode: code,
+          complaintId: wo.complaintId ?? null,
+          complaintCode: wo.complaint?.code ?? null,
+          holdReason: body.note ?? null,
+          heldBy: user.name,
+          customerId: wo.customerId,
+          createdById: wo.customer?.portalUser?.id ?? "",
+          technicianUserId: updated.technician?.user?.id ?? null,
+        });
+        await emit({ type: EVENT_TYPES.WORK_ORDER_ON_HOLD, resourceType: "WORK_ORDER", resourceId: id, payload: { code, workOrderId: id }, actorType: "USER", actorId: user.id });
         await notifyRole("SUPERVISOR", { title: "Work order on hold", message: `${code} put on hold by ${user.name}.${body.note ? ` Note: ${body.note}` : ""}`, type: "WARNING", resourceType: "WORK_ORDER", resourceId: id });
         return ok(updated);
       }
@@ -221,6 +265,26 @@ export const POST = withId(
           where: { id }, data: { status: "IN_PROGRESS" }, include: WO_DETAIL_INCLUDE,
         });
         await audit({ actorId: user.id, actorEmail: user.email, action: "WORK_ORDER_RESUMED", resourceType: "WORK_ORDER", resourceId: id, metadata: { code } });
+        await notifyWorkOrderStaff({
+          workOrderId: id,
+          workOrderCode: code,
+          eventType: EVENT_TYPES.WORK_ORDER_STARTED,
+          title: "Work Resumed",
+          message: `Work on Work Order ${code} has been resumed by ${user.name}.`,
+          type: "INFO",
+        });
+        if (wo.complaintId) {
+          await notifyComplaintUser({
+            userId: wo.customerId,
+            complaintId: wo.complaintId,
+            complaintCode: wo.complaint?.code ?? "",
+            eventType: EVENT_TYPES.WORK_ORDER_STARTED,
+            title: "Work Resumed",
+            message: `Work on your ${wo.complaint?.code ? `complaint ${wo.complaint.code} ` : ""}(Work Order ${code}) has been resumed by ${user.name}.`,
+            type: "INFO",
+          });
+        }
+        await emit({ type: EVENT_TYPES.WORK_ORDER_STARTED, resourceType: "WORK_ORDER", resourceId: id, payload: { code, workOrderId: id }, actorType: "USER", actorId: user.id });
         return ok(updated);
       }
 
@@ -360,6 +424,17 @@ export const POST = withId(
         if (submittedInst) {
           await audit({ actorId: user.id, actorEmail: user.email, action: "CHECKLIST_SUBMITTED", resourceType: "CHECKLIST_INSTANCE", resourceId: submittedInst.id, metadata: { code: submittedInst.code, workOrderCode: code } });
         }
+        await notifyWoSubmitted({
+          workOrderId: id,
+          workOrderCode: code,
+          complaintId: wo.complaintId ?? null,
+          complaintCode: wo.complaint?.code ?? null,
+          submittedBy: user.name,
+          customerId: wo.customerId,
+          createdById: wo.customer?.portalUser?.id ?? "",
+          technicianUserId: wo.technician?.user?.id ?? null,
+        });
+        await emit({ type: EVENT_TYPES.WORK_ORDER_SUBMITTED, resourceType: "WORK_ORDER", resourceId: id, payload: { code, workOrderId: id }, actorType: "USER", actorId: user.id });
         await notifyRole("SUPERVISOR", {
           title: "Work order awaiting review",
           message: `${code} was submitted by ${user.name}. Review the evidence, then approve and close it.`,
@@ -373,6 +448,26 @@ export const POST = withId(
         // inside the transaction (never trust an earlier client/tech state),
         // then closes the linked complaint and releases the invoice event.
         assertWoTransition("CLOSED", from, WO_TRANSITIONS);
+
+        // §3 — AFTER WORK evidence is mandatory before final closure. At least
+        // one saved AFTER photo or video must exist (backend verifies real
+        // persisted records, never a frontend boolean).
+        const afterEvidence = await db.document.count({
+          where: {
+            resourceType: "WORK_ORDER",
+            resourceId: id,
+            category: "WORK_ORDER",
+            label: "AFTER",
+          },
+        });
+        if (afterEvidence < 1) {
+          throw new ApiError(
+            422,
+            "AFTER_EVIDENCE_REQUIRED",
+            "At least one completion photo or video is required before this work order can be closed.",
+            { required: 1, present: afterEvidence },
+          );
+        }
         const ref: {
           completedInstance: { id: string; code: string } | null;
           autoClosedComplaint: { id: string; code: string; fromStatus: string } | null;
@@ -513,6 +608,16 @@ export const POST = withId(
         });
 
         await audit({ actorId: user.id, actorEmail: user.email, action: "WORK_ORDER_CLOSED", resourceType: "WORK_ORDER", resourceId: id, metadata: { code, totalCents: updated.totalCents, approvedById: user.id } });
+        await notifyWoClosed({
+          workOrderId: id,
+          workOrderCode: code,
+          complaintId: wo.complaintId ?? null,
+          complaintCode: wo.complaint?.code ?? null,
+          closedBy: user.name,
+          customerId: wo.customerId,
+          createdById: wo.customer?.portalUser?.id ?? "",
+          technicianUserId: wo.technician?.user?.id ?? null,
+        });
         if (ref.autoClosedComplaint) {
           await audit({ actorId: user.id, actorEmail: user.email, action: "COMPLAINT_AUTO_CLOSED", resourceType: "COMPLAINT", resourceId: ref.autoClosedComplaint.id, metadata: { code: ref.autoClosedComplaint.code, reason: "Linked work order approved and closed", workOrderCode: code, fromStatus: ref.autoClosedComplaint.fromStatus } });
         }
@@ -601,6 +706,18 @@ export const POST = withId(
         });
 
         await audit({ actorId: user.id, actorEmail: user.email, action: "WORK_ORDER_REOPENED", resourceType: "WORK_ORDER", resourceId: id, metadata: { code, reason } });
+        await notifyWoReopened({
+          workOrderId: id,
+          workOrderCode: code,
+          complaintId: wo.complaintId ?? null,
+          complaintCode: wo.complaint?.code ?? null,
+          reason,
+          reopenedBy: user.name,
+          customerId: wo.customerId,
+          createdById: wo.customer?.portalUser?.id ?? "",
+          technicianUserId: wo.technician?.user?.id ?? null,
+        });
+        await emit({ type: EVENT_TYPES.WORK_ORDER_REOPENED, resourceType: "WORK_ORDER", resourceId: id, payload: { code, workOrderId: id }, actorType: "USER", actorId: user.id });
         if (ref.reopenedComplaint) {
           await audit({ actorId: user.id, actorEmail: user.email, action: "COMPLAINT_REOPENED", resourceType: "COMPLAINT", resourceId: ref.reopenedComplaint.id, metadata: { code: ref.reopenedComplaint.code, reason, workOrderCode: code } });
         }
@@ -652,12 +769,32 @@ export const POST = withId(
         if (inst) {
           await audit({ actorId: user.id, actorEmail: user.email, action: "CHECKLIST_RETURNED", resourceType: "CHECKLIST_INSTANCE", resourceId: inst.id, metadata: { code: inst.code, workOrderCode: code, reason } });
         }
+        await notifyWorkOrderStaff({
+          workOrderId: id,
+          workOrderCode: code,
+          eventType: EVENT_TYPES.WORK_ORDER_ON_HOLD,
+          title: "Work Order Returned",
+          message: `Work Order ${code}${wo.complaint?.code ? ` for complaint ${wo.complaint.code}` : ""} was returned by ${user.name} for rework: ${reason}.`,
+          type: "WARNING",
+        });
+        if (wo.complaintId) {
+          await notifyComplaintUser({
+            userId: wo.customerId,
+            complaintId: wo.complaintId,
+            complaintCode: wo.complaint?.code ?? "",
+            eventType: EVENT_TYPES.WORK_ORDER_ON_HOLD,
+            title: "Work Order Returned",
+            message: `Your ${wo.complaint?.code ? `complaint ${wo.complaint.code} ` : ""}(Work Order ${code}) was returned for rework. Reason: ${reason}.`,
+            type: "WARNING",
+          });
+        }
         if (updated.technician?.user?.id && updated.technician.user.id !== user.id) {
           await notify({ userId: updated.technician.user.id, title: "Work order returned", message: `Work order ${code} was returned by ${user.name} for rework: ${reason}`, type: "WARNING", resourceType: "WORK_ORDER", resourceId: id });
         }
         if (portalUserId) {
           await notify({ userId: portalUserId, title: "Work order returned", message: `Work order ${code} was returned for rework. Reason: ${reason}`, type: "WARNING", resourceType: "WORK_ORDER", resourceId: id });
         }
+        await emit({ type: EVENT_TYPES.WORK_ORDER_ON_HOLD, resourceType: "WORK_ORDER", resourceId: id, payload: { code, workOrderId: id }, actorType: "USER", actorId: user.id });
         return ok(updated);
       }
 
@@ -679,6 +816,7 @@ export const POST = withId(
         if (wo.technician?.user?.id && wo.technician.user.id !== user.id) {
           await notify({ userId: wo.technician.user.id, title: "Work order cancelled", message: `Work order ${code} was cancelled.`, type: "WARNING", resourceType: "WORK_ORDER", resourceId: id });
         }
+        await emit({ type: EVENT_TYPES.WORK_ORDER_CANCELLED, resourceType: "WORK_ORDER", resourceId: id, payload: { code, workOrderId: id }, actorType: "USER", actorId: user.id });
         return ok(updated);
       }
 

@@ -1,4 +1,5 @@
-// POST /api/v1/push/devices/register — register/refresh an FCM push device.
+// POST /api/v1/push/devices/register — register/refresh a push device.
+// Android/web tokens are FCM tokens; iOS tokens are APNs device tokens.
 //
 // Spec §7: the backend determines the authenticated user from the secure
 // session context — a user_id sent by the browser is never trusted. The FCM
@@ -12,6 +13,7 @@ import { handler, ok, parseBody, Errors } from "@/lib/hms/api";
 import { rateLimit, clientIp } from "@/lib/hms/rate-limit";
 import { audit } from "@/lib/hms/services";
 import { fcmConfigured } from "@/lib/hms/push/fcm";
+import { apnsConfigured } from "@/lib/hms/push/apns";
 
 const registerSchema = z.object({
   token: z.string().min(40).max(4096),
@@ -26,12 +28,19 @@ const registerSchema = z.object({
 
 export const POST = handler(
   async ({ req, user }) => {
-    if (!fcmConfigured()) throw Errors.badRequest("Push notifications (Firebase) are not configured on this server.");
     const ip = clientIp(req);
     const rl = rateLimit(`push-device-register:${ip}:${user.id}`, 30, 5 * 60 * 1000);
     if (!rl.allowed) throw Errors.tooMany(`Too many requests. Try again in ${rl.retryAfterSec}s.`);
 
     const body = await parseBody(req, registerSchema);
+    // Android/web use FCM; iOS registers an APNs device token.
+    if (body.platform === "IOS" ? !apnsConfigured() : !fcmConfigured()) {
+      throw Errors.badRequest(
+        body.platform === "IOS"
+          ? "Push notifications (APNs) are not configured on this server."
+          : "Push notifications (Firebase) are not configured on this server.",
+      );
+    }
 
     // Re-bind protection (spec §34): a token already owned by ANOTHER user is
     // re-bound only via this authenticated upsert — the previous owner simply

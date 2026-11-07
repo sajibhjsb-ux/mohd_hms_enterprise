@@ -106,6 +106,10 @@ const todayInput = () => toDateInput(new Date());
 
 export function HrModule() {
   const seg = useUi((s) => s.pages["hr"]) ?? [];
+  // Notification deep links: /hr?tab=leave|overtime|payroll|... (validated).
+  const query = useUi((s) => s.queries["hr"] ?? "");
+  const tabParam = (new URLSearchParams(query).get("tab") ?? "").toLowerCase();
+  const initialTab = HR_TABS.includes(tabParam as (typeof HR_TABS)[number]) ? tabParam : undefined;
 
   // Letters subtree — custom segment parsing (pageFromSeg drops 3rd segments:
   //   /hr/letters/templates/{id} needs the id):
@@ -145,8 +149,10 @@ export function HrModule() {
   // Position management (role/position spec §9): dedicated pages under /hr/positions/*.
   if (page.view === "positions" && page.id === "new") return <HrPositionNewPage />;
   if (page.view === "positions-edit" && page.id) return <HrPositionEditPage id={page.id} />;
-  return <HrList />;
+  return <HrList initialTab={initialTab} key={query} />;
 }
+
+const HR_TABS = ["employees", "positions", "attendance", "leave", "overtime", "payroll", "letters"] as const;
 
 // ── List page ──
 

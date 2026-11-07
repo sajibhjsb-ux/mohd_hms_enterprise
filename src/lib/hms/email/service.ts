@@ -951,20 +951,12 @@ function sampleValues(): Record<string, string> {
   };
 }
 
-/** Per-user preference guard for OPTIONAL categories (§40/§41). */
-export async function isSuppressedForUser(category: string, userEmail: string): Promise<boolean> {
-  if (!["REPORTS", "SYSTEM"].includes(category)) return false; // security-critical never suppressed
-  const key = `email_pref_optout:${userEmail.toLowerCase()}:${category}`;
-  const row = await db.setting.findUnique({ where: { key } }).catch(() => null);
-  return row?.value === "1";
-}
-
 // ─── 7. Health metrics (§29 — real data only) ───────────────────────────────
 
 export async function emailHealth() {
   const startOfDay = new Date();
   startOfDay.setHours(0, 0, 0, 0);
-  const [sentToday, failedToday, queued, retrying, lastSent, lastFailed, cfg] = await Promise.all([
+  const [sentToday, failedToday, queued, retrying, lastSent, lastFailed, cfg, inboundCount, lastInbound] = await Promise.all([
     db.emailLog.count({ where: { status: "SENT", sentAt: { gte: startOfDay } } }),
     db.emailLog.count({ where: { status: { in: ["FAILED", "DEAD_LETTER"] }, failedAt: { gte: startOfDay } } }),
     db.emailLog.count({ where: { status: "QUEUED" } }),
@@ -972,7 +964,10 @@ export async function emailHealth() {
     db.emailLog.findFirst({ where: { status: "SENT" }, orderBy: { sentAt: "desc" }, select: { sentAt: true, toEmail: true, subject: true } }),
     db.emailLog.findFirst({ where: { status: { in: ["FAILED", "DEAD_LETTER"] } }, orderBy: { failedAt: "desc" }, select: { failedAt: true, toEmail: true, lastError: true } }),
     getEmailConfig(),
+    db.mailMessage.count({ where: { direction: "IN" } }),
+    db.mailMessage.findFirst({ where: { direction: "IN" }, orderBy: { createdAt: "desc" }, select: { createdAt: true, subject: true, fromEmail: true } }),
   ]);
+  const webhookSecret = await db.setting.findUnique({ where: { key: "email_inbound_webhook_secret" }, select: { value: true } });
   return {
     sentToday, failedToday, queued, retrying,
     lastSuccess: lastSent ? { at: lastSent.sentAt?.toISOString() ?? null, to: lastSent.toEmail, subject: lastSent.subject } : null,
@@ -985,6 +980,12 @@ export async function emailHealth() {
       provider: cfg.provider,
       lastVerifyAt: cfg.lastVerifyAt?.toISOString() ?? null,
       lastVerifyOk: cfg.lastVerifyOk,
+    },
+    inbound: {
+      supported: true,
+      webhookConfigured: Boolean(webhookSecret?.value),
+      totalReceived: inboundCount,
+      lastReceived: lastInbound ? { at: lastInbound.createdAt.toISOString(), from: lastInbound.fromEmail, subject: lastInbound.subject } : null,
     },
   };
 }

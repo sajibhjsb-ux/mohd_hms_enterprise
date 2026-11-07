@@ -547,13 +547,3 @@ export async function restoreVersion(id: string, versionId: string, actor: Actor
   });
   return { versionId: created.id, version: created.version };
 }
-
-/** Style preset used when the editor needs a baseline (default = historical). */
-export function baselineStyle(): TemplateStyle {
-  return {
-    ...DEFAULT_TEMPLATE_STYLE,
-    margins: { ...DEFAULT_TEMPLATE_STYLE.margins },
-    header: { ...DEFAULT_TEMPLATE_STYLE.header },
-    footer: { ...DEFAULT_TEMPLATE_STYLE.footer },
-  };
-}

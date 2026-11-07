@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
 import { navigateTo } from "@/lib/hms/router";
-import { fileIcon, folderIcon, fmtBytes, permAtLeast, when, type FileRow, type FolderRow } from "./shared";
+import { fileIcon, folderIcon as FolderIcon, fmtBytes, permAtLeast, when, type FileRow, type FolderRow } from "./shared";
 import { FilesBackButton } from "./back-button";
 
 function useList<T>(url: string) {
@@ -91,7 +91,7 @@ export function SharedWithMe() {
       title="Shared With Me"
       subtitle="Files other users explicitly shared with you — nothing else is visible."
       url="/api/v1/files?view=shared"
-      empty={<EmptyState title="Nothing shared yet" description="When someone shares a file with you it appears here and you get a notification." />}
+      empty={<EmptyState title="Nothing shared yet" hint="When someone shares a file with you it appears here and you get a notification." />}
     >
       {(data) => (
         <div className="rounded-lg border bg-card overflow-x-auto">
@@ -154,7 +154,7 @@ export function SharedFolders() {
       title="Shared Folders"
       subtitle="Folders shared with you — permissions inside follow the granted level."
       url="/api/v1/files?view=shared-folders"
-      empty={<EmptyState title="No shared folders" description="Folders shared with you will appear here." />}
+      empty={<EmptyState title="No shared folders" hint="Folders shared with you will appear here." />}
     >
       {(data) => (
         <div className="rounded-lg border bg-card overflow-x-auto">
@@ -173,7 +173,7 @@ export function SharedFolders() {
                 <TableRow key={f.id}>
                   <TableCell>
                     <button className="flex items-center gap-2.5 hover:underline" onClick={() => navigateTo("files", ["sf", f.id])}>
-                      <folderIcon className="h-4 w-4 text-primary" aria-hidden />
+                      <FolderIcon className="h-4 w-4 text-primary" aria-hidden />
                       <span className="font-medium">{f.name}</span>
                     </button>
                   </TableCell>
@@ -250,7 +250,7 @@ function FilesBrowserShared({ folderId }: { folderId: string }) {
       </nav>
 
       {data.folders.length === 0 && data.files.length === 0 ? (
-        <EmptyState title="Empty folder" description="This shared folder has no content." />
+        <EmptyState title="Empty folder" hint="This shared folder has no content." />
       ) : (
         <div className="rounded-lg border bg-card overflow-x-auto">
           <Table>
@@ -267,7 +267,7 @@ function FilesBrowserShared({ folderId }: { folderId: string }) {
                 <TableRow key={folder.id}>
                   <TableCell>
                     <button className="flex items-center gap-2.5 hover:underline" onClick={() => navigateTo("files", ["sf", folder.id])}>
-                      <folderIcon className="h-4 w-4 text-primary" aria-hidden />
+                      <FolderIcon className="h-4 w-4 text-primary" aria-hidden />
                       <span className="font-medium">{folder.name}</span>
                     </button>
                   </TableCell>
@@ -356,7 +356,7 @@ export function StarredList() {
     <div className="space-y-4">
       <PageHeader title="Starred" subtitle="Your favorites — stars on items you can no longer access disappear automatically." />
       {empty ? (
-        <EmptyState title="No starred items" description="Star files and folders to find them quickly." />
+        <EmptyState title="No starred items" hint="Star files and folders to find them quickly." />
       ) : (
         <div className="rounded-lg border bg-card overflow-x-auto">
           <Table>
@@ -374,7 +374,7 @@ export function StarredList() {
                 <TableRow key={`fl-${f.id}`}>
                   <TableCell>
                     <button className="flex items-center gap-2.5 hover:underline" onClick={() => navigateTo("files", ["my", f.id])}>
-                      <folderIcon className="h-4 w-4 text-primary" aria-hidden /><span className="font-medium">{f.name}</span>
+                      <FolderIcon className="h-4 w-4 text-primary" aria-hidden /><span className="font-medium">{f.name}</span>
                     </button>
                   </TableCell>
                   <TableCell className="hidden sm:table-cell text-muted-foreground">Folder</TableCell>
@@ -443,7 +443,7 @@ export function TrashList() {
         <PageHeader title="Trash" subtitle="Deleted items stay here until you restore them or delete them permanently." />
       </div>
       {empty ? (
-        <EmptyState title="Trash is empty" description="Deleted files and folders appear here." />
+        <EmptyState title="Trash is empty" hint="Deleted files and folders appear here." />
       ) : (
         <div className="rounded-lg border bg-card overflow-x-auto">
           <Table>
@@ -458,7 +458,7 @@ export function TrashList() {
             <TableBody>
               {data.folders.map((f) => (
                 <TableRow key={`fl-${f.id}`}>
-                  <TableCell><span className="flex items-center gap-2.5"><folderIcon className="h-4 w-4 text-muted-foreground" aria-hidden /><span className="font-medium">{f.name}</span></span></TableCell>
+                  <TableCell><span className="flex items-center gap-2.5"><FolderIcon className="h-4 w-4 text-muted-foreground" aria-hidden /><span className="font-medium">{f.name}</span></span></TableCell>
                   <TableCell className="hidden sm:table-cell text-muted-foreground">{when(f.trashedAt)}</TableCell>
                   <TableCell className="hidden md:table-cell text-muted-foreground">Folder</TableCell>
                   <TableCell>
@@ -535,7 +535,7 @@ export function RecentList() {
       title="Recent"
       subtitle="Your latest file activity from the real audit trail."
       url="/api/v1/files?view=recent"
-      empty={<EmptyState title="No recent activity" description="Uploads, downloads, shares and edits appear here." />}
+      empty={<EmptyState title="No recent activity" hint="Uploads, downloads, shares and edits appear here." />}
     >
       {(data) => (
         <div className="rounded-lg border bg-card divide-y">
@@ -597,7 +597,7 @@ export function ActivityList() {
       ) : error ? (
         <ErrorState message={error} onRetry={() => void load(page)} />
       ) : items.length === 0 ? (
-        <EmptyState title="No activity yet" description="Your file actions will appear here." />
+        <EmptyState title="No activity yet" hint="Your file actions will appear here." />
       ) : (
         <div className="rounded-lg border bg-card divide-y">
           {items.map((item) => (

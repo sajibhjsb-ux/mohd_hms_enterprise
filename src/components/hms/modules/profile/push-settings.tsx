@@ -20,7 +20,7 @@ import { disablePush, enablePush, fetchPushStatus } from "@/lib/hms/pwa";
 
 type DeviceRow = {
   id: string;
-  kind: "FCM" | "VAPID";
+  kind: "FCM" | "APNS" | "VAPID";
   platform: string;
   deviceName: string | null;
   browser: string | null;
@@ -145,15 +145,15 @@ export function PushSettingsCards() {
           ) : (
             <ul className="space-y-2 max-h-64 overflow-y-auto pr-1">
               {activeDevices.map((d) => (
-                <li key={`${d.kind}-${d.id}`} className="flex items-center gap-3 rounded-md border p-2.5">
+                <li key={`${d.kind}-${d.id}`} className="flex flex-wrap items-center gap-3 rounded-md border p-2.5">
                   {/android|iphone|ipad|ios|mobile/i.test(`${d.platform} ${d.operatingSystem ?? ""}`) ? (
                     <Smartphone className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
                   ) : (
                     <Monitor className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
                   )}
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium truncate">{deviceLabel(d)}</div>
-                    <div className="text-xs text-muted-foreground truncate">
+                  <div className="min-w-32 flex-1">
+                    <div className="text-sm font-medium line-clamp-2">{deviceLabel(d)}</div>
+                    <div className="text-xs text-muted-foreground line-clamp-2">
                       Last seen: {fmtDate(d.lastSeenAt)} · Push: {d.active ? "Enabled" : "Off"}
                       {d.lastError ? ` · ${d.lastError}` : ""}
                     </div>

@@ -180,6 +180,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     // subscriptions keep the existing owner-binding policy (re-bound on next
     // enable by whoever logs in here).
     void import("@/lib/hms/push-client").then((m) => m.disableFcm()).catch(() => undefined);
+    // Native shell: remove the FCM device while the session cookie is still
+    // valid (unregister requires auth), then delete the local token.
+    await import("@/lib/hms/native/push")
+      .then((m) => m.disableNativePush({ server: true, plugin: true }))
+      .catch(() => undefined);
     await api.post("/api/v1/auth/logout").catch(() => undefined);
     clearLastRoute();
     setUser(null);

@@ -329,12 +329,12 @@ function FinanceList({ initialTab }: { initialTab?: string }) {
                   <p className="text-sm text-muted-foreground py-4 text-center">No accounts configured</p>
                 ) : (
                   summary?.accounts.map((a) => (
-                    <div key={a.id} className="flex items-center justify-between rounded-lg border p-3">
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium truncate">{a.name}</div>
+                    <div key={a.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3">
+                      <div className="min-w-0 flex-1 basis-full sm:basis-0">
+                        <div className="text-sm font-medium line-clamp-2">{a.name}</div>
                         <div className="text-xs text-muted-foreground">{a.code} · {a.type.replaceAll("_", " ")}</div>
                       </div>
-                      <div className="text-sm font-semibold tabular-nums">{money(a.balanceCents)}</div>
+                      <div className="text-sm font-semibold tabular-nums ml-auto">{money(a.balanceCents)}</div>
                     </div>
                   ))
                 )}
@@ -352,13 +352,13 @@ function FinanceList({ initialTab }: { initialTab?: string }) {
               ) : (
                 <div className="divide-y">
                   {summary?.recentTransactions.map((t) => (
-                    <div key={t.id} className="py-2.5 flex items-center gap-3">
-                      <div className="min-w-0 flex-1">
-                        <div className="text-sm font-medium truncate">{t.description || t.category}</div>
+                    <div key={t.id} className="py-2.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+                      <div className="min-w-0 flex-1 basis-full sm:basis-0">
+                        <div className="text-sm font-medium line-clamp-2">{t.description || t.category}</div>
                         <div className="text-xs text-muted-foreground">{t.code} · {t.account?.name ?? "No account"} · {fmtDate(t.date)}</div>
                       </div>
                       <TypeBadge type={t.type} />
-                      <span className={`text-sm tabular-nums font-medium ${t.type === "INCOME" ? "text-emerald-700" : "text-red-700"}`}>
+                      <span className={`text-sm tabular-nums font-medium ml-auto ${t.type === "INCOME" ? "text-emerald-700" : "text-red-700"}`}>
                         {t.type === "INCOME" ? "+" : "−"}{money(t.amountCents)}
                       </span>
                     </div>

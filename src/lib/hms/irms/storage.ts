@@ -271,8 +271,6 @@ type PreparedPhoto = {
   takenAt: Date | null;
 };
 
-export type PreparedPhotoInternal = PreparedPhoto;
-
 /** Deterministic, collision-safe object keys: {module}/{reportId}/{photoId}-{variant}.{ext} (§14). */
 export function photoObjectKeys(reportId: string, photoId: string, ext: string): { original: string; display: string; thumb: string } {
   return {
@@ -362,15 +360,6 @@ export async function storePreparedPhoto(prepared: PreparedPhoto, keys: { origin
     takenAt: prepared.takenAt,
     exif: prepared.exif,
   };
-}
-
-/**
- * Save one uploaded photo non-destructively (single-file convenience used by
- * tests/tools): prepare in memory → store objects → return variant metadata.
- */
-export async function savePhotoVariants(file: File, reportId: string, photoId: string): Promise<PhotoVariantsResult> {
-  const prepared = await preparePhotoUpload(file);
-  return storePreparedPhoto(prepared, photoObjectKeys(reportId, photoId, prepared.sniffed.ext));
 }
 
 // ─── Signatures ──────────────────────────────────────────────────────────────

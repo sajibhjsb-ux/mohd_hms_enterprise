@@ -38,7 +38,7 @@ import {
   canAccessFile, assertRolePermission, assertQuota, extOf,
   sanitizeFileName, sniffMimeType, sha256,
 } from "@/lib/hms/files/service";
-import { getEmailConfig, isValidEmail } from "./config";
+import { getEmailConfig, isConfigReady, isValidEmail } from "./config";
 import { parseGroupMembers } from "./groups";
 import { queueClientEmail, retryEmail } from "./service";
 
@@ -46,7 +46,6 @@ import { queueClientEmail, retryEmail } from "./service";
 
 export const MAIL_FOLDERS = ["INBOX", "SENT", "DRAFTS", "OUTBOX", "ARCHIVE", "SPAM", "TRASH"] as const;
 export const MAIL_VIRTUAL_FOLDERS = ["STARRED", "IMPORTANT"] as const;
-export type MailFolder = (typeof MAIL_FOLDERS)[number] | (typeof MAIL_VIRTUAL_FOLDERS)[number];
 
 export const MAIL_MAX_RECIPIENTS = 100;
 export const MAIL_MAX_BODY_CHARS = 200_000;
@@ -202,10 +201,6 @@ export function forwardSubject(subject: string): string {
   const s = subject.trim();
   return /^fwd\s*:/i.test(s) ? s : `Fwd: ${s || "(no subject)"}`;
 }
-
-// ─── Attachments ────────────────────────────────────────────────────────────
-
-export type AttachInput = { fileId: string };
 
 /** Attach one existing File (the user's own or shared with them — §20). */
 export async function attachFileToMessage(user: { id: string }, messageId: string, fileId: string) {
@@ -930,7 +925,7 @@ export async function cloneAttachmentsForForward(userId: string, fromMessageId: 
 
 // ─── Upload (§19 — MinIO via the Files pipeline; §20 Files integration) ─────
 
-export async function uploadComposeAttachment(user: { id: string; email: string }, file: { name: string; buffer: Buffer; mimeType: string }) {
+export async function uploadComposeAttachment(user: { id: string; email: string; role: string }, file: { name: string; buffer: Buffer; mimeType: string }) {
   // The attachment becomes a real File in the user's Files space (§20).
   assertRolePermission(user, PERMISSIONS.files_create);
   if (file.buffer.length === 0) throw Errors.badRequest("The file is empty.");
@@ -1189,7 +1184,7 @@ export async function bootstrap(userId: string) {
   return {
     mailboxes,
     counts: { ...counts, STARRED: starred, IMPORTANT: important },
-    smtp: { configured: Boolean(cfg.smtpHost && (cfg.fromEmail || cfg.smtpUser)) },
+    smtp: { configured: isConfigReady(cfg) },
     // Honest inbound statement (§8/§29): the existing mail architecture is
     // SMTP-send only; no IMAP/POP3/provider-inbound integration exists, so no
     // fake inbox is created. Incoming support arrives with the first real

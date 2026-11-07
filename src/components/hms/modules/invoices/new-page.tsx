@@ -66,9 +66,15 @@ export function InvoiceNewPage() {
     Promise.all([
       api.get<CustomerLite[]>("/api/v1/customers").catch(() => null),
       api.get<InventoryLite[]>("/api/v1/inventory").catch(() => null),
-      // Completed WOs may 403 for some roles → hide the "from work order" option.
-      api.get<WoLite[]>(`/api/v1/work-orders${qs({ status: "COMPLETED", pageSize: 100 })}`).then(
-        (r) => { if (alive) { setWos(r.data); setWoState(r.data.length > 0 ? "ready" : "unavailable"); } },
+      // Billable WOs are COMPLETED (awaiting review) or CLOSED (approved) —
+      // the invoice route accepts both. 403 hides the "from work order" option.
+      api.get<WoLite[]>(`/api/v1/work-orders${qs({ pageSize: 100 })}`).then(
+        (r) => {
+          if (!alive) return;
+          const billable = r.data.filter((w) => ["COMPLETED", "CLOSED"].includes(w.status ?? ""));
+          setWos(billable);
+          setWoState(billable.length > 0 ? "ready" : "unavailable");
+        },
         () => { if (alive) setWoState("unavailable"); },
       ),
     ]).then(([c, i]) => {

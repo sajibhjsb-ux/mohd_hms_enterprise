@@ -5,29 +5,6 @@
 import { addDays, addWeeks, addMonths, addYears, startOfMonth, getDay, getDaysInMonth, isAfter } from "date-fns";
 import { PM_METER_PLAN_TYPES } from "@/lib/hms/constants";
 
-/** §7 — display labels for every supported calendar frequency. */
-export const PM_FREQUENCY_LABELS: Record<string, string> = {
-  DAILY: "Daily",
-  WEEKLY: "Weekly",
-  BIWEEKLY: "Biweekly",
-  MONTHLY: "Monthly",
-  EVERY_2_MONTHS: "Every 2 months",
-  QUARTERLY: "Quarterly",
-  SEMI_ANNUAL: "Half-yearly",
-  ANNUAL: "Yearly",
-  CUSTOM: "Custom interval",
-};
-
-export const PM_PLAN_TYPE_LABELS: Record<string, string> = {
-  CALENDAR: "Calendar-based",
-  METER: "Meter-based",
-  USAGE: "Usage-based",
-  RUNTIME: "Runtime-based",
-  CONDITION: "Condition-based",
-  SEASONAL: "Seasonal",
-  INSPECTION: "Inspection-based",
-};
-
 /** Base calendar cadence of each named frequency, expressed in date-fns units. */
 const FREQUENCY_BASE: Record<string, { amount: number; unit: "days" | "weeks" | "months" | "years" }> = {
   DAILY: { amount: 1, unit: "days" },

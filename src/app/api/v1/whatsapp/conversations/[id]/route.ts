@@ -17,8 +17,10 @@ function idFromUrl(req: Request): string {
 
 export const GET = handler(async ({ req }): Promise<NextResponse> => {
   const id = idFromUrl(req);
-  const conv = await db.whatsAppConversation.findUnique({
-    where: { id },
+  // Accept the conversation row id (canonical) or the provider chatId;
+  // older notifications stored chatId as resourceId.
+  const conv = await db.whatsAppConversation.findFirst({
+    where: { OR: [{ id }, { chatId: id }] },
     select: {
       id: true, chatId: true, state: true, unreadCount: true, assignedAgentId: true,
       lastMessageAt: true, lastInboundAt: true,
@@ -39,7 +41,7 @@ export const GET = handler(async ({ req }): Promise<NextResponse> => {
     },
   });
   // Opening a conversation clears the unread badge (staff has seen it).
-  await db.whatsAppConversation.updateMany({ where: { id }, data: { unreadCount: 0 } });
+  await db.whatsAppConversation.updateMany({ where: { id: conv.id }, data: { unreadCount: 0 } });
   return ok({ ...conv, messages });
 }, { permission: PERMISSIONS.whatsapp_view });
 

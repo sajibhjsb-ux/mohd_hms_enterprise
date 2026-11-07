@@ -23,7 +23,8 @@ import { ClientApiError, api } from "@/lib/hms/api-client";
 import { hasPerm, useSession } from "@/components/hms/session";
 import { GlobalSearch, type SearchNavigateTarget } from "./global-search";
 import { useUi } from "@/lib/hms/ui-store";
-import { navigateTo, RESOURCE_ROUTES } from "@/lib/hms/router";
+import { navigateTo } from "@/lib/hms/router";
+import { notificationTarget } from "@/lib/hms/notification-target";
 import { humanize, PERMISSIONS } from "@/lib/hms/constants";
 import { initials } from "@/lib/hms/format";
 import { cn } from "@/lib/utils";
@@ -105,13 +106,37 @@ export function TopHeader({ onSearchNavigate, onOpenQr, onSelectModule, onOpenCh
   });
 
   async function markAllRead() {
-    await api.patch("/api/v1/notifications/read-all", {}).catch(() => undefined);
-    await loadNotifs();
+    const previous = notifs;
+    const previousUnread = unread;
+    const readAt = new Date().toISOString();
+    setNotifs((rows) => rows.map((n) => (n.readAt ? n : { ...n, readAt })));
+    setUnread(0);
+    try {
+      const res = await api.patch<{ updated: number; unread: number }>("/api/v1/notifications/read-all", {});
+      setUnread(res.data.unread);
+    } catch {
+      setNotifs(previous);
+      setUnread(previousUnread);
+      toast({ title: "Could not mark all as read", description: "Please try again.", variant: "destructive" });
+    }
   }
 
   async function markRead(id: string) {
-    await api.patch("/api/v1/notifications", { ids: [id] }).catch(() => undefined);
-    await loadNotifs();
+    const previous = notifs;
+    const previousUnread = unread;
+    const wasUnread = previous.some((n) => n.id === id && !n.readAt);
+    const readAt = new Date().toISOString();
+    setNotifs((rows) => rows.map((n) => (n.id === id && !n.readAt ? { ...n, readAt } : n)));
+    if (wasUnread) setUnread((n) => Math.max(0, n - 1));
+    try {
+      const res = await api.patch<{ updated: number; unread: number }>("/api/v1/notifications", { ids: [id] });
+      // Never let a slow/out-of-order response raise the optimistic badge.
+      setUnread((n) => Math.min(n, res.data.unread));
+    } catch {
+      setNotifs(previous);
+      setUnread(previousUnread);
+      toast({ title: "Could not mark notification read", description: "Please try again.", variant: "destructive" });
+    }
   }
 
   function toggleTheme() {
@@ -123,7 +148,7 @@ export function TopHeader({ onSearchNavigate, onOpenQr, onSelectModule, onOpenCh
   return (
     <TooltipProvider delayDuration={250}>
       <header className="sticky top-0 z-40 border-b border-border/50 bg-background/85 backdrop-blur-xl no-print pt-[env(safe-area-inset-top)]">
-        <div className="mx-auto max-w-[1500px] px-3 min-[360px]:px-4 sm:px-6 h-16 md:h-[72px] flex items-center gap-2 sm:gap-4">
+        <div className="mx-auto max-w-[1500px] px-2.5 min-[360px]:px-4 sm:px-6 h-16 md:h-[72px] flex items-center gap-2 sm:gap-4">
           {mobileSearch ? (
             /* MOBILE INLINE SEARCH MODE — the same header, same bar position,
                zero modal/overlay: a full-width field with the results panel
@@ -154,7 +179,7 @@ export function TopHeader({ onSearchNavigate, onOpenQr, onSelectModule, onOpenCh
               or truncated. Desktop (md+) rendering is unchanged. */}
           <button
             onClick={() => onSelectModule("dashboard")}
-            className="flex items-center gap-2 min-[360px]:gap-2.5 mr-1 shrink-0 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="flex min-h-11 items-center gap-2 min-[360px]:gap-2.5 mr-0 min-[360px]:mr-1 shrink-0 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring"
             aria-label="MOHD HMS Enterprise — go to dashboard"
           >
             <BrandLockup />
@@ -175,7 +200,7 @@ export function TopHeader({ onSearchNavigate, onOpenQr, onSelectModule, onOpenCh
             <Button
               variant="ghost"
               size="icon"
-              className="rounded-full h-10 w-10 sm:h-9 sm:w-9 lg:hidden"
+              className="rounded-full h-11 w-11 sm:h-9 sm:w-9 lg:hidden"
               onClick={() => setMobileSearch(true)}
               aria-label="Search"
               data-testid="mobile-search-button"
@@ -364,7 +389,7 @@ function OnlinePresenceIndicator() {
               data-testid="header-online-pill"
               aria-label="Online users — live presence"
               className={cn(
-                "inline-flex items-center gap-1.5 h-9 px-2 min-[400px]:px-2.5 rounded-full border text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                "inline-flex h-11 min-w-11 items-center justify-center gap-1.5 px-2 min-[400px]:px-2.5 rounded-full border text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 pillTone,
               )}
             >
@@ -501,7 +526,7 @@ function NotifMenu({ notifs, unread, onOpen, markAllRead, markRead }: {
   return (
     <DropdownMenu open={open} onOpenChange={(o) => { setOpen(o); if (o) onOpen(); }}>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" className="relative rounded-full h-10 w-10 sm:h-9 sm:w-9" aria-label={`Notifications (${unread} unread)`}>
+        <Button variant="ghost" size="icon" className="relative rounded-full h-11 w-11 sm:h-9 sm:w-9" aria-label={`Notifications (${unread} unread)`}>
           <Bell className="h-5 w-5" aria-hidden />
           {unread > 0 ? (
             <span className="absolute -top-0.5 -right-0.5 h-4 min-w-4 px-1 rounded-full bg-destructive text-white text-[10px] font-semibold flex items-center justify-center tabular-nums">
@@ -510,7 +535,7 @@ function NotifMenu({ notifs, unread, onOpen, markAllRead, markRead }: {
           ) : null}
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-[22rem] sm:w-[26rem] p-0">
+      <DropdownMenuContent align="end" className="w-[22rem] max-w-[calc(100vw-1rem)] sm:w-[26rem] sm:max-w-none p-0">
         <div className="flex items-center justify-between px-3 py-2.5 border-b">
           <span className="font-medium text-sm">Notifications</span>
           <Button variant="ghost" size="sm" onClick={markAllRead} disabled={unread === 0} className="h-7 text-xs">
@@ -524,18 +549,16 @@ function NotifMenu({ notifs, unread, onOpen, markAllRead, markRead }: {
             notifs.map((n) => (
               <button
                 key={n.id}
+                type="button"
                 onClick={() => {
-                  if (!n.readAt) markRead(n.id);
-                  // Navigate to the resource's dedicated detail page when one exists.
-                  if (n.resourceId) {
-                    const route = RESOURCE_ROUTES[n.resourceType];
-                    if (route) {
-                      setOpen(false);
-                      navigateTo(route.module, route.seg(n.resourceId));
-                    }
+                  if (!n.readAt) void markRead(n.id);
+                  const target = notificationTarget(n.resourceType, n.resourceId);
+                  if (target) {
+                    setOpen(false);
+                    navigateTo(target.module, target.seg, target.query);
                   }
                 }}
-                className={cn("w-full text-left px-3 py-2.5 border-b last:border-0 flex gap-2.5 hover:bg-accent/60", !n.readAt && "bg-primary/5")}
+                className={cn("w-full text-left px-3 py-2.5 border-b last:border-0 flex gap-2.5 hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring", !n.readAt && "bg-primary/5")}
               >
                 <span className="mt-0.5 shrink-0">
                   {n.type === "WARNING" ? <AlertTriangle className="h-4 w-4 text-amber-500" aria-hidden />
@@ -577,8 +600,8 @@ function ProfileMenu({ onToggleTheme, themeMounted, themeDark, onSignOut, onOpen
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" aria-label="Profile" className="rounded-full pl-1 pr-1.5 sm:pr-2.5 gap-2 h-10 sm:h-9">
-          <UserAvatar url={user.avatarUrl} name={user.name} className="h-9 w-9 text-xs shrink-0" />
+        <Button variant="ghost" aria-label="Profile" className="h-11 w-11 justify-center gap-2 rounded-full p-0 sm:h-9 sm:w-auto sm:justify-start sm:px-1.5 sm:pr-2.5">
+          <UserAvatar url={user.avatarUrl} name={user.name} className="h-8 w-8 text-xs shrink-0 sm:h-9 sm:w-9" />
           <span className="hidden md:block text-left leading-tight">
             <span className="block text-sm font-medium max-w-[10rem] truncate">{user.name}</span>
             <span className="block text-[10px] uppercase tracking-wide text-muted-foreground">{humanize(user.role)}</span>

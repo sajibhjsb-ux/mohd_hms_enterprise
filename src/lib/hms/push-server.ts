@@ -24,29 +24,13 @@ import { isAutomationEnabled } from "@/lib/hms/workflows/settings";
 import { resolvePushCategory, pushPrefEnabled } from "@/lib/hms/push/preferences";
 import { fcmConfigured } from "@/lib/hms/push/fcm";
 import { vapidPublicKey } from "@/lib/hms/push/vapid";
+import { notificationHref } from "@/lib/hms/notification-target";
 
 export { vapidPublicKey };
 
-/** Existing resource → dedicated application route (mirrors RESOURCE_ROUTES). */
+/** Existing resource → dedicated application route (shared with the header). */
 function routeFor(resourceType?: string, resourceId?: string): string {
-  if (!resourceType || !resourceId) return "/dashboard";
-  switch (resourceType) {
-    case "COMPLAINT": return `/complaints/${resourceId}`;
-    case "WORK_ORDER": return `/work-orders/${resourceId}`;
-    case "EQUIPMENT": return `/equipment/${resourceId}`;
-    case "CUSTOMER": return `/customers/${resourceId}`;
-    case "INVOICE": return `/invoices/${resourceId}`;
-    case "QUOTATION": return `/quotations/${resourceId}`;
-    case "PAYMENT": return `/invoices/${resourceId}`;
-    case "PURCHASE_ORDER": return `/purchases/${resourceId}`;
-    case "INVENTORY_ITEM": return `/inventory/${resourceId}`;
-    case "INSPECTION_REPORT": return `/irms/reports/${resourceId}`;
-    case "IRMS_PROJECT": return `/irms/${resourceId}`;
-    case "PM_PLAN":
-    case "PM_TASK": return `/pm/${resourceId}`;
-    case "HR_LEAVE": return `/hr/${resourceId}`;
-    default: return "/dashboard";
-  }
+  return notificationHref(resourceType, resourceId);
 }
 
 export type PushPayload = {

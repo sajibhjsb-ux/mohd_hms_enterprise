@@ -59,7 +59,9 @@ server.log
 # local working artifacts
 tool-results/
 upload/
+download/
 dev.log
+.zscripts/dev.pid
 
 # IRMS media storage (filesystem; originals never in git)
 /uploads

@@ -130,7 +130,7 @@ export const POST = handler(async ({ req, user }) => {
       title: "Phone number update request",
       message: `${me.name} (${me.email}) requested a mobile number update for review.`,
       type: "INFO",
-      resourceType: "ProfileChangeRequest",
+      resourceType: "PHONE_REQUEST_REVIEW",
       resourceId: request.id,
     }).catch(() => undefined)
   ));

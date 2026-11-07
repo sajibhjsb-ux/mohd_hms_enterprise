@@ -32,7 +32,7 @@ export const GET = handler(
     return ok({
       devices: fcmDevices.map((d) => ({
         id: d.id,
-        kind: "FCM" as const,
+        kind: (d.platform === "IOS" ? "APNS" : "FCM") as "APNS" | "FCM",
         platform: d.platform,
         deviceName: d.deviceName,
         browser: d.browser,

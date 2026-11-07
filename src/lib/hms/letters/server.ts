@@ -224,18 +224,3 @@ export function assertRequiredFields(fields: TemplateField[], data: Record<strin
     );
   }
 }
-
-/** Load a letter with everything the API routes need; 404 when absent. */
-export async function getLetterOr404(id: string) {
-  const letter = await db.letter.findUnique({
-    where: { id },
-    include: {
-      template: { select: { code: true, name: true, fieldsJson: true, department: true } },
-      employee: { select: { firstName: true, lastName: true } },
-      attachments: { orderBy: { createdAt: "asc" } },
-      events: { orderBy: { createdAt: "desc" }, take: 50 },
-    },
-  });
-  if (!letter) throw Errors.notFound("Letter not found.");
-  return letter;
-}

@@ -82,9 +82,6 @@ export function buildChecklistPrompt(ctx: ChecklistContext, maxTasks: number): {
   return { system, user: lines.join("\n") };
 }
 
-/** §30/§63 — post-execution summary prompt (facts-only, versioned under the same scheme). */
-export const CHECKLIST_SUMMARY_PROMPT_VERSION = "checklist-summary-v1";
-
 export function buildSummaryPrompt(input: {
   title: string;
   code: string;

@@ -26,7 +26,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { BeforeWorkPanel } from "@/components/hms/modules/work-orders/before-work-panel";
+import { EvidencePanel } from "@/components/hms/modules/work-orders/evidence-panel";
 import { ChecklistItemEvidence } from "@/components/hms/modules/work-orders/checklist-item-evidence";
 import { ClientApiError } from "@/lib/hms/api-client";
 import {
@@ -459,19 +459,14 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
             </div>
           </div>
 
-          {/* §15/§18 — before-work evidence (feeds the Start Work gate). It stays
-              visible after completion as the permanent evidence record. */}
-          <BeforeWorkPanel workOrderId={detail.id} canUpload={canOperate && woEditable} />
-
-          {/* §15/§40 — completion evidence (required by the backend to complete).
-              Upload opens only after work starts; the record stays visible after. */}
-          {["IN_PROGRESS", "ON_HOLD", "COMPLETED", "CLOSED"].includes(woStatus ?? "") ? (
-            <BeforeWorkPanel
-              workOrderId={detail.id}
-              phase="AFTER"
-              canUpload={canOperate && woEditable}
-            />
-          ) : null}
+          {/* Evidence — three strictly separated sections: BEFORE (read-only from
+              complaint), DURING (while active), AFTER (completion, required). */}
+          <EvidencePanel
+            workOrderId={detail.id}
+            complaintId={detail.complaint?.id ?? null}
+            canUpload={canOperate}
+            workOrderStatus={woStatus}
+          />
 
           {/* Checklist — §17/§20/§30: generated AFTER work-order creation from
               approved templates or AI (draft → review → approve → materialize);

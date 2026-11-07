@@ -24,7 +24,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import { ComplaintMediaPanel } from "./media-panel";
+import { ComplaintBeforeEvidencePanel } from "./before-evidence-panel";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -433,11 +433,9 @@ export function ComplaintDetailPage({ id }: { id: string }) {
 <WorkflowTimeline resourceType="COMPLAINT" resourceId={detail.id} className="mt-6" />
 
           <div className="mt-4">
-            <ComplaintMediaPanel
+            <ComplaintBeforeEvidencePanel
               complaintId={detail.id}
-              complaintStatus={detail.status}
               complaintControlled={complaintControlled}
-              canUpload={isAssignedTech || canUpdate || isPortalOwner}
             />
           </div>
 

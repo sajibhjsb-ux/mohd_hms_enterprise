@@ -16,6 +16,7 @@ import { useUi } from "@/lib/hms/ui-store";
 import { navigateTo } from "@/lib/hms/router";
 import { useToast } from "@/hooks/use-toast";
 import { PageShell } from "@/components/hms/shared/page-shell";
+import { CameraCaptureDialog } from "@/components/hms/shared/photo-capture";
 import { LoadingState, EmptyState, ErrorState } from "@/components/hms/shared/ui-bits";
 import { customerLabel, fmtDate, fromCents, money } from "@/lib/hms/format";
 import { Button } from "@/components/ui/button";
@@ -24,7 +25,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { FileText, Loader2, Paperclip, UploadCloud, X } from "lucide-react";
+import { Camera, FileText, Loader2, Paperclip, UploadCloud, X } from "lucide-react";
 import { parseVerification, PROOF_METHODS, type InvoiceDetail } from "./shared";
 
 const PROOF_METHOD_LABELS: Record<string, string> = {
@@ -69,6 +70,7 @@ export function InvoicePaymentProofPage({ id }: { id: string }) {
   const [touched, setTouched] = useState(false);
   const [busy, setBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -297,13 +299,24 @@ export function InvoicePaymentProofPage({ id }: { id: string }) {
 
           <div className="space-y-1.5">
             <Label htmlFor="proof-file">Proof document * (PDF, JPG or PNG — max 10 MB)</Label>
-            <input
-              ref={fileRef}
-              id="proof-file"
-              type="file"
-              accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
-              className="block w-full text-sm text-muted-foreground file:mr-3 file:rounded-md file:border-0 file:bg-primary/10 file:px-3 file:py-2 file:text-sm file:font-medium file:text-primary hover:file:bg-primary/15 cursor-pointer"
-              onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                ref={fileRef}
+                id="proof-file"
+                type="file"
+                accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
+                className="block min-w-0 flex-1 text-sm text-muted-foreground file:mr-3 file:rounded-md file:border-0 file:bg-primary/10 file:px-3 file:py-2 file:text-sm file:font-medium file:text-primary hover:file:bg-primary/15 cursor-pointer"
+                onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
+              />
+              <Button type="button" size="sm" variant="outline" onClick={() => setCameraOpen(true)}>
+                <Camera className="h-4 w-4 mr-1.5" aria-hidden /> Take Photo
+              </Button>
+            </div>
+            <CameraCaptureDialog
+              open={cameraOpen}
+              onClose={() => setCameraOpen(false)}
+              onCapture={(f) => { setCameraOpen(false); pickFile(f); }}
+              title="Payment proof photo"
             />
             {file ? (
               <div className="flex items-center gap-2 rounded-md border bg-muted/40 px-2.5 py-1.5 text-xs w-fit max-w-full">

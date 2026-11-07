@@ -76,7 +76,7 @@ export const POST = withId(
     const isUpdater = roleCan(user.role, PERMISSIONS.work_orders_update);
     const isAssignedTech = !!wo.technician && wo.technician.userId === user.id;
     if (!isUpdater && !isAssignedTech) throw Errors.forbidden();
-    if (["COMPLETED", "CANCELLED"].includes(wo.status) && !isUpdater) {
+    if (["COMPLETED", "CLOSED", "CANCELLED"].includes(wo.status)) {
       throw Errors.invalidTransition("This work order is closed — photos can no longer be added.");
     }
 
@@ -107,6 +107,10 @@ export const POST = withId(
       throw Errors.badRequest("A checklist-linked photo cannot also carry an evidence phase. Upload it twice with separate fields.");
     }
 
+    // Stable client id makes retries idempotent after a lost response.
+    const uploadIdRaw = form.get("uploadId");
+    const uploadId = typeof uploadIdRaw === "string" && /^[a-zA-Z0-9-]{8,64}$/.test(uploadIdRaw) ? uploadIdRaw.toLowerCase() : null;
+
     const buf = Buffer.from(await file.arrayBuffer());
     const sniffed = sniffMediaType(buf);
     if (!sniffed) {
@@ -121,7 +125,13 @@ export const POST = withId(
       );
     }
 
-    const key = `checklists/${wo.id}/photos/${randomUUID()}.${sniffed.ext}`;
+    const key = `checklists/${wo.id}/photos/${uploadId ?? randomUUID()}.${sniffed.ext}`;
+    if (uploadId) {
+      const existing = await db.document.findFirst({
+        where: { storagePath: key, resourceType: "WORK_ORDER", resourceId: wo.id },
+      });
+      if (existing) return ok(existing, 200);
+    }
     await storage.put(key, buf, sniffed.mime);
 
     const safeName = sanitizeFilename(file.name);

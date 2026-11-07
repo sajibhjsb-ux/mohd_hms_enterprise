@@ -111,10 +111,6 @@ export async function logoutSession(cfg: OpenWaClientConfig, sessionId: string):
   await request(cfg, "POST", `/api/sessions/${encodeURIComponent(sessionId)}/logout`, {});
 }
 
-export async function deleteSession(cfg: OpenWaClientConfig, sessionId: string): Promise<void> {
-  await request(cfg, "DELETE", `/api/sessions/${encodeURIComponent(sessionId)}`);
-}
-
 /** QR as a PNG data URL (data:image/png;base64,…) — render directly in <img>. */
 export async function getSessionQr(cfg: OpenWaClientConfig, sessionId: string): Promise<{ qrCode?: string; status?: string }> {
   return await request<{ qrCode?: string; status?: string }>(cfg, "GET", `/api/sessions/${encodeURIComponent(sessionId)}/qr`);
@@ -141,16 +137,6 @@ export async function sendDocument(
 ): Promise<OpenWaSendResult> {
   return await request<OpenWaSendResult>(
     cfg, "POST", `/api/sessions/${encodeURIComponent(sessionId)}/messages/send-document`,
-    { chatId, ...media },
-  );
-}
-
-export async function sendImage(
-  cfg: OpenWaClientConfig, sessionId: string, chatId: string,
-  media: { base64: string; mimetype: string; filename?: string; caption?: string },
-): Promise<OpenWaSendResult> {
-  return await request<OpenWaSendResult>(
-    cfg, "POST", `/api/sessions/${encodeURIComponent(sessionId)}/messages/send-image`,
     { chatId, ...media },
   );
 }
@@ -193,12 +179,4 @@ export async function createWebhook(
   input: { url: string; events: string[]; secret: string; headers?: Record<string, string> },
 ): Promise<OpenWaWebhook> {
   return await request<OpenWaWebhook>(cfg, "POST", `/api/sessions/${encodeURIComponent(sessionId)}/webhooks`, input);
-}
-
-export async function deleteWebhook(cfg: OpenWaClientConfig, sessionId: string, webhookId: string): Promise<void> {
-  await request(cfg, "DELETE", `/api/sessions/${encodeURIComponent(sessionId)}/webhooks/${encodeURIComponent(webhookId)}`);
-}
-
-export async function testWebhook(cfg: OpenWaClientConfig, sessionId: string, webhookId: string): Promise<{ success?: boolean; statusCode?: number; error?: string }> {
-  return await request(cfg, "POST", `/api/sessions/${encodeURIComponent(sessionId)}/webhooks/${encodeURIComponent(webhookId)}/test`, {});
 }

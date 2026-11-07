@@ -31,7 +31,7 @@ export function PageHeader({ title, subtitle, actions }: { title: string; subtit
         <h1 className="text-xl sm:text-2xl font-semibold tracking-tight">{title}</h1>
         {subtitle ? <p className="text-sm text-muted-foreground mt-0.5">{subtitle}</p> : null}
       </div>
-      {actions ? <div className="flex flex-wrap items-center gap-2 no-print">{actions}</div> : null}
+      {actions ? <div className="flex w-full flex-wrap items-center gap-2 no-print sm:w-auto">{actions}</div> : null}
     </div>
   );
 }
@@ -65,16 +65,20 @@ export function StatCard({ title, value, sub, icon, tone = "default", loading, h
           aria-hidden
         />
       ) : null}
-      <CardContent className="p-4 sm:p-5 flex items-center gap-4">
-        {icon ? <div className={cn("h-10 w-10 rounded-lg flex items-center justify-center shrink-0", toneCls)}>{icon}</div> : null}
-        <div className="min-w-0">
-          <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide truncate">{title}</div>
+      <CardContent className="relative p-4 sm:p-5 sm:flex sm:items-center sm:gap-4">
+        {icon ? (
+          <div className={cn("absolute right-3 top-3 hidden h-8 w-8 items-center justify-center rounded-lg min-[360px]:flex sm:static sm:h-10 sm:w-10 sm:shrink-0", toneCls)}>
+            {icon}
+          </div>
+        ) : null}
+        <div className="min-w-0 flex-1">
+          <div className="text-[10px] font-medium leading-snug text-muted-foreground uppercase tracking-normal line-clamp-2 min-[360px]:pr-9 min-[400px]:text-[11px] min-[400px]:tracking-wide sm:pr-0 sm:text-xs">{title}</div>
           {loading ? (
             <Skeleton className="h-7 w-20 mt-1" />
           ) : (
-            <div className="text-lg sm:text-xl font-semibold leading-tight mt-0.5 truncate" title={String(value)}>{value}</div>
+            <div className="mt-0.5 text-base font-semibold leading-tight break-words sm:text-xl sm:break-all" title={String(value)}>{value}</div>
           )}
-          {sub && !loading ? <div className="text-xs text-muted-foreground mt-0.5 truncate">{sub}</div> : null}
+          {sub && !loading ? <div className="mt-0.5 text-[11px] leading-snug text-muted-foreground line-clamp-2 sm:text-xs">{sub}</div> : null}
         </div>
       </CardContent>
     </Card>

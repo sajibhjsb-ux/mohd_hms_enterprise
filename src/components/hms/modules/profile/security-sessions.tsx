@@ -183,7 +183,7 @@ export function SecuritySessionsCard() {
 
         {/* ACTIVE SESSIONS (per device) */}
         <div className="space-y-3">
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm font-medium">Active sessions</p>
             <Button
               variant="outline"
@@ -193,7 +193,8 @@ export function SecuritySessionsCard() {
               disabled={revokingOthers || others.length === 0}
             >
               {revokingOthers ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" aria-hidden /> : <LogOut className="h-3.5 w-3.5 mr-1.5" aria-hidden />}
-              Sign Out All Other Sessions{others.length ? ` (${others.length})` : ""}
+              <span className="sm:hidden">Sign out others{others.length ? ` (${others.length})` : ""}</span>
+              <span className="hidden sm:inline">Sign Out All Other Sessions{others.length ? ` (${others.length})` : ""}</span>
             </Button>
           </div>
 
@@ -219,7 +220,7 @@ export function SecuritySessionsCard() {
                         <Badge variant="secondary" className="ml-2">This device</Badge>
                       ) : null}
                     </p>
-                    <p className="text-xs text-muted-foreground truncate">
+                    <p className="text-xs text-muted-foreground line-clamp-2">
                       Auto login: {r.autoLogin ? "ON" : "OFF"} · Last active {timeAgo(r.lastSeenAt)}
                       {r.ip ? ` · ${r.ip}` : ""}
                       {r.status === "REVOKED" ? " · Signed out (another device)" : ""}

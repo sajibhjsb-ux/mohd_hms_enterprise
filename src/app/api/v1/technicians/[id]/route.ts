@@ -37,7 +37,7 @@ export const GET = withId(PERMISSIONS.users_read, async (id) => {
 
   const [openWorkOrders, completedWorkOrders] = await Promise.all([
     db.workOrder.count({ where: { technicianId: id, status: { in: ["PENDING", "ACCEPTED", "IN_PROGRESS", "ON_HOLD"] } } }),
-    db.workOrder.count({ where: { technicianId: id, status: "COMPLETED" } }),
+    db.workOrder.count({ where: { technicianId: id, status: { in: ["COMPLETED", "CLOSED"] } } }),
   ]);
 
   return ok({ ...profile, openWorkOrders, completedWorkOrders });

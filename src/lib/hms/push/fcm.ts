@@ -1,4 +1,5 @@
 import "server-only";
+import { buildFcmMessage, type FcmMode, type FcmPayload } from "./fcm-message";
 
 // MOHD.HMS ENTERPRISE — Firebase Cloud Messaging (FCM) transport (server half).
 //
@@ -114,11 +115,20 @@ type FcmMessagingLike = {
     message: {
       tokens: string[];
       data?: Record<string, string>;
+      notification?: { title: string; body: string };
       webpush?: {
         headers?: Record<string, string>;
         fcmOptions?: { link?: string };
       };
-      android?: { priority?: "default" | "normal" | "high"; ttl?: number };
+      android?: {
+        priority?: "default" | "normal" | "high";
+        ttl?: number;
+        notification?: { channelId?: string; tag?: string; sound?: string; icon?: string; color?: string };
+      };
+      apns?: {
+        headers?: Record<string, string>;
+        payload?: { aps?: Record<string, unknown> };
+      };
     },
   ) => Promise<{
     successCount: number;
@@ -218,52 +228,29 @@ function classifyTokenError(err: { code?: string; message?: string }): "permanen
   return "transient";
 }
 
-export type FcmPayload = {
-  /** Data-only message: the existing /sw.js push handler displays + routes it. */
-  title: string;
-  body: string;
-  route: string;
-  tag: string;
-  priority: "NORMAL" | "HIGH" | "CRITICAL";
-  notificationId: string;
-  type: string;
-  resourceType: string;
-  resourceId: string;
-};
+export type { FcmPayload } from "./fcm-message";
 
 /**
  * Send ONE logical message to N tokens. Per-recipient results (spec §22) — a
  * batch is never treated as all-or-nothing. Returns per-token outcomes.
+ *
+ * WEB tokens get a data-only message: the existing /sw.js handler displays
+ * and routes it (one service worker, no competing FCM worker).
+ * NATIVE tokens get a notification block so Android/iOS display it while the
+ * app is backgrounded; the same payload fields still route the tap through
+ * the Capacitor push listener. Sending data-only to native would show nothing.
  */
-export async function sendFcmToTokens(tokens: string[], payload: FcmPayload): Promise<FcmOutcome[]> {
+export async function sendFcmToTokens(
+  tokens: string[],
+  payload: FcmPayload,
+  mode: FcmMode = "web",
+): Promise<FcmOutcome[]> {
   if (tokens.length === 0) return [];
   const messaging = await getMessaging();
   if (!messaging) {
     return tokens.map((token) => ({ token, kind: "transient" as const, error: "FCM_NOT_INITIALIZED" }));
   }
-
-  // Data-only messages keep the existing service worker in charge of display
-  // and click routing (ONE service worker — no competing firebase-messaging-sw).
-  const data: Record<string, string> = {
-    title: payload.title.slice(0, 120),
-    body: payload.body.slice(0, 300),
-    url: payload.route,
-    tag: payload.tag.slice(0, 80),
-    notificationId: payload.notificationId || "",
-    type: payload.type || "",
-    resourceType: payload.resourceType || "",
-    resourceId: payload.resourceId || "",
-    priority: payload.priority || "NORMAL",
-  };
-  const urgency = payload.priority === "NORMAL" ? "normal" : "high";
-  const message = {
-    data,
-    webpush: {
-      headers: { Urgency: urgency, "TTL": "3600" },
-      fcmOptions: { link: payload.route },
-    },
-    android: { priority: urgency === "high" ? ("high" as const) : ("normal" as const), ttl: 3_600_000 },
-  };
+  const message = mode === "native" ? buildFcmMessage(payload, "native") : buildFcmMessage(payload, "web");
 
   const outcomes: FcmOutcome[] = [];
   for (let i = 0; i < tokens.length; i += MULTICAST_CHUNK) {

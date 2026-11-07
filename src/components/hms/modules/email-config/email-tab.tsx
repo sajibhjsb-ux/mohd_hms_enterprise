@@ -7,7 +7,7 @@
 // Configuration module — the general Settings page has no email controls.
 
 import { useCallback, useEffect, useState } from "react";
-import { Activity, Building2, KeyRound, Mail, Plug, RefreshCw, Save, Send } from "lucide-react";
+import { Activity, Building2, KeyRound, Mail, Mailbox as MailboxIcon, Plug, RefreshCw, Save, Send } from "lucide-react";
 import { api } from "@/lib/hms/api-client";
 import { PERMISSIONS } from "@/lib/hms/constants";
 import { hasPerm, useSession } from "@/components/hms/session";
@@ -41,6 +41,12 @@ type EmailHealth = {
     provider?: string | null;
     lastVerifyAt: string | null;
     lastVerifyOk: boolean | null;
+  };
+  inbound: {
+    supported: boolean;
+    webhookConfigured: boolean;
+    totalReceived: number;
+    lastReceived: { at: string; from: string; subject: string } | null;
   };
 };
 
@@ -315,6 +321,7 @@ function OverviewPanel() {
   if (error || !health) return <ErrorState message={error ?? "Unknown error."} onRetry={() => void load()} />;
 
   const smtp = health.smtp;
+  const inbound = health.inbound;
   const mailboxes = meta.moduleMailboxes ?? [];
 
   return (
@@ -429,6 +436,53 @@ function OverviewPanel() {
           ) : (
             <p className="text-xs text-muted-foreground">Connection testing requires the email configuration permission.</p>
           )}
+        </CardContent>
+      </Card>
+
+      {/* Inbound status */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <MailboxIcon className="h-4 w-4 text-primary" /> Inbound mail
+          </CardTitle>
+          <CardDescription>
+            {inbound.supported
+              ? `Inbound retrieval is active — ${inbound.totalReceived} message${inbound.totalReceived !== 1 ? "s" : ""} received.`
+              : "Inbound retrieval is not configured — the inbox stays empty until a webhook or IMAP source is set up."}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
+            <div className="rounded-lg border p-2.5">
+              <p className="text-xs text-muted-foreground">Supported</p>
+              <p className={"font-medium font-mono text-xs " + (inbound.supported ? "text-emerald-600" : "text-muted-foreground")}>
+                {inbound.supported ? "Yes" : "No"}
+              </p>
+            </div>
+            <div className="rounded-lg border p-2.5">
+              <p className="text-xs text-muted-foreground">Webhook</p>
+              <p className={"font-medium font-mono text-xs " + (inbound.webhookConfigured ? "text-emerald-600" : "text-amber-600")}>
+                {inbound.webhookConfigured ? "Configured" : "Not set"}
+              </p>
+            </div>
+            <div className="rounded-lg border p-2.5">
+              <p className="text-xs text-muted-foreground">Received</p>
+              <p className="font-medium font-mono text-xs">{inbound.totalReceived}</p>
+            </div>
+            <div className="rounded-lg border p-2.5">
+              <p className="text-xs text-muted-foreground">Last received</p>
+              <p className="font-medium text-xs flex flex-wrap items-center gap-1.5">
+                {inbound.lastReceived ? (
+                  <>
+                    {when(inbound.lastReceived.at)}
+                    <span className="text-muted-foreground">· {inbound.lastReceived.from}</span>
+                  </>
+                ) : (
+                  "—"
+                )}
+              </p>
+            </div>
+          </div>
         </CardContent>
       </Card>
 

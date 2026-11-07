@@ -127,12 +127,18 @@ export const POST = handler(
 
     // High-severity findings escalate to supervisors immediately.
     if (created.severity === "HIGH" || created.severity === "CRITICAL") {
+      // Findings have no standalone page; link the owning occurrence/plan so
+      // the click lands where the finding is visible.
+      const target = created.pmTaskId
+        ? { resourceType: "PM_TASK", resourceId: created.pmTaskId }
+        : created.planId
+          ? { resourceType: "PM_PLAN", resourceId: created.planId }
+          : { resourceType: "PM_FINDING", resourceId: created.id };
       await notifyRole("SUPERVISOR", {
         title: "PM finding",
         message: `${created.severity} PM finding "${created.title}" on ${equipment.name} (${equipment.assetTag})${taskCode ? ` during ${taskCode}` : ""} requires attention.`,
         type: "WARNING",
-        resourceType: "PM_FINDING",
-        resourceId: created.id,
+        ...target,
       });
     }
 

@@ -19,6 +19,7 @@ import { PERMISSIONS, humanize, PM_FINDING_SEVERITIES } from "@/lib/hms/constant
 import { customerLabel, fmtDate, fmtDateTime, toCents } from "@/lib/hms/format";
 import { useToast } from "@/hooks/use-toast";
 import { PageShell } from "@/components/hms/shared/page-shell";
+import { PhotoUploader } from "@/components/hms/shared/photo-capture";
 import {
   EmptyState, ErrorState, LoadingState, Money, PriorityBadge, StatusBadge,
 } from "@/components/hms/shared/ui-bits";
@@ -41,7 +42,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useUi } from "@/lib/hms/ui-store";
 import {
-  AlertTriangle, CalendarClock as CalendarIcon, Camera, Check, CheckCircle2, CircleDashed, CircleOff, ClipboardCheck, Droplets, Flag,
+  AlertTriangle, CalendarClock as CalendarIcon, Check, CheckCircle2, CircleDashed, CircleOff, ClipboardCheck, Droplets, Flag,
   ImageIcon, Link2, Loader2, Package, PauseCircle, Play, Plus, ShieldAlert, Trash2, Wrench, X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -817,10 +818,6 @@ function PhotosCard({ task, onChanged }: { task: TaskDetail; onChanged: () => vo
   const { toast } = useToast();
   const [phase, setPhase] = useState<(typeof PHOTO_PHASES)[number]>("BEFORE");
   const [photos, setPhotos] = useState<PhotoDoc[]>(task.photos ?? []);
-  const [uploading, setUploading] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => { setPhotos(task.photos ?? []); }, [task.photos]);
 
   const refreshPhotos = useCallback(async () => {
     try {
@@ -831,29 +828,22 @@ function PhotosCard({ task, onChanged }: { task: TaskDetail; onChanged: () => vo
     }
   }, [task.id]);
 
-  const upload = async (files: FileList | null) => {
-    if (!files || files.length === 0) return;
-    setUploading(true);
-    let okCount = 0;
-    for (const file of Array.from(files)) {
-      try {
-        const fd = new FormData();
-        fd.set("file", file);
-        fd.set("phase", phase);
-        const res = await fetch(`/api/v1/pm/tasks/${encodeURIComponent(task.id)}/photos`, { method: "POST", body: fd, credentials: "same-origin" });
-        if (!res.ok) throw new Error(`Upload failed (${res.status})`);
-        okCount += 1;
-      } catch (e) {
-        toast({ title: "Photo upload failed", description: e instanceof Error ? e.message : undefined, variant: "destructive" });
-      }
+  const uploadPhoto = async (file: File, ctx: { uploadId: string }) => {
+    const fd = new FormData();
+    fd.set("file", file);
+    fd.set("phase", phase);
+    fd.set("uploadId", ctx.uploadId);
+    const res = await fetch(`/api/v1/pm/tasks/${encodeURIComponent(task.id)}/photos`, { method: "POST", body: fd, credentials: "same-origin" });
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      throw new Error(body?.error?.message ?? `Upload failed (${res.status})`);
     }
-    if (okCount > 0) {
-      toast({ title: `${okCount} photo${okCount === 1 ? "" : "s"} uploaded`, description: `Phase: ${humanize(phase)}.` });
-      await refreshPhotos();
-      onChanged();
-    }
-    setUploading(false);
-    if (fileRef.current) fileRef.current.value = "";
+  };
+
+  const onUploaded = async () => {
+    toast({ title: "Photos uploaded", description: `Phase: ${humanize(phase)}.` });
+    await refreshPhotos();
+    onChanged();
   };
 
   const phasePhotos = photos.filter((p) => (p.label ?? "").toUpperCase() === phase);
@@ -900,28 +890,24 @@ function PhotosCard({ task, onChanged }: { task: TaskDetail; onChanged: () => vo
           </div>
         )}
 
-        <div className="flex flex-wrap items-center gap-2">
-          <Select value={phase} onValueChange={(v) => setPhase(v as (typeof PHOTO_PHASES)[number])}>
-            <SelectTrigger className="w-[150px] min-h-[44px]" aria-label="Upload phase"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {[...PHOTO_PHASES, "FINDING", "METER"].map((p) => <SelectItem key={p} value={p}>{humanize(p)}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/*"
-            capture="environment"
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Select value={phase} onValueChange={(v) => setPhase(v as (typeof PHOTO_PHASES)[number])}>
+              <SelectTrigger className="w-[150px] min-h-[44px]" aria-label="Upload phase"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {[...PHOTO_PHASES, "FINDING", "METER"].map((p) => <SelectItem key={p} value={p}>{humanize(p)}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            {otherCount > 0 ? <span className="text-xs text-muted-foreground">{otherCount} in other phases</span> : null}
+          </div>
+          <PhotoUploader
             multiple
-            className="sr-only"
-            onChange={(e) => void upload(e.target.files)}
-            aria-label="Photo file input"
+            maxBytes={15 * 1024 * 1024}
+            uploadLabel="Upload photos"
+            hint="Take a photo or choose existing images (JPEG/PNG/WebP, up to 15 MB)."
+            onUpload={uploadPhoto}
+            onUploaded={onUploaded}
           />
-          <Button variant="outline" className="min-h-[44px]" disabled={uploading} onClick={() => fileRef.current?.click()}>
-            {uploading ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Camera className="h-4 w-4 mr-1.5" />}
-            {uploading ? "Uploading…" : "Upload / take photo"}
-          </Button>
-          {otherCount > 0 ? <span className="text-xs text-muted-foreground">{otherCount} in other phases</span> : null}
         </div>
       </CardContent>
     </Card>

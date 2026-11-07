@@ -21,7 +21,6 @@ export type { PublicLegalDoc } from "./types";
 export type TermsStatus = TermsStatusShape;
 
 export const LEGAL_ACCEPTANCE_SETTING = "terms_acceptance_required";
-export const SETTING_KEYS_TOUCHED_BY_LEGAL = [LEGAL_ACCEPTANCE_SETTING];
 
 // ── published-document cache (mirrors the automation-settings cache discipline)
 

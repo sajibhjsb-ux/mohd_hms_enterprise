@@ -153,16 +153,3 @@ export function useDraft<T extends object>(opts: DraftOptions<T>): DraftState<T>
 
   return { value, setValue, dirty, draftExists, restore, discard, reset, lastSavedAt, saveNow };
 }
-
-/** Route-leave guard for in-app navigation while a form is dirty. */
-export function useDirtyGuard(dirty: boolean) {
-  useEffect(() => {
-    if (!dirty) return;
-    const onPop = () => {
-      const leave = window.confirm("You have unsaved changes. Leave anyway?\nYour draft has been auto-saved and can be restored.");
-      if (!leave) history.pushState(null, "", location.href);
-    };
-    window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
-  }, [dirty]);
-}

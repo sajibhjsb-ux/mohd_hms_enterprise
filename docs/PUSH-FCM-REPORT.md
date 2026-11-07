@@ -17,6 +17,11 @@ What was added (all configuration-driven; nothing hardcoded):
 | `FIREBASE_VAPID_KEY` | Web Push certificate public key (required by `getToken`) | Public by design |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` | Legacy web-push transport (pre-existing system, unchanged behavior) | Public key public / private key server-only |
 
+> **Native iOS is not FCM.** Capacitor returns an APNs device token on iOS, so
+> iOS devices are delivered through Apple's HTTP/2 API (`APNS_*` env vars,
+> `src/lib/hms/push/apns.ts`). Android and web continue through FCM. See
+> `docs/NATIVE-MOBILE-REPORT.md` §4.
+
 `.env.example` documents every variable + the Firebase console checklist
 (FCM HTTP v1 API, Web Push certificate, authorized domain for
 `https://www.mohdhms.com`).

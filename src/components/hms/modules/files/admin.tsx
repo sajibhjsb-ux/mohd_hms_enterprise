@@ -274,7 +274,7 @@ export function FilesAdmin() {
               <Button size="sm" onClick={() => void loadAudit(1)} disabled={auditLoading}>{auditLoading ? "Searching…" : "Search"}</Button>
 
               {auditItems.length === 0 ? (
-                <EmptyState title="No matching audit records" description="Adjust the filters and search again." />
+                <EmptyState title="No matching audit records" hint="Adjust the filters and search again." />
               ) : (
                 <div className="rounded-lg border overflow-x-auto">
                   <Table>

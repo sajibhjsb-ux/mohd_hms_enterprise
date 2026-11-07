@@ -21,7 +21,7 @@ function withId(fn: (id: string, ctx: { req: NextRequest; user: SessionUser }) =
 }
 
 const CLOSED_STATUSES = ["COMPLETED", "SKIPPED", "CANCELLED", "FAILED"];
-const WO_TERMINAL_STATUSES = ["COMPLETED", "CANCELLED"];
+const WO_TERMINAL_STATUSES = ["COMPLETED", "CLOSED", "CANCELLED"];
 
 const rescheduleSchema = z.object({
   dueDate: z.string().min(1, "New due date is required."),

@@ -116,9 +116,104 @@
   * {
     @apply border-border outline-ring/50;
   }
+  html {
+    touch-action: manipulation;
+    /* `clip` (not `hidden`) contains stray horizontal overflow WITHOUT turning
+       the root into a scroll container, so the sticky header keeps working.
+       `hidden` is the legacy fallback for browsers without overflow: clip. */
+    overflow-x: hidden;
+    overflow-x: clip;
+    max-width: 100%;
+  }
   body {
     @apply bg-background text-foreground;
+    overflow-x: hidden;
+    overflow-x: clip;
+    max-width: 100%;
   }
+
+  /* Grid items default to min-width:auto, so one unbreakable child (a wide
+     table, a long code, a nowrap badge) can blow the whole grid track — and
+     the mobile layout viewport — wider than the screen. Let tracks shrink;
+     intentional wide content stays scrollable inside its own overflow-x box. */
+  main .grid > * {
+    min-width: 0;
+  }
+
+  /* Touch ergonomics for the mobile/tablet shell. Visual size stays compact
+     where the design calls for it; controls gain a 44px tap target. */
+  @media (max-width: 1023px) {
+    [data-slot="button"],
+    [data-slot="select-trigger"],
+    button[data-slot$="-trigger"]:not([data-slot="tooltip-trigger"]),
+    [role="menuitem"],
+    [data-slot="select-item"] {
+      min-height: 2.75rem;
+    }
+    [data-slot="button"],
+    button[data-slot$="-trigger"]:not([data-slot="tooltip-trigger"]) {
+      min-width: 2.75rem;
+    }
+    [data-slot="tabs-list"] {
+      min-height: 3rem;
+    }
+    [data-slot="tabs-trigger"] {
+      min-height: 2.75rem;
+    }
+    [data-slot="checkbox"],
+    [role="checkbox"],
+    [role="switch"],
+    [data-slot="tooltip-trigger"] {
+      position: relative;
+    }
+    [data-slot="checkbox"] {
+      min-height: 1.25rem;
+      min-width: 1.25rem;
+    }
+    [data-slot="checkbox"]::after,
+    [role="checkbox"]::after,
+    [role="switch"]::after {
+      content: "";
+      position: absolute;
+      inset: -0.75rem;
+    }
+    [role="switch"]::after {
+      inset-block: -0.8125rem;
+    }
+    [data-slot="tooltip-trigger"]::after {
+      content: "";
+      position: absolute;
+      inset: -0.875rem;
+    }
+    [data-testid="global-search-clear"] {
+      position: relative;
+    }
+    [data-testid="global-search-clear"]::after {
+      content: "";
+      position: absolute;
+      inset: -0.625rem;
+    }
+  }
+
+  @media (max-width: 1023px) {
+    input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="hidden"]),
+    select,
+    textarea {
+      min-height: 2.75rem;
+    }
+  }
+}
+
+/* Bottom navigation yields to the on-screen keyboard so it never covers the
+   focused field. MobileNav toggles this class from visualViewport. */
+.hms-keyboard-open [data-testid="mobile-nav"] {
+  transform: translateY(110%);
+  transition: transform 180ms ease;
+}
+
+/* Hidden Recharts tooltips retain their last size and can widen the mobile layout. */
+.recharts-tooltip-wrapper[style*="visibility: hidden"] {
+  display: none;
 }
 
 /* MOHD.HMS enterprise scrollbars */
@@ -180,3 +275,7 @@
     animation: none;
   }
 }
+
+
+
+

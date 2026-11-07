@@ -185,7 +185,3 @@ function safeParseConditions(json: string): { field: string; value: string }[] {
     return v.filter((c) => c && typeof c.field === "string").map((c) => ({ field: c.field, value: String(c.value ?? "") }));
   } catch { return []; }
 }
-
-export function whatsappAutomationSeeds() {
-  return AUTOMATION_SEEDS;
-}

@@ -10,25 +10,45 @@ import { runEmailAutomations } from "./service";
 
 /** Event types with email automations (all verified to exist in the app). */
 export const EMAIL_AUTOMATION_EVENTS = [
+  // Complaint lifecycle
   "COMPLAINT_CREATED",
   "COMPLAINT_ASSIGNED",
+  "COMPLAINT_ACCEPTED",
+  "COMPLAINT_STARTED",
   "COMPLAINT_COMPLETED",
   "COMPLAINT_CONFIRMED",
+  "COMPLAINT_CLOSED",
+  "COMPLAINT_REOPENED",
+  "COMPLAINT_CANCELLED",
+  // Work orders
   "WORK_ORDER_CREATED",
+  "WORK_ORDER_ACCEPTED",
+  "WORK_ORDER_STARTED",
+  "WORK_ORDER_ON_HOLD",
+  "WORK_ORDER_SUBMITTED",
+  "WORK_ORDER_CLOSED",
+  "WORK_ORDER_REOPENED",
   "WORK_ORDER_COMPLETED",
+  // Quotations
   "QUOTATION_SENT",
   "QUOTATION_ACCEPTED",
   "QUOTATION_EXPIRING",
+  // Invoices / payments
   "INVOICE_SENT",
   "INVOICE_DUE_SOON",
   "INVOICE_OVERDUE",
   "PAYMENT_RECEIVED",
+  // PM (scheduler events exist)
   "PM_REMINDER",
   "PM_OVERDUE",
+  // Purchasing
   "PURCHASE_CREATED",
+  // Inspections
   "INSPECTION_SUBMITTED",
   "INSPECTION_APPROVED",
+  // HR letters
   "LETTER_APPROVED",
+  // Inventory
   "LOW_STOCK",
 ] as const;
 

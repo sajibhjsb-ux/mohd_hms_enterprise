@@ -110,7 +110,7 @@ async function buildReport(type: ReportType, from: Date, to: Date, user: Session
       const live = wos.filter((w) => w.status !== "CANCELLED");
       const summary: Summary = {
         total: rows.length,
-        completed: wos.filter((w) => w.status === "COMPLETED").length,
+        completed: wos.filter((w) => ["COMPLETED", "CLOSED"].includes(w.status)).length,
         totalValueCents: live.reduce((sum, w) => sum + w.totalCents, 0),
       };
       return { summary, rows };
@@ -262,7 +262,7 @@ async function buildReport(type: ReportType, from: Date, to: Date, user: Session
           specialty: t.specialty,
           openWOs: await db.workOrder.count({ where: { technicianId: t.id, status: { in: openWoStatuses } } }),
           completedWOs: await db.workOrder.count({
-            where: { technicianId: t.id, status: "COMPLETED", completedAt: { gte: from, lte: to } },
+            where: { technicianId: t.id, status: { in: ["COMPLETED", "CLOSED"] }, completedAt: { gte: from, lte: to } },
           }),
           openComplaints: await db.complaint.count({
             where: { assignedTechnicianId: t.id, status: { in: openComplaintStatuses } },

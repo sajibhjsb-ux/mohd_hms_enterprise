@@ -14,6 +14,20 @@ import { COMPLAINT_DETAIL_INCLUDE, assertViewComplaint, technicianProfileIdFor }
 import { emit } from "@/lib/hms/workflows/bus";
 import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 import { assertComplaintNotControlledByWorkOrder } from "@/lib/hms/workflows/complaint-work-order";
+import {
+  notifyTechnicianAssigned,
+  notifyComplaintStaff,
+  notifyComplaintUser,
+  notifyWorkOrderCreated,
+  notifyWorkOrderAccepted,
+  notifyWorkOrderStarted,
+  notifyWorkOrderOnHold,
+  notifyWorkOrderSubmitted,
+  notifyWorkOrderClosed,
+  notifyWorkOrderReopened,
+  notifyComplaintClosed,
+  notifyComplaintCancelled,
+} from "@/lib/hms/complaint-notifications";
 
 type Ctx = { req: NextRequest; user: SessionUser };
 
@@ -83,6 +97,17 @@ export const POST = withId(
           actorId: user.id, actorEmail: user.email, action: "COMPLAINT_ASSIGNED",
           resourceType: "COMPLAINT", resourceId: id, metadata: { code, technicianId: tech.id, technician: tech.user.name },
         });
+        // Centralized complaint notification: Admin, Supervisor, assigned
+        // technician, customer and creator (Super Admin excluded).
+        await notifyTechnicianAssigned({
+          complaintId: id,
+          complaintCode: code,
+          technicianName: tech.user.name,
+          assignedBy: user.name,
+          workOrderCode: null,
+          customerId: complaint.customerId,
+          createdById: complaint.createdById ?? "",
+        });
         await notify({
           userId: tech.userId, title: "New complaint assigned",
           message: `You have been assigned complaint ${code}: ${complaint.title}`,
@@ -95,9 +120,7 @@ export const POST = withId(
             type: "INFO", resourceType: "COMPLAINT", resourceId: id,
           });
         }
-        // Outbox: assignment event (escalation engine keys off it) + queued email.
         await emit({ type: EVENT_TYPES.COMPLAINT_ASSIGNED, resourceType: "COMPLAINT", resourceId: id, payload: { code, technicianId: tech.id }, actorType: "USER", actorId: user.id });
-        await emit({ type: EVENT_TYPES.EMAIL_SEND, resourceType: "COMPLAINT", resourceId: id, payload: { userId: tech.userId, title: "New complaint assigned", message: `You have been assigned complaint ${code}: ${complaint.title}` }, actorType: "USER", actorId: user.id });
         return ok(updated);
       }
 
@@ -118,6 +141,26 @@ export const POST = withId(
           actorId: user.id, actorEmail: user.email, action: body.action === "accept" ? "COMPLAINT_ACCEPTED" : "COMPLAINT_STARTED",
           resourceType: "COMPLAINT", resourceId: id, metadata: { code },
         });
+        // Notify Admin + Supervisor + customer + creator about the status change.
+        await Promise.all([
+          notifyComplaintStaff({
+            complaintId: id,
+            complaintCode: code,
+            eventType: body.action === "accept" ? EVENT_TYPES.COMPLAINT_ACCEPTED : EVENT_TYPES.COMPLAINT_STARTED,
+            title: body.action === "accept" ? "Complaint Accepted" : "Work Started",
+            message: `${code} is now ${body.action === "accept" ? "accepted" : "in progress"} (${user.name}).`,
+            type: "INFO",
+          }),
+          notifyComplaintUser({
+            userId: portalUserId ?? complaint.createdById ?? "",
+            complaintId: id,
+            complaintCode: code,
+            eventType: body.action === "accept" ? EVENT_TYPES.COMPLAINT_ACCEPTED : EVENT_TYPES.COMPLAINT_STARTED,
+            title: body.action === "accept" ? "Complaint Accepted" : "Work Started",
+            message: `Your complaint ${code} is now ${body.action === "accept" ? "accepted" : "in progress"}.`,
+            type: "INFO",
+          }),
+        ]);
         await notifyRole("SUPERVISOR", {
           title: "Complaint in progress", message: `${code} is now in progress (${user.name}).`,
           type: "INFO", resourceType: "COMPLAINT", resourceId: id,
@@ -155,6 +198,25 @@ export const POST = withId(
             type: "SUCCESS", resourceType: "COMPLAINT", resourceId: id,
           });
         }
+        await Promise.all([
+          notifyComplaintStaff({
+            complaintId: id,
+            complaintCode: code,
+            eventType: EVENT_TYPES.COMPLAINT_COMPLETED,
+            title: "Complaint Completed",
+            message: `${code} marked completed by ${user.name}, awaiting customer confirmation.`,
+            type: "INFO",
+          }),
+          notifyComplaintUser({
+            userId: complaint.createdById ?? "",
+            complaintId: id,
+            complaintCode: code,
+            eventType: EVENT_TYPES.COMPLAINT_COMPLETED,
+            title: "Complaint Completed",
+            message: `Your complaint ${code} has been marked completed, awaiting your confirmation.`,
+            type: "INFO",
+          }),
+        ]);
         await notifyRole("SUPERVISOR", {
           title: "Complaint completed", message: `${code} marked completed by ${user.name}, awaiting customer confirmation.`,
           type: "INFO", resourceType: "COMPLAINT", resourceId: id,
@@ -193,6 +255,25 @@ export const POST = withId(
           resourceType: "COMPLAINT", resourceId: id, metadata: { code, by: user.role },
         });
         await Promise.all([
+          notifyComplaintStaff({
+            complaintId: id,
+            complaintCode: code,
+            eventType: EVENT_TYPES.COMPLAINT_CONFIRMED,
+            title: "Complaint Confirmed",
+            message: `Complaint ${code} confirmed, ready for invoicing.`,
+            type: "INFO",
+          }),
+          notifyComplaintUser({
+            userId: complaint.createdById ?? "",
+            complaintId: id,
+            complaintCode: code,
+            eventType: EVENT_TYPES.COMPLAINT_CONFIRMED,
+            title: "Complaint Confirmed",
+            message: `Your complaint ${code} has been confirmed and is ready for invoicing.`,
+            type: "SUCCESS",
+          }),
+        ]);
+        await Promise.all([
           notifyRole("ADMIN", {
             title: "Complaint confirmed", message: `Complaint ${code} confirmed, ready for invoicing.`,
             type: "INFO", resourceType: "COMPLAINT", resourceId: id,
@@ -220,6 +301,25 @@ export const POST = withId(
           actorId: user.id, actorEmail: user.email, action: "COMPLAINT_CLOSED",
           resourceType: "COMPLAINT", resourceId: id, metadata: { code },
         });
+        await Promise.all([
+          notifyComplaintStaff({
+            complaintId: id,
+            complaintCode: code,
+            eventType: EVENT_TYPES.COMPLAINT_CLOSED,
+            title: "Complaint Closed",
+            message: `Complaint ${code} has been closed.`,
+            type: "SUCCESS",
+          }),
+          notifyComplaintUser({
+            userId: complaint.createdById ?? "",
+            complaintId: id,
+            complaintCode: code,
+            eventType: EVENT_TYPES.COMPLAINT_CLOSED,
+            title: "Complaint Closed",
+            message: `Your complaint ${code} has been closed.`,
+            type: "SUCCESS",
+          }),
+        ]);
         await emit({ type: EVENT_TYPES.COMPLAINT_CLOSED, resourceType: "COMPLAINT", resourceId: id, payload: { code }, actorType: "USER", actorId: user.id });
         return ok(updated);
       }
@@ -239,6 +339,16 @@ export const POST = withId(
         await audit({
           actorId: user.id, actorEmail: user.email, action: "COMPLAINT_CANCELLED",
           resourceType: "COMPLAINT", resourceId: id, metadata: { code, fromStatus: from },
+        });
+        await emit({ type: EVENT_TYPES.COMPLAINT_CANCELLED, resourceType: "COMPLAINT", resourceId: id, payload: { code, fromStatus: from }, actorType: "USER", actorId: user.id });
+        await notifyComplaintCancelled({
+          complaintId: id,
+          complaintCode: code,
+          reason: body.note ?? null,
+          cancelledBy: user.name,
+          customerId: complaint.customerId,
+          createdById: complaint.createdById ?? "",
+          technicianUserId: complaint.assignedTechnician?.user?.id ?? null,
         });
         if (complaint.assignedTechnician?.user?.id) {
           await notify({

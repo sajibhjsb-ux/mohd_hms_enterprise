@@ -23,13 +23,12 @@ async function markReadScoped(userId: string, where: Parameters<typeof db.notifi
   return { updated: res.count, unread };
 }
 
-/**
- * Mark specific notifications read. Only the not-yet-read subset counts.
- * Fires a NOTIFICATION_READ event when anything actually changed.
- */
+/** Mark specific notifications read (only the caller's own unread rows count). */
 export async function markNotificationsRead(userId: string, ids: string[]): Promise<MarkReadResult> {
-  const result = await markReadScoped(userId, { userId, readAt: null, id: { in: ids } });
-  if (result.updated > 0) await notifyReadEvent(userId, result, { ids });
+  const unique = Array.from(new Set(ids.filter(Boolean)));
+  if (unique.length === 0) return { updated: 0, unread: await unreadCount(userId) };
+  const result = await markReadScoped(userId, { userId, readAt: null, id: { in: unique } });
+  if (result.updated > 0) await notifyReadEvent(userId, result, { ids: unique });
   return result;
 }
 
@@ -59,42 +58,4 @@ async function notifyReadEvent(userId: string, result: MarkReadResult, extra: Re
     actorType: "USER",
     actorId: userId,
   });
-}
-
-/** Filter a list query where (active = not expired / expiry set in the future). */
-export function notificationActiveWhere(userId: string) {
-  return {
-    userId,
-    AND: [
-      { OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] },
-    ],
-  };
-}
-
-/**
- * Dedicated application deep-link for a notification. Mirrors the header's
- * RESOURCE_ROUTES routing so a click always lands on the entity's page.
- */
-export function notificationRouteFor(resourceType?: string, resourceId?: string): string {
-  if (!resourceType || !resourceId) return "/dashboard";
-  switch (resourceType) {
-    case "COMPLAINT": return `/complaints/${resourceId}`;
-    case "WORK_ORDER": return `/work-orders/${resourceId}`;
-    case "EQUIPMENT": return `/equipment/${resourceId}`;
-    case "CUSTOMER": return `/customers/${resourceId}`;
-    case "INVOICE": return `/invoices/${resourceId}`;
-    case "QUOTATION": return `/quotations/${resourceId}`;
-    case "PAYMENT": return `/invoices/${resourceId}`;
-    case "PURCHASE_ORDER": return `/purchases/${resourceId}`;
-    case "INVENTORY_ITEM": return `/inventory/${resourceId}`;
-    case "INSPECTION_REPORT": return `/irms/reports/${resourceId}`;
-    case "IRMS_PROJECT": return `/irms/${resourceId}`;
-    case "PM_PLAN":
-    case "PM_TASK": return `/pm/${resourceId}`;
-    case "HR_LEAVE": return `/hr/${resourceId}`;
-    case "FILE": return `/files/file/${resourceId}`;
-    case "FILE_FOLDER": return `/files/my/${resourceId}`;
-    case "MAIL_MESSAGE": return `/email/m/${resourceId}`;
-    default: return "/dashboard";
-  }
 }

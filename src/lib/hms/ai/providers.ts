@@ -143,10 +143,6 @@ export function getProviderDef(id: string): AiProviderDef | null {
   return AI_PROVIDERS.find((p) => p.id === id) ?? null;
 }
 
-export function isAiProviderId(id: string): id is AiProviderId {
-  return AI_PROVIDERS.some((p) => p.id === id);
-}
-
 /** Providers that accept an administrator-supplied credential. */
 export function externalProviders(): AiProviderDef[] {
   return AI_PROVIDERS.filter((p) => p.requiresKey);

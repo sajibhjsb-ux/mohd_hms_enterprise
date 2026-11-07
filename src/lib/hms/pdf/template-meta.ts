@@ -184,12 +184,6 @@ export const BLOCK_META: Record<TemplateType, BlockMeta[]> = {
   ],
 };
 
-/** Canonical block order for a type = the declared order (what the built-in
- *  layout renders). The editor initializes from this. */
-export function defaultBlockOrder(type: TemplateType): string[] {
-  return BLOCK_META[type].map((b) => b.id);
-}
-
 // ── variables (§12/§13) ─────────────────────────────────────────────────────
 
 export type TemplateVariable = { key: string; label: string };

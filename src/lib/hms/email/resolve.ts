@@ -64,7 +64,11 @@ export async function resolveTemplateData(templateKey: string, ctx: ResolutionCo
       // ── Complaints ──
       case "COMPLAINT_CREATED":
       case "COMPLAINT_ASSIGNED":
-      case "COMPLAINT_COMPLETED": {
+      case "COMPLAINT_COMPLETED":
+      case "COMPLAINT_CONFIRMED":
+      case "COMPLAINT_CLOSED":
+      case "COMPLAINT_REOPENED":
+      case "COMPLAINT_CANCELLED": {
         const c = await db.complaint.findUnique({
           where: { id: ctx.resourceId },
           include: {
@@ -81,11 +85,20 @@ export async function resolveTemplateData(templateKey: string, ctx: ResolutionCo
         out.COMPLAINT_LOCATION = c.equipment?.location?.name ?? "";
         out.CUSTOMER_NAME = c.customer?.companyName || c.customer?.contactPerson || "";
         out.TECHNICIAN_NAME = c.assignedTechnician?.user?.name ?? "";
+        out.COMPLAINT_DATE = dateStr(c.createdAt);
+        out.COMPLAINT_REOPEN_REASON = "";
+        out.COMPLAINT_CANCEL_REASON = "";
         break;
       }
       // ── Work orders ──
       case "WORK_ORDER_CREATED":
-      case "WORK_ORDER_COMPLETED": {
+      case "WORK_ORDER_ACCEPTED":
+      case "WORK_ORDER_STARTED":
+      case "WORK_ORDER_ON_HOLD":
+      case "WORK_ORDER_SUBMITTED":
+      case "WORK_ORDER_COMPLETED":
+      case "WORK_ORDER_CLOSED":
+      case "WORK_ORDER_REOPENED": {
         const w = await db.workOrder.findUnique({
           where: { id: ctx.resourceId },
           include: {
@@ -103,6 +116,8 @@ export async function resolveTemplateData(templateKey: string, ctx: ResolutionCo
         out.COMPLAINT_LOCATION = w.complaint?.equipment?.location?.name ?? "";
         out.CUSTOMER_NAME = w.customer?.companyName || w.customer?.contactPerson || "";
         out.TECHNICIAN_NAME = w.technician?.user?.name ?? "";
+        out.WORK_ORDER_CLOSED_BY = "";
+        out.WORK_ORDER_HOLD_REASON = "";
         break;
       }
       // ── Quotations ──

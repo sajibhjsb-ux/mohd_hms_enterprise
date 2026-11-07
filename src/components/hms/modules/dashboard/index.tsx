@@ -118,7 +118,7 @@ export function DashboardModule() {
       ) : null}
 
       {/* KPI row — every card drills down to its feature page (kpi-nav.ts); no popups. */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <StatCard title="Open Complaints" value={k?.openComplaints ?? 0} sub={k?.urgentComplaints ? `${k.urgentComplaints} urgent` : "No urgent items"} icon={<AlertTriangle className="h-5 w-5" />} tone={k?.urgentComplaints ? "danger" : "default"} loading={loading} href={kpiHref("openComplaints", user)} />
         <StatCard title="Active Work Orders" value={k?.activeWOs ?? 0} sub={k?.pendingWOs ? `${k.pendingWOs} awaiting start` : "All underway"} icon={<ClipboardList className="h-5 w-5" />} loading={loading} href={kpiHref("activeWOs", user)} />
         <StatCard title="PM Due / Overdue" value={k?.overduePm ?? 0} icon={<CalendarClock className="h-5 w-5" />} tone={(k?.overduePm ?? 0) > 0 ? "warning" : "success"} loading={loading} href={kpiHref("overduePm", user)} />
@@ -142,7 +142,7 @@ export function DashboardModule() {
       ) : null}
       {!isFinanceView && (k?.lowStock ?? 0) > 0 ? (
         <Card className="border-amber-200 bg-amber-50/60">
-          <CardContent className="p-4 flex items-center gap-3 text-sm">
+          <CardContent className="flex flex-wrap items-center gap-3 p-4 text-sm">
             <Boxes className="h-5 w-5 text-amber-600 shrink-0" aria-hidden />
             <span><strong>{k?.lowStock}</strong> inventory item{(k?.lowStock ?? 0) === 1 ? "" : "s"} at or below minimum stock.</span>
             <Button size="sm" variant="outline" className="ml-auto" onClick={() => kpiNavigate("lowStock", user)}>Review low stock</Button>
@@ -201,13 +201,15 @@ export function DashboardModule() {
             ) : (
               <div className="divide-y">
                 {data?.recentComplaints.map((c) => (
-                  <button key={c.id} onClick={() => go("complaints", [c.id])} className="w-full text-left py-2.5 flex items-center gap-3 hover:bg-accent/40 rounded-md px-1.5">
+                  <button key={c.id} onClick={() => go("complaints", [c.id])} className="flex w-full flex-col items-start gap-1.5 rounded-md px-1.5 py-3 text-left hover:bg-accent/40 sm:flex-row sm:items-center sm:gap-3">
                     <div className="min-w-0 flex-1">
-                      <div className="text-sm font-medium truncate">{c.title}</div>
-                      <div className="text-xs text-muted-foreground truncate">{c.code} · {customerLabel(c.customer)} · {fmtDateTime(c.createdAt)}</div>
+                      <div className="text-sm font-medium line-clamp-2 sm:truncate">{c.title}</div>
+                      <div className="text-xs text-muted-foreground line-clamp-2 sm:truncate">{c.code} · {customerLabel(c.customer)} · {fmtDateTime(c.createdAt)}</div>
                     </div>
-                    <StatusBadge status={c.priority} />
-                    <StatusBadge status={c.status} />
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <StatusBadge status={c.priority} />
+                      <StatusBadge status={c.status} />
+                    </div>
                   </button>
                 ))}
               </div>

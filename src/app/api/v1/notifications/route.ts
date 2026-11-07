@@ -9,7 +9,8 @@
 
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { handler, ok, okList } from "@/lib/hms/api";
+import { handler, ok, okList, parseBody, Errors } from "@/lib/hms/api";
+import { markAllNotificationsRead, markNotificationsRead } from "@/lib/hms/notifications";
 
 export const GET = handler(async ({ req, user }) => {
   const sp = new URL(req.url).searchParams;
@@ -57,4 +58,19 @@ export const GET = handler(async ({ req, user }) => {
     hasMore,
     nextCursor: nextCursor ?? null,
   });
+});
+
+const markReadSchema = z.object({
+  ids: z.array(z.string().min(1)).max(100).optional(),
+  all: z.boolean().optional(),
+}).refine((v) => v.all === true || (v.ids?.length ?? 0) > 0, {
+  message: "Provide notification ids or all: true.",
+});
+
+/** PATCH /api/v1/notifications — mark the caller's notifications read. */
+export const PATCH = handler(async ({ req, user }) => {
+  const body = await parseBody(req, markReadSchema);
+  if (body.all) return ok(await markAllNotificationsRead(user.id, user.email));
+  if (!body.ids) throw Errors.badRequest("Provide notification ids or all: true.");
+  return ok(await markNotificationsRead(user.id, body.ids));
 });

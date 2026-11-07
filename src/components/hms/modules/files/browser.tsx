@@ -30,7 +30,7 @@ import {
 } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
 import { navigateTo } from "@/lib/hms/router";
-import { fileIcon, folderIcon, fmtBytes, permAtLeast, when, type Crumb, type FileRow, type FolderRow } from "./shared";
+import { fileIcon, folderIcon as FolderIcon, fmtBytes, permAtLeast, when, type Crumb, type FileRow, type FolderRow } from "./shared";
 import { FilesBackButton } from "./back-button";
 import { ShareDialog } from "./share-dialog";
 
@@ -190,7 +190,7 @@ export function FilesBrowser({ folderId, mode = { kind: "my" } as Mode }: { fold
         {data.folders.length === 0 && data.files.length === 0 ? (
           <EmptyState
             title="This folder is empty"
-            description="Drop files here to upload them to this folder, or use the Upload button."
+            hint="Drop files here to upload them to this folder, or use the Upload button."
             action={permAtLeast(accessLevel, "EDIT") ? (
               <Button size="sm" onClick={() => navigateTo("files", ["upload"])}>
                 <Upload className="h-4 w-4 mr-1.5" /> Go to Upload
@@ -217,7 +217,7 @@ export function FilesBrowser({ folderId, mode = { kind: "my" } as Mode }: { fold
                         className="flex items-center gap-2.5 text-left hover:underline"
                         onClick={() => navigateTo("files", mode.kind === "my" ? ["my", folder.id] : ["sf", folder.id])}
                       >
-                        <folderIcon className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+                        <FolderIcon className="h-4 w-4 shrink-0 text-primary" aria-hidden />
                         <span className="font-medium">{folder.name}</span>
                       </button>
                     </TableCell>

@@ -48,12 +48,13 @@ import {
 } from "@/components/ui/dialog";
 import {
   AlertTriangle, ArrowLeft, BadgeCheck, Briefcase, Building2, CheckCircle2, ChevronRight, Clock,
-  IdCard, ImagePlus, KeyRound, Loader2, Lock, Mail, MapPin, Pencil, Phone, Save,
+  Camera, IdCard, ImagePlus, KeyRound, Loader2, Lock, Mail, MapPin, Pencil, Phone, Save,
   ScrollText, ShieldCheck, Smartphone, Trash2, User, Wrench,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SkillsManager, type SkillEntry } from "@/components/hms/modules/technicians/skills-manager";
 import { UserAvatar as Avatar } from "@/components/hms/shared/avatar";
+import { CameraCaptureDialog } from "@/components/hms/shared/photo-capture";
 
 type ProfilePayload = {
   user: {
@@ -386,9 +387,9 @@ function ProfileViewPage() {
           <CardDescription>Sign-in details for this account.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <Avatar url={data.user.avatarUrl} name={data.user.name} className="h-12 w-12 text-sm shrink-0" />
-            <div className="min-w-0">
+            <div className="min-w-[11rem] flex-1">
               <div className="font-medium truncate">{data.user.name}</div>
               <div className="text-xs text-muted-foreground flex items-center gap-1.5 truncate">
                 <Mail className="h-3 w-3 shrink-0" aria-hidden /> {data.user.email}
@@ -662,6 +663,7 @@ function ProfileEditPage({ onboarding }: { onboarding: boolean }) {
   const [saving, setSaving] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [cameraOpen, setCameraOpen] = useState(false);
 
   // Hydrate the form from the authoritative profile exactly once per load
   // (never clobber what the user is typing on refetch).
@@ -880,9 +882,18 @@ function ProfileEditPage({ onboarding }: { onboarding: boolean }) {
                 size="sm"
                 variant="outline"
                 disabled={uploading}
+                onClick={() => setCameraOpen(true)}
+              >
+                <Camera className="h-4 w-4 mr-1.5" aria-hidden /> Take Photo
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={uploading}
                 onClick={() => fileRef.current?.click()}
               >
-                <ImagePlus className="h-4 w-4 mr-1.5" aria-hidden /> Change Photo
+                <ImagePlus className="h-4 w-4 mr-1.5" aria-hidden /> Choose Photo
               </Button>
               {data.user.avatarUrl ? (
                 <Button type="button" size="sm" variant="ghost" disabled={uploading} onClick={() => void removePhoto()}>
@@ -891,6 +902,12 @@ function ProfileEditPage({ onboarding }: { onboarding: boolean }) {
               ) : null}
             </div>
           </div>
+          <CameraCaptureDialog
+            open={cameraOpen}
+            onClose={() => setCameraOpen(false)}
+            onCapture={(file) => { setCameraOpen(false); void uploadPhoto(file); }}
+            title="Profile photo"
+          />
         </CardContent>
       </Card>
 

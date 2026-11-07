@@ -30,7 +30,7 @@ export const GET = handler(
       user,
       devices: [
         ...fcmDevices.map((d) => ({
-          id: d.id, kind: "FCM" as const,
+          id: d.id, kind: (d.platform === "IOS" ? "APNS" : "FCM") as "APNS" | "FCM",
           label: [d.deviceName, d.browser, d.operatingSystem].filter(Boolean).join(" · ") || d.platform,
           platform: d.platform, active: d.active, lastSeenAt: d.lastSeenAt,
         })),

@@ -88,7 +88,7 @@ export const GET = handler(
     const completedGroups = await db.workOrder.groupBy({
       by: ["technicianId"],
       _count: { _all: true },
-      where: { status: "COMPLETED", technicianId: { in: profiles.map((p) => p.id) } },
+      where: { status: { in: ["COMPLETED", "CLOSED"] }, technicianId: { in: profiles.map((p) => p.id) } },
     });
     const completedMap = new Map(completedGroups.map((g) => [g.technicianId, g._count._all]));
 

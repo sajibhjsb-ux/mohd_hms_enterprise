@@ -43,7 +43,7 @@ function satisfies(granted: SharePermission, need: SharePermission): boolean {
 }
 
 /** Coarse role gate (§31) — call in addition to object-level checks. */
-export function assertRolePermission(user: { id: string }, permission: Permission): void {
+export function assertRolePermission(user: { id: string; role: string }, permission: Permission): void {
   if (!roleCan(user.role, permission)) throw Errors.forbidden("You do not have the required role permission.");
 }
 
@@ -347,28 +347,6 @@ export type StorageSummary = {
   versionBytes: number; // old (superseded) versions only
 };
 
-/** Full per-user storage breakdown (dashboard + admin Staff Storage view, §5). */
-export async function storageSummary(ownerId: string): Promise<StorageSummary> {
-  const [quotaBytes, allVersions, activeCurrent, trashedCurrent] = await Promise.all([
-    userQuotaBytes(),
-    db.fileVersion.aggregate({ where: { file: { ownerId } }, _sum: { sizeBytes: true } }),
-    db.fileEntry.aggregate({ where: { ownerId, trashedAt: null }, _sum: { sizeBytes: true } }),
-    db.fileEntry.aggregate({ where: { ownerId, trashedAt: { not: null } }, _sum: { sizeBytes: true } }),
-  ]);
-  const used = allVersions._sum.sizeBytes ?? 0;
-  const activeBytes = activeCurrent._sum.sizeBytes ?? 0;
-  const trashedBytes = trashedCurrent._sum.sizeBytes ?? 0;
-  return {
-    usedBytes: used,
-    quotaBytes,
-    availableBytes: Math.max(0, quotaBytes - used),
-    percentUsed: quotaBytes > 0 ? Math.min(100, (used / quotaBytes) * 100) : 0,
-    activeBytes,
-    trashedBytes,
-    versionBytes: Math.max(0, used - activeBytes - trashedBytes),
-  };
-}
-
 export async function assertQuota(ownerId: string, incomingBytes: number): Promise<void> {
   const [quota, used] = await Promise.all([userQuotaBytes(), usedBytes(ownerId)]);
   if (used + incomingBytes > quota) {
@@ -379,10 +357,6 @@ export async function assertQuota(ownerId: string, incomingBytes: number): Promi
     throw Errors.quotaExceeded(message, quota);
   }
 }
-
-// ─── Upload limits (§8/§36) ─────────────────────────────────────────────────
-
-export const MB_BYTES = MB;
 export const MAX_CHUNK_BYTES = 8 * MB;
 export const MAX_SINGLE_SHOT_BYTES = 25 * MB; // multipart endpoints (versions)
 export const MAX_SESSION_BYTES = 200 * MB; // chunked session total
@@ -419,11 +393,11 @@ export async function scanUpload(_buf: Buffer, _name: string): Promise<ScanResul
 // handler() wraps only (req) — dynamic routes need params. This mirrors the
 // house withId() pattern in one place for the whole Files module.
 
-import type { NextRequest } from "next/server";
+import type { NextRequest, NextResponse } from "next/server";
 import { handler } from "@/lib/hms/api";
 
 export function withParams<P extends Record<string, string>>(
-  fn: (ctx: { req: NextRequest; requestId: string; user: { id: string; email: string; name: string; role: string }; params: P }) => Promise<Response> | Response,
+  fn: (ctx: { req: NextRequest; requestId: string; user: { id: string; email: string; name: string; role: string }; params: P }) => Promise<NextResponse> | NextResponse,
   opts?: { permission?: Permission; auth?: boolean },
 ) {
   return async (req: NextRequest, ctx: { params: Promise<P> }) =>

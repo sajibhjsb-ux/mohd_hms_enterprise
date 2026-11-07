@@ -24,6 +24,7 @@ import { api, ClientApiError } from "@/lib/hms/api-client";
 import { fmtDateTime } from "@/lib/hms/format";
 import { useToast } from "@/hooks/use-toast";
 import { EmptyState, ErrorState, LoadingState } from "@/components/hms/shared/ui-bits";
+import { CameraCaptureDialog } from "@/components/hms/shared/photo-capture";
 import { useRealtimeEvent } from "@/lib/hms/realtime/hooks";
 import { RT } from "@/lib/hms/realtime/matrix";
 import { humanize, IRMS_PHOTO_CATEGORIES, IRMS_PHOTO_PREFIX } from "@/lib/hms/constants";
@@ -257,7 +258,7 @@ export function IrmsPhotoManager({
   const [moveTo, setMoveTo] = useState<string>("");
 
   const browseRef = useRef<HTMLInputElement | null>(null);
-  const cameraRef = useRef<HTMLInputElement | null>(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
   const abortsRef = useRef<Map<string, AbortController>>(new Map());
 
   // ── Load ──
@@ -542,8 +543,8 @@ export function IrmsPhotoManager({
               <Button type="button" variant="outline" size="sm" className="min-h-[44px]" onClick={() => browseRef.current?.click()}>
                 <ImagePlus className="h-4 w-4 mr-1.5" /> Browse files
               </Button>
-              <Button type="button" variant="outline" size="sm" className="min-h-[44px] sm:hidden" onClick={() => cameraRef.current?.click()}>
-                <Camera className="h-4 w-4 mr-1.5" /> Camera
+              <Button type="button" variant="outline" size="sm" className="min-h-[44px]" onClick={() => setCameraOpen(true)}>
+                <Camera className="h-4 w-4 mr-1.5" /> Take Photo
               </Button>
               <div className="flex items-center gap-2">
                 <Label htmlFor="upload-category" className="text-xs text-muted-foreground">Category</Label>
@@ -563,9 +564,11 @@ export function IrmsPhotoManager({
               ref={browseRef} type="file" accept="image/*" multiple hidden
               onChange={(e) => { addFiles(Array.from(e.target.files ?? [])); e.target.value = ""; }}
             />
-            <input
-              ref={cameraRef} type="file" accept="image/*" capture="environment" hidden
-              onChange={(e) => { addFiles(Array.from(e.target.files ?? [])); e.target.value = ""; }}
+            <CameraCaptureDialog
+              open={cameraOpen}
+              onClose={() => setCameraOpen(false)}
+              onCapture={(file) => { addFiles([file]); setCameraOpen(false); }}
+              title="Take inspection photo"
             />
           </div>
 

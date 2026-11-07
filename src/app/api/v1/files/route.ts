@@ -134,11 +134,11 @@ async function listStarred(userId: string) {
   ]);
   // Authorization re-check per item (§23 — "show only items the current user
   // has permission to access"): stars on revoked/lost items disappear.
-  const fileRowsOut = [];
+  const fileRowsOut: (typeof files)[number][] = [];
   for (const f of files) {
     try { await canAccessFile({ id: userId }, f.id, "VIEW"); fileRowsOut.push(f); } catch { /* lost access (§23) */ }
   }
-  const folderRowsOut = [];
+  const folderRowsOut: (typeof folders)[number][] = [];
   for (const f of folders) {
     try { await canAccessFolder({ id: userId }, f.id, "VIEW"); folderRowsOut.push(f); } catch { /* lost access */ }
   }

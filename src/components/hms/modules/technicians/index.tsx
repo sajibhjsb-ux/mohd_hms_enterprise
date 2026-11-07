@@ -132,7 +132,7 @@ function TechniciansList() {
                     <button
                       type="button"
                       onClick={() => openEdit(t)}
-                      className="font-medium truncate max-w-full text-left hover:underline underline-offset-2 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className="font-medium truncate max-w-full text-left hover:underline underline-offset-2 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring min-h-11 py-2"
                       aria-label={`Edit skills and rate for ${t.user.name}`}
                     >
                       {t.user.name}
@@ -140,7 +140,7 @@ function TechniciansList() {
                   ) : (
                     <div className="font-medium truncate">{t.user.name}</div>
                   )}
-                  <div className="text-xs text-muted-foreground truncate">
+                  <div className="text-xs text-muted-foreground line-clamp-2">
                     {t.employeeNo} · {t.specialty !== "GENERAL" ? humanizeSpecialty(t.specialty) : "Generalist"}
                   </div>
                 </div>

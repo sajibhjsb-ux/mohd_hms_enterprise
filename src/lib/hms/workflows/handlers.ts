@@ -13,6 +13,7 @@ import { emit } from "./bus";
 import { EVENT_TYPES, type EventType } from "./types";
 import { registerWorkflow, type WorkflowResult } from "./engine";
 import { lockComplaintToWorkOrder } from "./complaint-work-order";
+import { notifyWorkOrderCreated } from "@/lib/hms/complaint-notifications";
 
 /** §17/§22 — dedupe window: no repeated alerts for the same unresolved condition. */
 async function hasRecentRun(workflow: string, resourceId: string, hours: number): Promise<boolean> {
@@ -222,6 +223,34 @@ async function autoCreateWorkOrder(ctx: { resourceId: string; eventType: string 
 registerWorkflow(EVENT_TYPES.COMPLAINT_ACCEPTED, "AUTO_CREATE_WORK_ORDER", (ctx) => autoCreateWorkOrder(ctx));
 registerWorkflow(EVENT_TYPES.COMPLAINT_STARTED, "AUTO_CREATE_WORK_ORDER", (ctx) => autoCreateWorkOrder(ctx));
 
+// ─── Work Order Created notification (centralized recipient distribution) ───
+registerWorkflow(EVENT_TYPES.WORK_ORDER_CREATED, "WORK_ORDER_CREATED_NOTIFY", async (ctx) => {
+  const workOrderId = String(ctx.payload.workOrderId ?? ctx.resourceId);
+  const wo = await db.workOrder.findUnique({
+    where: { id: workOrderId },
+    select: {
+      id: true, code: true, title: true, status: true, complaintId: true, customerId: true,
+      technicianId: true,
+      complaint: { select: { id: true, code: true, customerId: true, createdById: true, customer: { select: { portalUser: { select: { id: true } } } } } },
+      technician: { select: { userId: true } },
+    },
+  });
+  if (!wo) return { result: "SKIPPED", detail: "work order missing" };
+
+  const customerPortalUserId = wo.complaint?.customer?.portalUser?.id ?? null;
+  await notifyWorkOrderCreated({
+    workOrderId: wo.id,
+    workOrderCode: wo.code,
+    workOrderTitle: wo.title,
+    complaintId: wo.complaintId ?? null,
+    complaintCode: wo.complaint?.code ?? null,
+    customerId: wo.customerId,
+    createdById: wo.complaint?.createdById ?? "",
+    technicianUserId: wo.technician?.userId ?? null,
+  });
+  return { result: "SUCCESS", detail: `notified recipients for work order ${wo.code}` };
+});
+
 // ─── §17: Low stock alert (deduplicated per item per 24h) ───
 registerWorkflow(EVENT_TYPES.LOW_STOCK, "LOW_STOCK_ALERT", async (ctx) => {
   if (!(await isAutomationEnabled("low_stock_alerts"))) {
@@ -328,6 +357,7 @@ registerWorkflow(EVENT_TYPES.ESCALATE_COMPLAINT_NOT_ACCEPTED, "ESCALATE_COMPLAIN
     return { result: "SKIPPED", detail: "within escalation window" };
   }
   await notifyRole("SUPERVISOR", { title: "Complaint not accepted", message: `Complaint ${complaint.code} has been assigned for over ${hours}h without technician acceptance.`, type: "WARNING", resourceType: "COMPLAINT", resourceId: complaint.id });
+  await notifyRole("ADMIN", { title: "Complaint not accepted", message: `Complaint ${complaint.code} has been assigned for over ${hours}h without technician acceptance.`, type: "WARNING", resourceType: "COMPLAINT", resourceId: complaint.id });
   await audit({ actorEmail: "SYSTEM", action: "ESCALATION_SENT", resourceType: "COMPLAINT", resourceId: complaint.id, metadata: { reason: "NOT_ACCEPTED", hours } });
   return { result: "SUCCESS", detail: `escalated ${complaint.code} to supervisor` };
 });
@@ -345,6 +375,7 @@ registerWorkflow(EVENT_TYPES.SLA_BREACH_COMPLAINT, "SLA_BREACH", async (ctx) => 
     return { result: "SKIPPED", detail: "within SLA target" };
   }
   await notifyRole("SUPERVISOR", { title: "SLA breach", message: `Complaint ${complaint.code} (${complaint.priority}) exceeded its ${target}h response target.`, type: "ERROR", resourceType: "COMPLAINT", resourceId: complaint.id });
+  await notifyRole("ADMIN", { title: "SLA breach", message: `Complaint ${complaint.code} (${complaint.priority}) exceeded its ${target}h response target.`, type: "ERROR", resourceType: "COMPLAINT", resourceId: complaint.id });
   await audit({ actorEmail: "SYSTEM", action: "SLA_BREACH_RECORDED", resourceType: "COMPLAINT", resourceId: complaint.id, metadata: { priority: complaint.priority, targetHours: target } });
   return { result: "SUCCESS", detail: `SLA breach recorded for ${complaint.code}` };
 });
@@ -359,6 +390,7 @@ registerWorkflow(EVENT_TYPES.WO_OVERDUE, "WO_OVERDUE_ESCALATE", async (ctx) => {
   const startedAt = wo.startedAt?.getTime() ?? 0;
   if (!startedAt || Date.now() - startedAt < days * 86400000) return { result: "SKIPPED", detail: "within window" };
   await notifyRole("SUPERVISOR", { title: "Work order running long", message: `Work order ${wo.code} has been in progress for more than ${days} day(s).`, type: "WARNING", resourceType: "WORK_ORDER", resourceId: wo.id });
+  await notifyRole("ADMIN", { title: "Work order running long", message: `Work order ${wo.code} has been in progress for more than ${days} day(s).`, type: "WARNING", resourceType: "WORK_ORDER", resourceId: wo.id });
   await audit({ actorEmail: "SYSTEM", action: "ESCALATION_SENT", resourceType: "WORK_ORDER", resourceId: wo.id, metadata: { reason: "WO_OVERDUE", days } });
   return { result: "SUCCESS", detail: `escalated ${wo.code}` };
 });

@@ -38,6 +38,7 @@ export type FolderRow = {
   permission?: string;
   expiresAt?: string | null;
   sharedBy?: { id: string; name: string } | null;
+  sharedAt?: string;
   trashedAt?: string | null;
 };
 

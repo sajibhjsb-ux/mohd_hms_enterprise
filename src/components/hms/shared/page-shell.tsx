@@ -39,7 +39,7 @@ export function PageShell({ backLabel, backHref, crumbs, title, description, act
           {backHref ? (
             <a
               href={backHref}
-              className="inline-flex items-center gap-1.5 self-start text-sm text-muted-foreground hover:text-foreground transition-colors rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring -ml-0.5 px-0.5 min-h-[32px]"
+              className="inline-flex min-h-11 items-center gap-1.5 self-start rounded-md px-0.5 -ml-0.5 text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <ArrowLeft className="h-4 w-4" aria-hidden />
               {backLabel ?? "Back"}

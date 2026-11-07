@@ -33,8 +33,6 @@ import {
 export { AI_PROVIDERS };
 export type { AiProviderId };
 
-export const AI_DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
-
 // ── Public result + error types ──────────────────────────────────────────────
 
 export type AiErrorCode =
@@ -133,11 +131,6 @@ export type AiProfileRow = {
   updatedAt: Date;
 };
 
-/** Kept for API compatibility — the DB is the single source of truth. */
-export function invalidateAiConfigCache(): void {
-  /* intentional no-op */
-}
-
 export async function getGlobalConfigRow() {
   const existing = await db.aiConfiguration.findUnique({ where: { id: "singleton" } });
   if (existing) return existing;
@@ -149,9 +142,6 @@ export async function getGlobalConfigRow() {
     return row;
   }
 }
-
-/** Backwards-compatible alias (old settings route referenced this name). */
-export const getAiConfigRow = getGlobalConfigRow;
 
 export async function getGlobalConfig(): Promise<AiGlobalConfig> {
   const row = await getGlobalConfigRow();

@@ -211,7 +211,7 @@ export function IrmsDashboardPage() {
                               <span className="font-medium">{r.code}</span>
                               <StatusBadge status={r.status} />
                             </div>
-                            <p className="mt-0.5 truncate text-sm text-muted-foreground">
+                            <p className="mt-0.5 line-clamp-2 text-sm text-muted-foreground">
                               {r.title} · {r.project?.name ?? "No project"} · {fmtDate(r.inspectionDate)}
                             </p>
                           </div>

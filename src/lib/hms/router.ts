@@ -138,30 +138,3 @@ export function replacePath(path: string): void {
     // Older browsers / sandboxed iframes — safe to ignore.
   }
 }
-
-/** Legacy aliases (hash-era names) so old callers keep working. */
-export const parseHash = parsePath;
-export const replaceHash = replacePath;
-
-/** Notification resourceType → dedicated detail page route (server resource ids). */
-export const RESOURCE_ROUTES: Record<string, { module: string; seg: (id: string) => string[] }> = {
-  COMPLAINT: { module: "complaints", seg: (id) => [id] },
-  WORK_ORDER: { module: "work-orders", seg: (id) => [id] },
-  EQUIPMENT: { module: "equipment", seg: (id) => [id] },
-  CUSTOMER: { module: "customers", seg: (id) => [id] },
-  INVOICE: { module: "invoices", seg: (id) => [id] },
-  QUOTATION: { module: "quotations", seg: (id) => [id] },
-  PURCHASE_ORDER: { module: "purchases", seg: (id) => [id] },
-  INVENTORY_ITEM: { module: "inventory", seg: (id) => [id] },
-  INSPECTION_REPORT: { module: "irms", seg: (id) => ["reports", id] },
-  // Checklist engine — generation/approval notifications deep-link to the
-  // instance review page (§54 notifications spec).
-  CHECKLIST_INSTANCE: { module: "checklists", seg: (id) => [id] },
-  // Files module — notification deep links (§27: clicks open the relevant
-  // file/folder page). FOLDER routes into the owner's browser; share
-  // notifications carry the same resource types (target resolved on arrival).
-  FILE: { module: "files", seg: (id) => ["file", id] },
-  FILE_FOLDER: { module: "files", seg: (id) => ["my", id] },
-  // Email client — delivery-failure notifications deep-link into the message.
-  MAIL_MESSAGE: { module: "email", seg: (id) => ["m", id] },
-};

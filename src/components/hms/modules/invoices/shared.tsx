@@ -53,7 +53,7 @@ export type InvoiceDetail = InvoiceRow & {
 };
 
 export type InventoryLite = { id: string; sku: string; name: string; unit: string; unitCostCents: number };
-export type WoLite = { id: string; code: string; title: string; customer?: { companyName?: string; contactPerson?: string } | null };
+export type WoLite = { id: string; code: string; title: string; status?: string; customer?: { companyName?: string; contactPerson?: string } | null };
 
 export type FormItem = {
   kind: string; itemId: string; description: string; quantity: string; unit: string;

@@ -132,7 +132,7 @@ export function FilesDashboard() {
               <button
                 key={label}
                 onClick={() => navigateTo("files", seg)}
-                className="flex items-center gap-2.5 rounded-lg border px-3 py-2 text-left hover:bg-muted/50 transition-colors"
+                className="flex min-h-11 items-center gap-2.5 rounded-lg border px-3 py-2 text-left hover:bg-muted/50 transition-colors"
               >
                 <Icon className="h-4 w-4 text-primary" aria-hidden />
                 <span className="font-medium">{label}</span>
@@ -159,7 +159,7 @@ export function FilesDashboard() {
                   <button
                     key={f.id}
                     onClick={() => navigateTo("files", ["file", f.id])}
-                    className="flex w-full items-center gap-2.5 rounded-lg border px-3 py-2 text-left hover:bg-muted/50 transition-colors"
+                    className="flex min-h-11 w-full items-center gap-2.5 rounded-lg border px-3 py-2 text-left hover:bg-muted/50 transition-colors"
                   >
                     <Icon className="h-4 w-4 shrink-0 text-primary" aria-hidden />
                     <span className="font-medium truncate flex-1">{f.name}</span>

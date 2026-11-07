@@ -229,7 +229,7 @@ export function HistorySection({ icon, title, items, empty }: { icon: ReactNode;
                 <StatusBadge status={it.badge} />
               </>
             );
-            const rowClass = "flex items-center gap-3 px-3 py-2 min-w-0";
+            const rowClass = "flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 min-w-0";
             return it.href ? (
               <a key={it.id} href={it.href} className={`${rowClass} hover:bg-accent/60 focus:bg-accent focus:outline-none transition-colors`}>
                 {row}

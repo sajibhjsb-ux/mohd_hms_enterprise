@@ -2,10 +2,12 @@
 - crop to badge bounding box, apply circular alpha mask (outside circle -> transparent)
 - emit web-ready sizes into public/brand/
 """
+from pathlib import Path
 from PIL import Image, ImageDraw, ImageFilter
 
-SRC = "/home/z/my-project/upload/MOHD HMS ENTERPRISE Round Logo.png"
-OUT = "/home/z/my-project/public/brand"
+ROOT = Path(__file__).resolve().parent.parent
+SRC = ROOT / "brand" / "logo-source.png"
+OUT = ROOT / "public" / "brand"
 
 img = Image.open(SRC).convert("RGBA")
 
@@ -32,7 +34,7 @@ img.putalpha(mask)
 
 def emit(size: int, name: str):
     out = img.resize((size, size), Image.LANCZOS)
-    out.save(f"{OUT}/{name}", optimize=True)
+    out.save(OUT / name, optimize=True)
     print("wrote", name, size)
 
 emit(512, "logo-512.png")
@@ -47,7 +49,7 @@ emit(192, "icon-192.png")
 at = Image.new("RGB", (180, 180), (255, 255, 255))
 badge = img.resize((180, 180), Image.LANCZOS)
 at.paste(badge, (0, 0), badge)
-at.save(f"{OUT}/apple-touch-icon.png", optimize=True)
+at.save(OUT / "apple-touch-icon.png", optimize=True)
 print("apple-touch-icon composited on white")
 
 # 3) Transparent watermark-friendly small monochrome not needed; done.

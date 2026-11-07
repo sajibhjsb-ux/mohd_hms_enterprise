@@ -7,14 +7,12 @@
 export const WHATSAPP_STATUSES = [
   "QUEUED", "SENDING", "SENT", "DELIVERED", "READ", "RECEIVED", "FAILED", "CANCELED",
 ] as const;
-export type WhatsAppStatus = (typeof WHATSAPP_STATUSES)[number];
 
 // OpenWA session.status values (docs/06-api-specification.md §session.status).
 export const OPENWA_SESSION_STATUSES = [
   "created", "initializing", "qr_ready", "authenticating", "ready",
   "disconnected", "action_required", "failed",
 ] as const;
-export type OpenWaSessionStatus = (typeof OPENWA_SESSION_STATUSES)[number];
 
 // UI-facing connection states (§9) mapped honestly from OpenWA statuses.
 export const WHATSAPP_UI_STATES = [
@@ -46,27 +44,22 @@ export const WHATSAPP_CATEGORIES = [
   "AUTHENTICATION", "COMPLAINT", "WORK_ORDER", "QUOTATION", "INVOICE", "PAYMENT",
   "PM", "IRMS", "NOTIFICATION", "SUPPORT", "SYSTEM",
 ] as const;
-export type WhatsAppCategory = (typeof WHATSAPP_CATEGORIES)[number];
 
 // Message directions/types.
 export const WHATSAPP_DIRECTIONS = ["INBOUND", "OUTBOUND"] as const;
-export type WhatsAppDirection = (typeof WHATSAPP_DIRECTIONS)[number];
 
 export const WHATSAPP_MESSAGE_TYPES = [
   "text", "image", "document", "audio", "video", "location", "unknown",
 ] as const;
-export type WhatsAppMessageType = (typeof WHATSAPP_MESSAGE_TYPES)[number];
 
 // Conversation states (§26/§27 — human handoff, automation opt-out).
 export const WHATSAPP_CONVERSATION_STATES = ["BOT", "HUMAN", "CLOSED"] as const;
-export type WhatsAppConversationState = (typeof WHATSAPP_CONVERSATION_STATES)[number];
 
 // Inbound intents (§24/§25 — controlled set; AI never executes actions).
 export const WHATSAPP_INTENTS = [
   "HELP", "COMPLAINT", "SERVICE", "STATUS", "INVOICE", "QUOTATION", "PAYMENT",
   "APPOINTMENT", "CONTACT", "HUMAN",
 ] as const;
-export type WhatsAppIntent = (typeof WHATSAPP_INTENTS)[number];
 
 // Recipient rule (mirrors email RecipientRule §62).
 export type WhatsAppRecipientRule =

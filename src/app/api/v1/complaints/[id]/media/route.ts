@@ -124,20 +124,18 @@ export const POST = withId(
     const uploadId = typeof uploadIdRaw === "string" && /^[a-zA-Z0-9-]{8,64}$/.test(uploadIdRaw) ? uploadIdRaw.toLowerCase() : null;
 
     // §2/§5 — evidence lifecycle enforcement (backend-authoritative, not UI-only).
+    // BEFORE evidence belongs to complaint creation only. DURING/AFTER evidence
+    // is collected exclusively through the Work Order — never from the complaint
+    // tab, at any point in the lifecycle.
     const hasWorkOrder = (complaint.workOrders ?? []).length > 0;
-    const activeWorkOrder = hasWorkOrder && (complaint.workOrders ?? []).some((w) => !["CLOSED", "CANCELLED"].includes(w.status));
+    const controllingWorkOrder = hasWorkOrder && (complaint.workOrders ?? []).some((w) => w.status !== "CANCELLED");
     if (phase === "BEFORE") {
-      // Before-work evidence belongs to the complaint creation step only: once a
-      // work order exists (or the complaint has left NEW) the original evidence
-      // is locked and may never be replaced.
-      if (hasWorkOrder || complaint.status !== "NEW") {
+      if (controllingWorkOrder || complaint.status !== "NEW") {
         throw Errors.invalidTransition("Before-work evidence can only be added before the complaint is submitted and linked to a work order.");
       }
     } else {
-      // DURING / AFTER evidence is recorded against an active linked work order.
-      if (!activeWorkOrder) {
-        throw Errors.invalidTransition("This evidence phase requires an active linked work order. Create or link a work order first.");
-      }
+      // DURING / AFTER are never accepted on the complaint tab.
+      throw Errors.invalidTransition(`${phase} evidence must be uploaded through the linked Work Order, not the Complaint tab.`);
     }
 
     const buf = Buffer.from(await file.arrayBuffer());

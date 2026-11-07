@@ -26,7 +26,7 @@ export const AUTOMATION_SETTING_DEFAULTS = {
   /** §22: mark SENT invoices OVERDUE past due date + notify finance. */
   invoice_overdue_automation: "on",
   /** §30: email queue (delivered by the centralized EmailService/SMTP). */
-  email_notifications: "off",
+  email_notifications: "on",
   /** §39: per-automation hourly send cap — one faulty automation can never flood. */
   email_max_per_automation_hour: "60",
   /** §31/§32: outbound channels — enabled only when a provider is configured. */

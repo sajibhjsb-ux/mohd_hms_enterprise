@@ -89,7 +89,7 @@ export const POST = handler(async ({ req, user }) => {
       userId: a.id,
       title: "Payroll adjustment pending approval",
       message: `${body.direction === "EARNING" ? "Earning" : "Deduction"} adjustment for ${employee.firstName} ${employee.lastName} (${run.code}) awaits approval.`,
-      type: "INFO", resourceType: "PAYROLL_ADJUSTMENT", resourceId: adjustment.id,
+      type: "INFO", resourceType: "PAYROLL_RUN", resourceId: run.id,
     });
   }
   return ok(adjustment, 201);

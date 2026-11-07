@@ -6,7 +6,7 @@ import { ciContains, normalizeSearchTerm } from "@/lib/hms/text-search";
 import { db } from "@/lib/db";
 import { handler, ok, okList, parseBody, listQuery, pagedMeta, Errors } from "@/lib/hms/api";
 import { isStaff } from "@/lib/hms/rbac";
-import { audit, nextNumber, notify, notifyRole } from "@/lib/hms/services";
+import { audit, nextNumber } from "@/lib/hms/services";
 import { PERMISSIONS, PRIORITIES } from "@/lib/hms/constants";
 import { COMPLAINT_INCLUDE, complaintScopeWhere } from "./_lib";
 import { ensureDefaultCatalogues } from "@/lib/hms/catalogue";
@@ -16,6 +16,7 @@ import { dedupeSubmission } from "@/lib/hms/workflows/idempotency";
 import { emit } from "@/lib/hms/workflows/bus";
 import { EVENT_TYPES } from "@/lib/hms/workflows/types";
 import { ensureQr } from "@/lib/hms/qr/service";
+import { notifyNewComplaint } from "@/lib/hms/complaint-notifications";
 
 const createSchema = z.object({
   title: z.string().min(3, "Title must be at least 3 characters.").max(200),
@@ -159,10 +160,18 @@ export const POST = handler(
       resourceType: "COMPLAINT", resourceId: created.id,
       metadata: { code, priority: body.priority, customerId, workCatalogue: catalogue.code, catalogueIssue: issueMatch.name },
     });
-    await Promise.all([
-      notifyRole("SUPERVISOR", { title: "New complaint", message: `New complaint ${code}: ${body.title}`, type: "INFO", resourceType: "COMPLAINT", resourceId: created.id }),
-      notifyRole("ADMIN", { title: "New complaint", message: `New complaint ${code}: ${body.title}`, type: "INFO", resourceType: "COMPLAINT", resourceId: created.id }),
-    ]);
+    // Notify Admin + Supervisor + customer/creator via the centralized
+    // complaint notification service (Super Admin explicitly excluded).
+    await notifyNewComplaint({
+      complaintId: created.id,
+      complaintCode: code,
+      customerName: created.customer?.contactPerson ?? created.customer?.companyName ?? "A customer",
+      priority: body.priority,
+      title: body.title,
+      createdById: user.id,
+      customerId,
+      customerPortalUserId: created.customer?.portalUser?.id ?? null,
+    });
     // Outbox: downstream workflows (urgency escalations, SLA tracking) key off this event.
     await emit({ type: EVENT_TYPES.COMPLAINT_CREATED, resourceType: "COMPLAINT", resourceId: created.id, payload: { code, priority: body.priority, customerId }, actorType: "USER", actorId: user.id });
 

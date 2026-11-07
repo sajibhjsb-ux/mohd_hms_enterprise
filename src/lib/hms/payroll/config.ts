@@ -57,9 +57,3 @@ export function periodKeyOf(periodStart: Date): string {
   const m = `${periodStart.getUTCMonth() + 1}`.padStart(2, "0");
   return `${y}-${m}`;
 }
-
-/** Month index (0-11) from a period key. */
-export function monthOfPeriodKey(periodKey: string): number {
-  const m = Number.parseInt(periodKey.split("-")[1] ?? "1", 10);
-  return Number.isFinite(m) ? m - 1 : 0;
-}

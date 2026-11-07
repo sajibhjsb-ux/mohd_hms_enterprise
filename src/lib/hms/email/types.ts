@@ -16,10 +16,6 @@ export const EMAIL_STATUSES = [
   "DEAD_LETTER",
   "CANCELED",
 ] as const;
-export type EmailStatus = (typeof EMAIL_STATUSES)[number];
-
-/** Terminal states (no further worker processing). */
-export const EMAIL_TERMINAL_STATUSES: readonly string[] = ["SENT", "CANCELED", "DEAD_LETTER"];
 
 // ─── Error classes (§36 — permanent errors are never retried indefinitely) ──
 export const EMAIL_ERROR_CLASSES = [
@@ -50,13 +46,6 @@ export const EMAIL_CATEGORIES = [
   "REPORTS",
   "SYSTEM",
 ] as const;
-export type EmailCategory = (typeof EMAIL_CATEGORIES)[number];
-
-/**
- * Non-essential categories a user may opt out of (§40/§41). Security-critical
- * mail (OTP, security alerts) NEVER honors opt-out.
- */
-export const EMAIL_OPTIONAL_CATEGORIES: readonly string[] = ["REPORTS", "SYSTEM"];
 
 // ─── Recipient rules (§23 — resolved from authorized application data) ──────
 export type RecipientRule =

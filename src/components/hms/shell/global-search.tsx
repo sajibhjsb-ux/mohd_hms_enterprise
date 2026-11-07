@@ -655,7 +655,7 @@ export function GlobalSearch({ onNavigate, variant, autoFocus, onClose }: Props)
                     type="button"
                     onClick={viewAll}
                     data-testid="global-search-view-all"
-                    className="w-full flex items-center justify-center gap-1.5 border-t border-border/60 px-3 py-2.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-accent/60 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                    className="w-full flex items-center justify-center gap-1.5 border-t border-border/60 px-3 py-2.5 max-lg:min-h-11 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-accent/60 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
                   >
                     View all results <ArrowRight className="h-3 w-3" aria-hidden />
                   </button>
@@ -697,7 +697,7 @@ function PanelItem({ id, active, onHover, onClick, children }: {
       onMouseEnter={onHover}
       onClick={onClick}
       className={cn(
-        "cursor-pointer px-3 py-2 flex items-center gap-2.5 text-sm outline-none",
+        "cursor-pointer px-3 py-2 flex items-center gap-2.5 text-sm outline-none max-lg:min-h-11",
         active ? "bg-accent text-accent-foreground" : "hover:bg-accent/60"
       )}
     >

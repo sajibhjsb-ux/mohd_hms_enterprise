@@ -66,7 +66,7 @@ export const GET = handler(
       technicianWorkload = await Promise.all(techs.map(async (t) => ({
         name: t.user.name,
         open: await db.workOrder.count({ where: { technicianId: t.id, status: { in: ["PENDING", "ACCEPTED", "IN_PROGRESS", "ON_HOLD"] } } }),
-        completed: await db.workOrder.count({ where: { technicianId: t.id, status: "COMPLETED" } }),
+        completed: await db.workOrder.count({ where: { technicianId: t.id, status: { in: ["COMPLETED", "CLOSED"] } } }),
       })));
     }
 
@@ -97,8 +97,14 @@ export const GET = handler(
       orderBy: { createdAt: "desc" }, take: 5,
       select: { id: true, code: true, title: true, status: true, technician: { select: { user: { select: { name: true } } } }, customer: { select: { companyName: true, contactPerson: true } } },
     });
+    // Upcoming PM = scheduled tasks whose due date has not passed. Overdue and
+    // in-progress tasks belong to their own sections (never "upcoming").
     const upcomingPm = await db.pmTask.findMany({
-      where: { status: { in: ["SCHEDULED", "IN_PROGRESS", "OVERDUE"] }, equipment: customerId ? { customerId } : {} },
+      where: {
+        status: "SCHEDULED",
+        dueDate: { gte: new Date() },
+        ...(customerId ? { equipment: { customerId } } : {}),
+      },
       orderBy: { dueDate: "asc" }, take: 5,
       select: { id: true, code: true, dueDate: true, status: true, equipment: { select: { name: true, assetTag: true } } },
     });

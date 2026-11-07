@@ -101,7 +101,7 @@ export function DocumentHeader({
           </div>
         </div>
         {/* Document identity — column-aligned Label : Value block */}
-        <div className="shrink-0 sm:text-right">
+        <div className="min-w-0 max-w-full sm:shrink-0 sm:text-right">
           <div className="text-lg font-bold tracking-wide leading-tight">{title}</div>
           <div className="text-sm font-semibold text-primary mt-0.5">{number}</div>
           {meta.length > 0 ? (

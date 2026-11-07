@@ -13,6 +13,8 @@
 //  - Realtime (socket.io through the gateway) and /api/* are never intercepted
 //    by the service worker (see public/sw.js isBypassed).
 
+import { isNativeApp } from "@/lib/hms/native/platform";
+
 export type PwaState = {
   supported: boolean;
   standalone: boolean;
@@ -79,7 +81,8 @@ function installDismissedRecently(): boolean {
 export function isStandalone(): boolean {
   if (typeof window === "undefined") return false;
   const iosStandalone = (window.navigator as unknown as { standalone?: boolean }).standalone === true;
-  return window.matchMedia?.("(display-mode: standalone)")?.matches || iosStandalone;
+  // The Capacitor shell is installed by definition (native Android/iOS app).
+  return isNativeApp() || !!window.matchMedia?.("(display-mode: standalone)")?.matches || iosStandalone;
 }
 
 /* ─────────────────── PWA launch route restoration ──────────────────────
@@ -332,6 +335,12 @@ export async function fetchPushStatus(): Promise<PushStatus> {
  */
 export async function enablePush(): Promise<{ ok: boolean; error?: string; transport?: "FCM" | "VAPID" }> {
   try {
+    // Native shell: one FCM registration path, same PushDevice table.
+    if (isNativeApp()) {
+      const { enableNativePush } = await import("@/lib/hms/native/push");
+      const res = await enableNativePush();
+      return res.ok ? { ok: true } : { ok: false, error: res.error };
+    }
     if (typeof Notification === "undefined") return { ok: false, error: "This browser does not support notifications." };
     const permission = await Notification.requestPermission();
     if (permission !== "granted") {
@@ -402,6 +411,11 @@ export async function enablePush(): Promise<{ ok: boolean; error?: string; trans
 
 /** Remove this browser's registration locally and on the server (both transports). */
 export async function disablePush(): Promise<void> {
+  if (isNativeApp()) {
+    const { disableNativePush } = await import("@/lib/hms/native/push");
+    await disableNativePush({ server: true, plugin: true });
+    return;
+  }
   try {
     // FCM path — delete token + unregister the device row.
     const { disableFcm } = await import("@/lib/hms/push-client");

@@ -146,12 +146,15 @@ function InventoryList() {
   const dq = useModuleQuery("inventory");
   const viewParam = ["items", "movements", "suppliers"].find((v) => v === dq.params.view?.toLowerCase());
   const stockParam = dq.params.stock?.toLowerCase() === "low" ? "low" : undefined;
+  // Notification deep link: /inventory?focus={itemId} shows that exact item.
+  const focusId = dq.params.focus?.trim() || undefined;
   const canSupplier = hasPerm(user, PERMISSIONS.purchases_manage satisfies Permission);
 
   const [tab, setTab] = useState(viewParam ?? "items");
 
   // Items
   const [items, setItems] = useState<ItemRow[] | null>(null);
+  const focusItem = focusId ? (items ?? []).find((r) => r.id === focusId) : undefined;
   const [stats, setStats] = useState<InventoryStats | null>(null);
   const [itemsErr, setItemsErr] = useState("");
   const [itemsLoading, setItemsLoading] = useState(true);
@@ -416,6 +419,12 @@ function InventoryList() {
         </TabsList>
 
         <TabsContent value="items" className="mt-0">
+          {focusId ? (
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-muted/40 px-3 py-2 text-sm">
+              <span>{focusItem ? "Showing the inventory item from your notification." : "That inventory item was not found; showing all items."}</span>
+              <Button variant="ghost" size="sm" onClick={() => dq.apply({ focus: undefined })}>Show all items</Button>
+            </div>
+          ) : null}
           {itemsLoading && !items ? (
             <LoadingState label="Loading inventory…" />
           ) : itemsErr ? (
@@ -435,7 +444,7 @@ function InventoryList() {
           ) : (
             <DataTable
               columns={itemColumns}
-              rows={items ?? []}
+              rows={focusItem ? [focusItem] : items ?? []}
               rowKey={(r) => r.id}
               searchPlaceholder="Search SKU or name…"
               emptyTitle="No inventory items match"

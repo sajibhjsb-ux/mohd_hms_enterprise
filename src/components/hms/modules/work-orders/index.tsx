@@ -1,7 +1,7 @@
 "use client";
 
 // MOHD.HMS ENTERPRISE — Work Orders module (list page).
-// PENDING → ACCEPTED → IN_PROGRESS → COMPLETED (+ ON_HOLD, CANCELLED).
+// PENDING → ACCEPTED → IN_PROGRESS → COMPLETED (review) → CLOSED (+ ON_HOLD, CANCELLED).
 //
 // NAVIGATION ARCHITECTURE: work order create / detail are DEDICATED PAGES
 // routed by the hash router (ui-store pages["work-orders"]):
@@ -62,7 +62,8 @@ const STATUS_TABS: { key: string; label: string; match: (s: string) => boolean }
   { key: "PENDING", label: "Pending", match: (s) => PENDING_STATUSES.includes(s) },
   { key: "IN_PROGRESS", label: "In Progress", match: (s) => s === "IN_PROGRESS" },
   { key: "ON_HOLD", label: "On Hold", match: (s) => s === "ON_HOLD" },
-  { key: "COMPLETED", label: "Completed", match: (s) => s === "COMPLETED" },
+  { key: "COMPLETED", label: "Awaiting Review", match: (s) => s === "COMPLETED" },
+  { key: "CLOSED", label: "Closed", match: (s) => s === "CLOSED" },
   { key: "CANCELLED", label: "Cancelled", match: (s) => s === "CANCELLED" },
 ];
 
@@ -135,7 +136,7 @@ function WorkOrdersList() {
       pending: count((r) => PENDING_STATUSES.includes(r.status)),
       inProgress: count((r) => r.status === "IN_PROGRESS"),
       onHold: count((r) => r.status === "ON_HOLD"),
-      completed: count((r) => r.status === "COMPLETED"),
+      completed: count((r) => ["COMPLETED", "CLOSED"].includes(r.status)),
       valueCents: list.filter((r) => !["CANCELLED"].includes(r.status)).reduce((s, r) => s + (r.totalCents ?? 0), 0),
     };
   }, [rows]);
@@ -210,7 +211,7 @@ function WorkOrdersList() {
             key={t.key}
             onClick={() => setTab(t.key)}
             className={cn(
-              "px-3 py-1.5 rounded-full text-xs font-medium border transition-colors",
+              "inline-flex min-h-11 items-center px-3 py-1.5 rounded-full text-xs font-medium border transition-colors lg:min-h-0",
               tab === t.key ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-muted text-muted-foreground"
             )}
           >

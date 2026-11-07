@@ -32,7 +32,7 @@ async function loadEditable(id: string, user: SessionUser) {
   await assertViewWorkOrder(user, wo);
   const allowed = (await isAssignedTechnician(user, wo.technicianId)) || roleCan(user.role, PERMISSIONS.work_orders_update);
   if (!allowed) throw Errors.forbidden();
-  if (["COMPLETED", "CANCELLED"].includes(wo.status)) {
+  if (["COMPLETED", "CLOSED", "CANCELLED"].includes(wo.status)) {
     throw Errors.invalidTransition(`Materials cannot be changed on a ${wo.status.toLowerCase()} work order.`);
   }
   return wo;

@@ -105,8 +105,8 @@ function ConversationRow({ r, onOpen }: { r: ConvRow; onOpen: (id: string) => vo
         {initials(name)}
       </div>
       <div className="min-w-0 flex-1">
-        <p className={cn("truncate text-sm", unread > 0 ? "font-semibold" : "font-medium")}>{name}</p>
-        <p className="truncate text-xs text-muted-foreground">{convSub(r)}</p>
+        <p className={cn("line-clamp-2 text-sm", unread > 0 ? "font-semibold" : "font-medium")}>{name}</p>
+        <p className="line-clamp-2 text-xs text-muted-foreground">{convSub(r)}</p>
         {r.lastMessagePreview ? (
           <p className="mt-0.5 truncate text-xs text-muted-foreground/80">{r.lastMessagePreview}</p>
         ) : null}
@@ -126,7 +126,7 @@ function ConversationRow({ r, onOpen }: { r: ConvRow; onOpen: (id: string) => vo
           <Button
             variant="ghost"
             size="icon"
-            className="h-7 w-7"
+            className="hidden sm:inline-flex h-7 w-7"
             data-testid="whatsapp-conversation-open"
             aria-label={`Open ${name}`}
             onClick={(e) => { e.stopPropagation(); onOpen(r.id); }}

@@ -204,19 +204,23 @@ async function main() {
   const bigFile = await uploadFile(S.customer1, `/api/v1/complaints/${complaintId}/media`, new File([new Uint8Array(jpegOversized())], "huge.jpg", { type: "image/jpeg" }), { phase: "DURING" });
   check(">15 MB image rejected → 400", bigFile.res.status === 400, `status ${bigFile.res.status}`);
 
-  section("§11/§15 deletion — audited, permission-scoped");
+  section("§6/§11 — evidence is append-only / immutable");
+  // Once submitted, complaint evidence can never be deleted or replaced — the
+  // object bytes and metadata row survive every delete attempt.
   const custDeleteOthers = await call(S.customer1, "DELETE", `/api/v1/complaints/${complaintId}/media/${movId}`);
-  check("customer cannot delete supervisor's media → 403", custDeleteOthers.res.status === 403, `status ${custDeleteOthers.res.status}`);
+  check("delete another's media → 409 immutable", custDeleteOthers.res.status === 409, `status ${custDeleteOthers.res.status}`);
   const supDeleteOwn = await call(S.supervisor, "DELETE", `/api/v1/complaints/${complaintId}/media/${movId}`);
-  check("uploader deletes own MOV → 200", supDeleteOwn.res.ok, `status ${supDeleteOwn.res.status} ${JSON.stringify(supDeleteOwn.json?.error ?? "")}`);
+  check("uploader cannot delete own MOV → 409 immutable", supDeleteOwn.res.status === 409, `status ${supDeleteOwn.res.status} ${JSON.stringify(supDeleteOwn.json?.error ?? "")}`);
   const movAfter = await getFile(S.admin, `/api/v1/complaints/${complaintId}/media/${movId}/file`);
-  check("deleted MOV file GET → 404 (object gone)", movAfter.status === 404, `status ${movAfter.status}`);
-  const auditDel = await db.auditLog.findFirst({ where: { action: "COMPLAINT_MEDIA_DELETED", resourceId: movId } });
-  check("deletion audited (who/what)", !!auditDel, auditDel ? `by ${auditDel.actorEmail}` : "no audit row");
+  check("MOV bytes still present after delete attempt → 200", movAfter.status === 200, `status ${movAfter.status}`);
+  const auditDel = await db.auditLog.findFirst({ where: { action: "COMPLAINT_MEDIA_DELETE_BLOCKED", resourceId: movId } });
+  check("blocked deletion audited (who/what)", !!auditDel, auditDel ? `by ${auditDel.actorEmail}` : "no audit row");
   const auditUp = await db.auditLog.findFirst({ where: { action: "COMPLAINT_MEDIA_UPLOADED", resourceId: photo1Id } });
   check("upload audited", !!auditUp);
   const custDeleteOwn = await call(S.customer1, "DELETE", `/api/v1/complaints/${complaintId}/media/${photo1Id}`);
-  check("customer deletes OWN photo → 200", custDeleteOwn.res.ok, `status ${custDeleteOwn.res.status}`);
+  check("customer cannot delete OWN photo → 409 immutable", custDeleteOwn.res.status === 409, `status ${custDeleteOwn.res.status}`);
+  const photoStillThere = await db.document.findUnique({ where: { id: photo1Id }, select: { id: true } });
+  check("evidence metadata row survives (append-only)", !!photoStillThere);
   const pngAudit = await db.auditLog.count({ where: { action: "COMPLAINT_MEDIA_UPLOADED", resourceId: pngId } });
   check("technician photo upload audited", pngAudit === 1);
 
@@ -237,8 +241,8 @@ async function main() {
   const frozen = await uploadFile(S.admin, `/api/v1/complaints/${c2id}/media`, new File([new Uint8Array(PNG_1PX)], "late.png", { type: "image/png" }), { phase: "DURING" });
   check("upload to closed complaint → 4xx", frozen.res.status >= 400 && frozen.res.status < 500, `status ${frozen.res.status}`);
   const frozenDelete = await call(S.admin, "DELETE", `/api/v1/complaints/${complaintId}/media/${videoId}`);
-  // video still belongs to an OPEN complaint — deletion by non-uploader staff is allowed; keep this check on scope instead:
-  check("staff delete on open complaint (non-uploader) allowed by policy", frozenDelete.res.ok || frozenDelete.res.status === 403, `status ${frozenDelete.res.status}`);
+  // Immutable everywhere: even on an OPEN complaint, staff cannot delete evidence.
+  check("evidence delete blocked on open complaint too → 409", frozenDelete.res.status === 409, `status ${frozenDelete.res.status}`);
 
   // ── §40 — checklist AFTER work order creation ──────────────────────────────
   section("§40 complaint → accept → auto work order");

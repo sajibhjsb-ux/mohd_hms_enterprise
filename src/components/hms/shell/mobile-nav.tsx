@@ -110,6 +110,27 @@ export function MobileNav({ modules, activeModule, onSelect, onOpenScanner }: Pr
     };
   }, []);
 
+  // Hide the bottom bar while the on-screen keyboard is up — otherwise it
+  // floats over the focused field (financial forms, notes, checklists).
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const root = document.documentElement;
+    const update = () => {
+      const covered = window.innerHeight - vv.height;
+      const keyboard = covered > 140 && window.matchMedia("(max-width: 1023px)").matches;
+      root.classList.toggle("hms-keyboard-open", keyboard);
+    };
+    update();
+    vv.addEventListener("resize", update);
+    window.addEventListener("orientationchange", update);
+    return () => {
+      vv.removeEventListener("resize", update);
+      window.removeEventListener("orientationchange", update);
+      root.classList.remove("hms-keyboard-open");
+    };
+  }, []);
+
   const { communication, others } = useMemo(() => {
     const comm = modules.filter((m) => m.key === "email" || m.key === "whatsapp");
     const commKeys = new Set(comm.map((m) => m.key));
@@ -150,7 +171,7 @@ export function MobileNav({ modules, activeModule, onSelect, onOpenScanner }: Pr
             >
               <QrCode className="h-7 w-7" aria-hidden />
             </button>
-            <span className="mt-1 text-[10px] leading-none font-medium text-muted-foreground">Scan</span>
+            <span className="mt-1 max-w-full truncate px-0.5 text-[11px] leading-none font-medium text-muted-foreground">Scan</span>
           </div>
 
           <NavSlot module={slot4} active={!!slot4 && activeModule === slot4.key} onSelect={onSelect} />
@@ -167,14 +188,14 @@ export function MobileNav({ modules, activeModule, onSelect, onOpenScanner }: Pr
                 <span className="flex h-6 w-10 items-center justify-center rounded-full" aria-hidden>
                   <MoreHorizontal className="h-5 w-5 text-muted-foreground" />
                 </span>
-                <span className="text-[10px] leading-none font-medium text-muted-foreground">More</span>
+                <span className="text-[11px] leading-none font-medium text-muted-foreground">More</span>
               </button>
             </SheetTrigger>
             <SheetContent side="bottom" className="rounded-t-3xl">
               <SheetHeader>
                 <SheetTitle>All modules</SheetTitle>
               </SheetHeader>
-              <div className="max-h-[56vh] space-y-4 overflow-y-auto hms-scroll pb-[calc(env(safe-area-inset-bottom)+1.5rem)]">
+              <div className="max-h-[65dvh] space-y-4 overflow-y-auto hms-scroll pb-[calc(env(safe-area-inset-bottom)+1.5rem)]">
                 {/* Communication group — Email + WhatsApp (only for roles the
                     RBAC filter grants them; hidden entirely otherwise) */}
                 {communication.length > 0 ? (
@@ -258,7 +279,7 @@ function NavSlot({ module, active, onSelect }: { module: ModuleDef | null; activ
       >
         <module.icon className={cn("h-5 w-5", active ? "text-primary" : "text-muted-foreground")} />
       </span>
-      <span className={cn("text-[10px] leading-none font-medium", active ? "text-primary" : "text-muted-foreground")}>
+      <span className={cn("max-w-full truncate px-0.5 text-[11px] leading-none font-medium", active ? "text-primary" : "text-muted-foreground")}>
         {module.shortLabel ?? module.label}
       </span>
     </button>

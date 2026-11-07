@@ -22,6 +22,7 @@ import { db } from "@/lib/db";
 import { isAutomationEnabled } from "@/lib/hms/workflows/settings";
 import { ensureVapidConfigured } from "./vapid";
 import { sendFcmToTokens, fcmConfigured } from "./fcm";
+import { sendApnsToTokens, apnsConfigured } from "./apns";
 
 const CLAIM_BATCH = 25;
 const STUCK_SENDING_MS = 5 * 60 * 1000;
@@ -81,7 +82,7 @@ async function processOne(logId: string): Promise<void> {
   let [devices, subs] = await Promise.all([
     db.pushDevice.findMany({
       where: { userId: row.userId, active: true, permissionStatus: { not: "DENIED" }, ...deviceFilter },
-      select: { id: true, token: true },
+      select: { id: true, token: true, platform: true },
     }),
     db.pushSubscription.findMany({
       where: { userId: row.userId, revokedAt: null, ...(row.targetDeviceId ? { id: row.targetDeviceId } : {}) },
@@ -109,6 +110,9 @@ async function processOne(logId: string): Promise<void> {
   // separately from the channel being disabled so diagnostics never lie.
   const channelOn = await isAutomationEnabled("push_notifications");
   const fcmReady = channelOn && fcmConfigured();
+  // iOS tokens are APNs tokens (Capacitor returns the APNs device token), so
+  // they must never be sent through FCM.
+  const apnsReady = channelOn && apnsConfigured();
   // Configure THIS module instance of web-push (see vapid.ts — the scheduler
   // bundle loads its own copy; without this the send lacks the VAPID auth
   // header and the push service answers 401).
@@ -116,51 +120,77 @@ async function processOne(logId: string): Promise<void> {
 
   const channelDisabledMsg = "Push notifications are disabled (Settings → Automation → Push notifications).";
 
-  // ── FCM transport ──
-  if (devices.length > 0) {
+  // ── Native/web push transports ──
+  const fcmDevices = devices.filter((d) => d.platform !== "IOS");
+  const iosDevices = devices.filter((d) => d.platform === "IOS");
+  const channelLabel = fcmDevices.length > 0 && iosDevices.length > 0
+    ? "FCM+APNs"
+    : iosDevices.length > 0 ? "APNs" : fcmDevices.length > 0 ? "FCM" : "VAPID";
+  const payload = {
+    title: row.title,
+    body: row.body,
+    route: row.route,
+    tag: row.resourceId ? `${row.resourceType}:${row.resourceId}` : row.notificationId || row.id,
+    priority: (row.priority === "HIGH" || row.priority === "CRITICAL" ? row.priority : "NORMAL") as "NORMAL" | "HIGH" | "CRITICAL",
+    notificationId: row.notificationId,
+    type: row.type,
+    resourceType: row.resourceType,
+    resourceId: row.resourceId,
+  };
+  const outcomes: Array<{ token: string; kind: "sent" | "permanent" | "transient"; messageId?: string; error?: string }> = [];
+
+  if (fcmDevices.length > 0) {
     if (!fcmReady) {
-      skippedCount += devices.length;
+      skippedCount += fcmDevices.length;
       errorCode = errorCode || (channelOn ? "Unconfigured" : "ChannelDisabled");
       firstError = firstError || (channelOn ? "Firebase is not configured on this server." : channelDisabledMsg);
     } else {
-      const outcomes = await sendFcmToTokens(devices.map((d) => d.token), {
-        title: row.title,
-        body: row.body,
-        route: row.route,
-        tag: row.resourceId ? `${row.resourceType}:${row.resourceId}` : row.notificationId || row.id,
-        priority: (row.priority === "HIGH" || row.priority === "CRITICAL" ? row.priority : "NORMAL") as "NORMAL" | "HIGH" | "CRITICAL",
-        notificationId: row.notificationId,
-        type: row.type,
-        resourceType: row.resourceType,
-        resourceId: row.resourceId,
-      });
-      for (const o of outcomes) {
-        const device = devices.find((d) => d.token === o.token);
-        if (!device) continue;
-        if (o.kind === "sent") {
-          sentCount += 1;
-          if (!firstMessageId) firstMessageId = o.messageId;
-          await db.pushDevice.update({ where: { id: device.id }, data: { lastSeenAt: new Date(), failureCount: 0, lastError: "" } }).catch(() => undefined);
-        } else if (o.kind === "permanent") {
-          failedPermanent += 1;
-          if (!firstError) firstError = o.error;
-          errorCode = errorCode || "Permanent";
-          // Invalid/unregistered installation → deactivate; the client
-          // re-registers a fresh token on next enable (spec §22/§29).
-          await db.pushDevice.update({
-            where: { id: device.id },
-            data: { active: false, lastError: o.error.slice(0, 180), failureCount: { increment: 1 } },
-          }).catch(() => undefined);
-        } else {
-          failedTransient += 1;
-          if (!firstError) firstError = o.error;
-          errorCode = errorCode || "Transient";
-          await db.pushDevice.update({
-            where: { id: device.id },
-            data: { lastError: o.error.slice(0, 180), failureCount: { increment: 1 } },
-          }).catch(() => undefined);
-        }
-      }
+      // Native Android needs an OS notification block; web tokens stay
+      // data-only for the existing service worker.
+      const nativeDevices = fcmDevices.filter((d) => d.platform === "ANDROID");
+      const webDevices = fcmDevices.filter((d) => d.platform === "WEB");
+      outcomes.push(
+        ...(webDevices.length ? await sendFcmToTokens(webDevices.map((d) => d.token), payload, "web") : []),
+        ...(nativeDevices.length ? await sendFcmToTokens(nativeDevices.map((d) => d.token), payload, "native") : []),
+      );
+    }
+  }
+
+  if (iosDevices.length > 0) {
+    if (!apnsReady) {
+      skippedCount += iosDevices.length;
+      errorCode = errorCode || (channelOn ? "Unconfigured" : "ChannelDisabled");
+      firstError = firstError || (channelOn ? "APNs is not configured on this server." : channelDisabledMsg);
+    } else {
+      outcomes.push(...(await sendApnsToTokens(iosDevices.map((d) => d.token), payload)));
+    }
+  }
+
+  for (const o of outcomes) {
+    const device = devices.find((d) => d.token === o.token);
+    if (!device) continue;
+    if (o.kind === "sent") {
+      sentCount += 1;
+      if (!firstMessageId && o.messageId) firstMessageId = o.messageId;
+      await db.pushDevice.update({ where: { id: device.id }, data: { lastSeenAt: new Date(), failureCount: 0, lastError: "" } }).catch(() => undefined);
+    } else if (o.kind === "permanent") {
+      failedPermanent += 1;
+      if (!firstError && o.error) firstError = o.error;
+      errorCode = errorCode || "Permanent";
+      // Invalid/unregistered installation → deactivate; the client
+      // re-registers a fresh token on next enable (spec §22/§29).
+      await db.pushDevice.update({
+        where: { id: device.id },
+        data: { active: false, lastError: (o.error ?? "").slice(0, 180), failureCount: { increment: 1 } },
+      }).catch(() => undefined);
+    } else {
+      failedTransient += 1;
+      if (!firstError && o.error) firstError = o.error;
+      errorCode = errorCode || "Transient";
+      await db.pushDevice.update({
+        where: { id: device.id },
+        data: { lastError: (o.error ?? "").slice(0, 180), failureCount: { increment: 1 } },
+      }).catch(() => undefined);
     }
   }
 
@@ -225,7 +255,7 @@ async function processOne(logId: string): Promise<void> {
       data: {
         status: "SKIPPED", deviceCount: 0, skippedCount: 0,
         errorCode: "NoDevices", lastError: "No active push devices for this user.",
-        attemptCount: { increment: 1 }, channel: fcmReady ? "FCM" : "VAPID",
+        attemptCount: { increment: 1 }, channel: channelLabel,
       },
     });
     return;
@@ -248,7 +278,7 @@ async function processOne(logId: string): Promise<void> {
         errorCode: anySent ? "" : errorCode,
         lastError: anySent ? "" : firstError,
         fcmMessageId: firstMessageId,
-        channel: fcmReady ? "FCM" : "VAPID",
+        channel: channelLabel,
       },
     });
     log(anySent ? "info" : "warn", anySent ? "push-sent" : "push-terminal-failure", {
@@ -264,7 +294,7 @@ async function processOne(logId: string): Promise<void> {
       data: {
         status: "QUEUED", deviceCount, sentCount, failedCount: failedPermanent + failedTransient, skippedCount,
         attemptCount: attempt, scheduledAt: new Date(Date.now() + backoffMs(attempt)),
-        errorCode: errorCode || "Transient", lastError: firstError, channel: fcmReady ? "FCM" : "VAPID",
+        errorCode: errorCode || "Transient", lastError: firstError, channel: channelLabel,
       },
     });
     log("warn", "push-retry-scheduled", { pushLogId: row.id, attempt, nextInMs: backoffMs(attempt) });
@@ -277,7 +307,7 @@ async function processOne(logId: string): Promise<void> {
       status: attempt >= row.maxAttempts ? "DEAD_LETTER" : "FAILED",
       deviceCount, sentCount, failedCount: failedPermanent + failedTransient, skippedCount,
       attemptCount: attempt, errorCode: errorCode || "Transient", lastError: firstError,
-      channel: fcmReady ? "FCM" : "VAPID",
+      channel: channelLabel,
     },
   });
   log("error", "push-dead-letter", { pushLogId: row.id, attempt, err: firstError.slice(0, 120) });

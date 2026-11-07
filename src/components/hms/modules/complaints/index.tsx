@@ -202,7 +202,7 @@ function ComplaintsList() {
             key={t.key}
             onClick={() => setTab(t.key)}
             className={cn(
-              "px-3 py-1.5 rounded-full text-xs font-medium border transition-colors",
+              "inline-flex min-h-11 items-center px-3 py-1.5 rounded-full text-xs font-medium border transition-colors lg:min-h-0",
               tab === t.key ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-muted text-muted-foreground"
             )}
           >

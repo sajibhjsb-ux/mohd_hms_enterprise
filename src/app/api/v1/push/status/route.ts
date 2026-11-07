@@ -7,6 +7,7 @@ import { db } from "@/lib/db";
 import { handler, ok } from "@/lib/hms/api";
 import { vapidPublicKey } from "@/lib/hms/push-server";
 import { fcmClientConfig, fcmStatusSummary } from "@/lib/hms/push/fcm";
+import { apnsStatusSummary } from "@/lib/hms/push/apns";
 
 export const GET = handler(
   async ({ req, user }) => {
@@ -36,6 +37,8 @@ export const GET = handler(
         clientConfig: clientConfig ?? undefined,
       },
       devices: deviceCount,
+      // iOS native builds use APNs directly (no public client config needed).
+      apns: apnsStatusSummary(),
     });
   },
   { auth: true }

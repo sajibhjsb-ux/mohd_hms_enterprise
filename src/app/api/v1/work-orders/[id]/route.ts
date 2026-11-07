@@ -60,6 +60,11 @@ export const PATCH = withId(
     if (hasCore && !roleCan(user.role, PERMISSIONS.work_orders_update)) {
       throw Errors.forbidden("You do not have permission to edit work order details.");
     }
+    // Submitted/closed/cancelled work orders are immutable records — evidence
+    // integrity must survive the review step.
+    if (hasCore && ["COMPLETED", "CLOSED", "CANCELLED"].includes(wo.status)) {
+      throw Errors.invalidTransition(`Work order details cannot be edited while status is ${wo.status}.`);
+    }
 
     if (hasAssign) {
       if (!roleCan(user.role, PERMISSIONS.work_orders_assign)) {
