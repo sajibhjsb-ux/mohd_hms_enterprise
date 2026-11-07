@@ -178,6 +178,12 @@ export const PERMISSIONS = {
   files_share: "files.share",
   files_manage_storage: "files.manage_storage",
   files_audit: "files.audit",
+  // CMS — visual page builder (admin-managed public website content).
+  cms_pages_read: "cms.pages.read",
+  cms_pages_create: "cms.pages.create",
+  cms_pages_update: "cms.pages.update",
+  cms_pages_delete: "cms.pages.delete",
+  cms_pages_publish: "cms.pages.publish",
 } as const;
 
 export type Permission = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
@@ -210,12 +216,13 @@ const SUPERVISOR_PERMS: Permission[] = [
   PERMISSIONS.reports_read, PERMISSIONS.reports_export,
   PERMISSIONS.vehicles_read, PERMISSIONS.vehicles_manage,
   // Files — personal file manager for every staff role (spec §31/§34)
-  PERMISSIONS.files_read, PERMISSIONS.files_create, PERMISSIONS.files_update,
+    PERMISSIONS.files_read, PERMISSIONS.files_create, PERMISSIONS.files_update,
   PERMISSIONS.files_delete, PERMISSIONS.files_share,
+  // CMS page builder — supervisors may read and maintain published pages.
+  PERMISSIONS.cms_pages_read, PERMISSIONS.cms_pages_create, PERMISSIONS.cms_pages_update,
 ];
 
-const TECHNICIAN_PERMS: Permission[] = [
-  PERMISSIONS.equipment_read,
+const TECHNICIAN_PERMS: Permission[] = [  PERMISSIONS.equipment_read,
   PERMISSIONS.complaints_read, PERMISSIONS.complaints_update,
   PERMISSIONS.work_orders_read, PERMISSIONS.work_orders_update, PERMISSIONS.work_orders_complete,
   PERMISSIONS.pm_read, PERMISSIONS.pm_execute, PERMISSIONS.pm_report,
