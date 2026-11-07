@@ -65,12 +65,14 @@ ARCHITECTURE.md, CHANGELOG.md support it.
   customers.
 
 ## Deployment rules
-- Authoritative version: Git branch `dev` @ `bafbefa`.
+- Authoritative production branch: `main` @ `0f492d6` (deployed, healthy on
+  green slot :3001). CMS feature developed on `feat/cms-page-builder` (not
+  merged to main — no automatic merges).
 - Build → health-check → deploy → post-deploy test → version verification →
   documentation update.
 - Do not force a production deploy that cannot be verified.
-- Current live slots run OLD main commits (version mismatch — realign required;
-  see DEPLOYMENT.md).
+- Current live production version is `0f492d6`; `state.json` reports status
+  `healthy`.
 
 ## Documentation update requirements
 Whenever code changes (models, routes, workflows, roles, workers, deployment,

@@ -33,6 +33,29 @@ Route groups (Next.js App Router, `src/app/api/v1/`):
 | `/email/inbound/webhook/route.ts` | Inbound email webhook | Webhook secret | — |
 | `/api/health/ready` | Health check (used by deploy worker) | — | — |
 
+## CMS (visual page builder)
+
+| Route | Method | Purpose | Auth | Roles |
+|-------|--------|---------|------|-------|
+| `/api/v1/cms/pages` | GET | List pages (status/search filter) | Session | CMS read+ |
+| `/api/v1/cms/pages` | POST | Create a page (draft) | Session | CMS create+ |
+| `/api/v1/cms/pages/[id]` | GET | Page detail + content | Session | CMS read+ |
+| `/api/v1/cms/pages/[id]` | PATCH | Update draft content/metadata | Session | CMS update+ |
+| `/api/v1/cms/pages/[id]` | DELETE | Archive a page | Session | CMS delete+ |
+| `/api/v1/cms/pages/[id]/publish` | POST | Publish → immutable revision + public | Session | CMS publish (ADMIN) |
+| `/api/v1/cms/pages/[id]/unpublish` | POST | Unpublish → draft, removed from public | Session | CMS publish (ADMIN) |
+| `/api/v1/cms/pages/[id]/revisions` | GET | Revision history | Session | CMS read+ |
+| `/api/v1/cms/pages/[id]/revisions/[revId]/restore` | POST | Restore a revision as current draft | Session | CMS update+ |
+| `/api/v1/cms/preview/[id]` | GET | Preview draft content (session required) | Session | CMS read+ |
+
+CMS permissions: `cms_pages_read/create/update/delete/publish`. Publish is
+ADMIN/SUPER_ADMIN only (segregation of duties); SUPERVISOR gets read/create/
+update. Every publish snapshots an immutable `cms_page_revision`.
+
+Public rendering: `GET /[slug]` renders a `status=PUBLISHED` CMS page's
+content via the shared `RenderPage` component; unpublished drafts are not
+served publicly (preview requires auth).
+
 Authentication: DB-backed session token (HttpOnly cookie); 7 roles / 47
 permissions (RBAC); server-authoritative. Super Admin excluded from complaint-
 workflow notifications.

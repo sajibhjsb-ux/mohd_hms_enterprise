@@ -133,6 +133,17 @@ together with `CLAUDE.md`/`AGENTS.md`. Keep it synchronized with the code.
   creates Complaints only after customer confirmation; prevents duplicates;
   supports human handover; no repeated static menus; never exposes API keys.
 
+### CMS (visual page builder)
+- Pages: slug, title, status (DRAFT/PUBLISHED/ARCHIVED), content JSON
+  (blocks/elements), SEO fields, publishedAt. Every publish snapshots an
+  immutable `cms_page_revision`.
+- Rendering: `GET /[slug]` serves published CMS pages via shared `RenderPage`;
+  drafts are never public (preview requires authenticated CMS session).
+- Editor: debounced autosave drafts, undo/redo history, responsive device
+  toggle, media-library image insertion, publish to public website.
+- Permissions: `cms_pages_read/create/update/delete/publish`; publish
+  ADMIN/SUPER_ADMIN only.
+
 ## 5. Previous implementation decisions (status)
 
 | Area | Decision | Status |
