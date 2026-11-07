@@ -79,10 +79,27 @@ See `DEPLOYMENT.md` and `OPERATIONS.md` for full procedures.
 - Preserve production data (PostgreSQL, MinIO, Redis); never run destructive Git/Docker/DB commands.
 - Use actual provider integrations (SMTP/Resend, OpenWA, MinIO); never mock in production.
 - Verify functionality after implementation and after every restart.
-- Documentation must stay synchronized with code (models, routes, workflows, roles, workers, env, security).
+- Documentation must stay synchronized with code (models, routes, workflows,
+  roles, workers, env, security).
+
+## CMS (visual page builder)
+
+The CMS lets administrators build and publish public website pages visually
+without code:
+
+- **Pages:** `cms_pages` (slug, title, status DRAFT/PUBLISHED/ARCHIVED,
+  content JSON, SEO fields) + `cms_page_revision` (immutable snapshot per
+  publish).
+- **Editor:** `PageBuilder` — 3-panel layout (element library / navigator /
+  media library, canvas, properties), debounced autosave drafts, undo/redo,
+  responsive device toggle, publish to the public website.
+- **Rendering:** `GET /[slug]` serves published CMS pages; drafts are never
+  public (preview requires an authenticated CMS session).
+- **Permissions:** `cms_pages_read/create/update/delete/publish`; publish is
+  ADMIN/SUPER_ADMIN only.
+- **Routes:** admin pages under `/cms/pages`; API under `/api/v1/cms/`.
 
 ## Commands
-
 | Purpose | Command |
 |---------|---------|
 | Dev server | `bun run dev` |

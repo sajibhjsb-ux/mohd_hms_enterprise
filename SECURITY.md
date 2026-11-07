@@ -8,6 +8,10 @@
 - Backend enforces every business rule; no frontend-only security.
 - Customer-portal data scoping.
 - Super Admin excluded from complaint-workflow notifications.
+- CMS page builder: `cms_pages_read/create/update/delete/publish` permissions;
+  publish is ADMIN/SUPER_ADMIN only (segregation of duties); SUPERVISOR gets
+  read/create/update. Drafts are never served publicly (preview requires an
+  authenticated CMS session).
 - Role-scoped online presence (backend-enforced); role-scoped presence privacy.
 
 ## Secrets

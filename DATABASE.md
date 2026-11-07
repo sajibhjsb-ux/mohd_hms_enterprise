@@ -36,6 +36,9 @@ Core tables observed in handlers/services/routes:
 - `inspection_report`, `irms` — IRMS inspections + attachments (MinIO keys)
 - `letter`, `mail_message`, `mailbox`, `mailbox_member` — email client
 - `setting`, `draft`, `device` (push), `equipment`, `vehicle`
+- `cms_page`, `cms_page_revision` — CMS visual page builder pages and immutable
+  revision snapshots (slug, title, status DRAFT/PUBLISHED/ARCHIVED, content
+  JSON, SEO fields, publishedAt, per-version snapshots)
 
 ## Relationships (key)
 - Complaint 1:N Work Order (one WO per complaint; Complaint locked to WO)

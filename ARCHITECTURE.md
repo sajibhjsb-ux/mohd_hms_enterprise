@@ -82,6 +82,23 @@ In-app `Notification` rows + centralized `EmailService` + WhatsApp AI
 `notifyRole` and `queueDirect`. Super Admin excluded from complaint-workflow
 notifications.
 
+## CMS (visual page builder)
+- Pages: `cms_page` (slug, title, status DRAFT/PUBLISHED/ARCHIVED, content
+  JSON, SEO fields, publishedAt) and `cms_page_revision` (immutable snapshot
+  per publish with version, change summary, author).
+- API: `src/app/api/v1/cms/pages/` (CRUD, publish/unpublish with revision
+  snapshots, revisions list/restore, preview). Backend-enforced RBAC via
+  `cms_pages_*` permissions; publish is ADMIN-only.
+- Rendering: shared `RenderPage` (`src/components/hms/modules/cms/page-renderer.tsx`)
+  renders the page-builder JSON document (`{ blocks: [...] }`) for the public
+  site (`[[...slug]]`), the preview API, and the editor canvas.
+- Editor: `PageBuilder` (`src/components/hms/modules/cms/page-builder.tsx`)
+  — 3-panel layout (element library / navigator / media library left, canvas
+  center, properties right), debounced autosave drafts, undo/redo history,
+  responsive device toggle, publish to public website.
+- Storage: page media reuses the existing Files/MinIO module (`storage.ts`);
+  image object keys stored in page content JSON.
+
 ## External integrations
 - Email: SMTP or Resend provider (admin-configured; API key encrypted;
   sender verified).
@@ -99,6 +116,7 @@ deploy worker `/home/hasan/hms-deploy/deploy.sh` builds `origin/main` in
 staging, swaps, health-checks, auto-rollback. State in
 `/home/hasan/hms/state.json`.
 
-> Version mismatch: authoritative source is `dev` @ `bafbefa`; deploy worker
-> builds `origin/main`; live slots run old main commits. Realign required
-> (see DEPLOYMENT.md).
+> Version note: `dev` was merged into `main` (commit `0f492d6`) and deployed to
+> production (green slot `:3001`, healthy). The CMS page-builder feature is
++being developed on branch `feat/cms-page-builder` and has not been merged to
++`main` (no automatic merges).
