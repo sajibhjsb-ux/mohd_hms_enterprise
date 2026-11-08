@@ -16,8 +16,9 @@ import { useDraft } from "@/hooks/use-draft";
 import { PageShell } from "@/components/hms/shared/page-shell";
 import { EmptyState } from "@/components/hms/shared/ui-bits";
 import { LineItemsEditor, TotalsPanel, formTotals } from "@/components/hms/shared/line-items-editor";
+import { DocumentPreview, loadCompanyIdentity, type CompanyIdentity } from "./shared";
 import { PERMISSIONS } from "@/lib/hms/constants";
-import { customerLabel, money, fromCents } from "@/lib/hms/format";
+import { customerLabel, money, fromCents, toCents, fmtDate } from "@/lib/hms/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -25,7 +26,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2, Receipt, RotateCcw, Save } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { emptyForm, emptyItem, type CustomerLite, type InventoryLite, type InvoiceDetail, type IForm, type WoLite } from "./shared";
+import { emptyForm, emptyItem, type CustomerLite, type InventoryLite, type InvoiceDetail, type InvoiceItemRow, type IForm, type WoLite } from "./shared";
 
 function errMessage(e: unknown): string {
   return e instanceof ClientApiError ? e.message : "Something went wrong. Please try again.";
@@ -48,6 +49,13 @@ export function InvoiceNewPage() {
   const [woState, setWoState] = useState<"loading" | "ready" | "unavailable">("loading");
   const [woId, setWoId] = useState("");
   const [refsLoading, setRefsLoading] = useState(false);
+
+  // ── Company identity (shared with the PDF engine — preview == generated PDF) ──
+  const [company, setCompany] = useState<CompanyIdentity>({ name: "MOHD.HMS Enterprise", address: "", phone: "", email: "" });
+  // Published invoice templates the editor may render with (requires templates.read).
+  const [templates, setTemplates] = useState<{ id: string; name: string }[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
 
   // Draft protection kept verbatim from the former dialog (same formKey).
   const form = useDraft<IForm>({ formKey: "invoice.create", initial: emptyForm() });
@@ -86,6 +94,20 @@ export function InvoiceNewPage() {
     return () => { alive = false; };
   }, [canManage, customers.length, toast]);
 
+  // ── Company identity + published invoice templates ──
+  useEffect(() => {
+    let alive = true;
+    loadCompanyIdentity().then((c) => { if (alive) setCompany(c); });
+    if (canManage) {
+      setTemplatesLoading(true);
+      api.get<Array<{ id: string; name: string; status: string }>>(`/api/v1/templates${qs({ type: "invoice", status: "ACTIVE" })}`)
+        .then((r) => { if (alive) setTemplates(r.data.filter((t) => t.status === "ACTIVE")); })
+        .catch(() => { /* templates.read may not be granted — selector simply stays empty */ })
+        .finally(() => { if (alive) setTemplatesLoading(false); });
+    }
+    return () => { alive = false; };
+  }, [canManage]);
+
   // ── Line item handlers (same behaviour as the former dialog) ──
 
   const setItem = useCallback((index: number, patch: Partial<IForm["items"][number]>) => {
@@ -111,6 +133,56 @@ export function InvoiceNewPage() {
     () => formTotals(form.value.items, form.value.discount, form.value.shipping),
     [form.value.items, form.value.discount, form.value.shipping]
   );
+
+  // ── Live invoice preview document (built from the draft form, client math mirrors the server) ──
+  const liveInv = useMemo<InvoiceDetail>(() => {
+    const customer = customers.find((c) => c.id === form.value.customerId);
+    const lines: InvoiceItemRow[] = form.value.items.map((it, i) => {
+      const qty = parseFloat(it.quantity) || 0;
+      const unitPriceCents = toCents(it.unitPrice);
+      const disc = parseFloat(it.discountPercent) || 0;
+      const tax = parseFloat(it.taxPercent) || 0;
+      const lineCents = Math.round(qty * unitPriceCents * (1 - disc / 100));
+      return {
+        id: `live-${i}`,
+        kind: it.kind,
+        itemId: it.itemId || null,
+        description: it.description.trim(),
+        quantity: qty,
+        unit: it.unit || "pcs",
+        unitPriceCents,
+        discountPercent: disc,
+        taxPercent: tax,
+        totalCents: lineCents,
+      };
+    });
+    const subtotalCents = lines.reduce((s, it) => s + it.totalCents, 0);
+    const taxCents = lines.reduce((s, it) => s + Math.round((it.totalCents * it.taxPercent) / 100), 0);
+    return {
+      id: "",
+      code: "INV-DRAFT",
+      status: "DRAFT",
+      invoiceDate: new Date().toISOString().slice(0, 10),
+      dueDate: form.value.dueDate || null,
+      subtotalCents,
+      discountCents: totals.discountCents,
+      taxCents,
+      shippingCents: totals.shippingCents,
+      totalCents: totals.totalCents,
+      paidCents: 0,
+      balanceCents: totals.totalCents,
+      notes: form.value.notes,
+      terms: form.value.terms,
+      sentAt: null,
+      items: lines,
+      payments: [],
+      quotation: null,
+      workOrders: [],
+      customer: customer
+        ? { id: customer.id, code: customer.code, companyName: customer.companyName, contactPerson: customer.contactPerson, email: customer.email, phone: customer.phone }
+        : { id: "", code: "", companyName: "—" },
+    };
+  }, [form.value, customers, totals]);
 
   // ── Actions ──
 
@@ -314,6 +386,26 @@ export function InvoiceNewPage() {
       ) : (
         /* ── Manual path ── */
         <div className="grid gap-4 lg:grid-cols-3 items-start">
+          {/* Template selector (full width) — published invoice templates only */}
+          {templates.length > 0 ? (
+            <div className="lg:col-span-3">
+              <section className="rounded-xl border bg-card shadow-sm p-4 sm:p-5 space-y-2" aria-label="Invoice template">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-medium">Invoice template</p>
+                  {templatesLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                </div>
+                <Select value={selectedTemplateId ?? ""} onValueChange={(v) => setSelectedTemplateId(v || null)}>
+                  <SelectTrigger aria-label="Template"><SelectValue placeholder="Default (built-in)" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem key="" value="">Default (built-in)</SelectItem>
+                    {templates.map((t) => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">Controls the PDF look (fonts, colours, margins). The built-in template is used when none is selected.</p>
+              </section>
+            </div>
+          ) : null}
+
           <div className="lg:col-span-2 space-y-4">
             {/* Draft restore banner (same draft store as the former dialog) */}
             {form.draftExists ? (
@@ -371,11 +463,21 @@ export function InvoiceNewPage() {
             </section>
           </div>
 
-          {/* Side column — live totals + actions */}
-          <div className="space-y-4">
+          {/* Right column — live A4 preview + totals + actions */}
+          <div className="lg:col-span-1 space-y-4">
+            <section className="rounded-xl border bg-card shadow-sm p-4 sm:p-5 space-y-2" aria-label="Live preview">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-medium">Live preview (A4)</p>
+              </div>
+              <div className="max-w-[210mm] mx-auto border border-border/60 rounded-lg overflow-hidden bg-white shadow-sm">
+                <DocumentPreview inv={liveInv} company={company} />
+              </div>
+              <p className="text-xs text-muted-foreground text-center">Draft preview — totals computed client-side; server validates on save.</p>
+            </section>
+
             <section className="rounded-xl border bg-card shadow-sm p-4 sm:p-5 space-y-3" aria-label="Totals">
               <p className="text-sm font-medium">Totals</p>
-              <p className="text-xs text-muted-foreground">Totals are computed server-side from the line items. {form.dirty && source === "manual" ? "Draft auto-saved locally." : ""}</p>
+              <p className="text-xs text-muted-foreground">Draft auto-saved locally.</p>
               <TotalsPanel totals={totals} />
             </section>
 
