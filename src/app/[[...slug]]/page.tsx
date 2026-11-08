@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
 import { SessionProvider } from "@/components/hms/session";
 import { Gate } from "@/components/hms/gate";
@@ -53,8 +52,10 @@ export async function generateMetadata({ params }: { params: Promise<Params> }):
   }
 
   // 2) Legal pages (static SEO) + gated SPA fallback.
+  // The app is a gated SPA served by the catch-all route, so a path with no
+  // CMS page and no legal meta is a normal client route — never 404 here.
   const meta = first ? LEGAL_META[first] : undefined;
-  if (!meta) return notFound();
+  if (!meta) return {};
   let canonical: string | undefined;
   try {
     const row = await db.setting.findUnique({ where: { key: "public_url" }, select: { value: true } });
@@ -70,33 +71,35 @@ export async function generateMetadata({ params }: { params: Promise<Params> }):
   };
 }
 
-export default function Page({ params }: { params: Params }) {
-  const { slug } = params;
+export default async function Page({ params }: { params: Promise<Params> }) {
+  const { slug } = await params;
   const first = slug?.[0];
+
+  // Render a PUBLISHED CMS page when one matches the slug; otherwise fall back
+  // to the gated SPA shell, which handles every client route (root included).
+  let cms: { content: unknown } | null = null;
+  if (first) {
+    try {
+      const page = await db.page.findUnique({
+        where: { slug: first },
+        select: { content: true, status: true },
+      });
+      if (page && page.status === "PUBLISHED") cms = page;
+    } catch {
+      /* DB unavailable → serve the SPA rather than 404 */
+    }
+  }
 
   return (
     <SessionProvider>
       <NativeRuntime />
-      {/* Render a published CMS page when one matches the slug. */}
-      {first ? (
-        <CmsPageRenderer slug={first} />
+      {cms ? (
+        <div className="cms-public-page">
+          <RenderPage blocks={(cms.content as { blocks?: Block[] } | null)?.blocks ?? ([] as Block[])} />
+        </div>
       ) : (
-        /* Root — keep the existing gated SPA shell. */
         <Gate />
       )}
     </SessionProvider>
-  );
-}
-
-async function CmsPageRenderer({ slug }: { slug: string }) {
-  const page = await db.page.findUnique({
-    where: { slug },
-    select: { id: true, title: true, content: true, status: true, updatedAt: true },
-  });
-  if (!page || page.status !== "PUBLISHED") return notFound();
-  return (
-    <div className="cms-public-page">
-      <RenderPage blocks={(page.content as unknown as { blocks?: Block[] })?.blocks ?? ([] as Block[])} />
-    </div>
   );
 }
