@@ -16,7 +16,7 @@ import { PERMISSIONS } from "@/lib/hms/constants";
 import { roleCan } from "@/lib/hms/rbac";
 import { audit } from "@/lib/hms/services";
 import { storage } from "@/lib/hms/storage";
-import { assertViewWorkOrder } from "../../_lib";
+import { assertViewWorkOrder, isSupervisorPlus } from "../../_lib";
 
 function withId(fn: (id: string, ctx: { req: NextRequest; user: SessionUser }) => Promise<NextResponse>, permission?: (typeof PERMISSIONS)[keyof typeof PERMISSIONS]) {
   return async (req: NextRequest, ctx: { params: Promise<{ id: string }> }) => {
@@ -56,9 +56,14 @@ export const GET = withId(
     const photos = await db.document.findMany({
       where: { resourceType: "WORK_ORDER", resourceId: id, category: "WORK_ORDER" },
       orderBy: { createdAt: "asc" },
-      select: { id: true, name: true, mimeType: true, sizeBytes: true, label: true, createdAt: true },
+      select: { id: true, name: true, mimeType: true, sizeBytes: true, label: true, uploadedById: true, createdAt: true },
     });
-    return ok(photos);
+    const uploaderIds = [...new Set(photos.map((m) => m.uploadedById).filter((v): v is string => !!v))];
+    const uploaders = uploaderIds.length
+      ? await db.user.findMany({ where: { id: { in: uploaderIds } }, select: { id: true, name: true, email: true } })
+      : [];
+    const nameById = new Map(uploaders.map((u) => [u.id, u.name || u.email]));
+    return ok(photos.map((m) => ({ ...m, uploadedByName: m.uploadedById ? nameById.get(m.uploadedById) ?? null : null })));
   },
   PERMISSIONS.work_orders_read
 );
@@ -125,6 +130,22 @@ export const POST = withId(
       );
     }
 
+    // Evidence lifecycle (backend-authoritative): BEFORE only before work
+    // starts, DURING/AFTER only while the work order is active. Supervisors
+    // and admins may still correct BEFORE evidence after start.
+    if (phase === "BEFORE") {
+      if (sniffed.kind !== "image") {
+        throw Errors.badRequest("Before-work evidence accepts photos only (JPEG, PNG or WebP).");
+      }
+      if (!["PENDING", "ACCEPTED"].includes(wo.status) && !isSupervisorPlus(user.role)) {
+        throw Errors.invalidTransition("Before-work evidence can only be added before work starts.");
+      }
+    } else if (phase === "DURING" || phase === "AFTER") {
+      if (!["IN_PROGRESS", "ON_HOLD"].includes(wo.status)) {
+        throw Errors.invalidTransition(`${phase === "DURING" ? "During" : "After"}-work evidence can only be added while the work order is in progress.`);
+      }
+    }
+
     const key = `checklists/${wo.id}/photos/${uploadId ?? randomUUID()}.${sniffed.ext}`;
     if (uploadId) {
       const existing = await db.document.findFirst({
@@ -156,7 +177,7 @@ export const POST = withId(
       action: "WO_CHECKLIST_PHOTO_UPLOADED",
       resourceType: "DOCUMENT",
       resourceId: doc.id,
-      metadata: { workOrderCode: wo.code, itemId: itemId || null, sizeBytes: buf.length },
+      metadata: { workOrderCode: wo.code, itemId: itemId || null, phase, sizeBytes: buf.length },
     });
 
     return ok(doc, 201);

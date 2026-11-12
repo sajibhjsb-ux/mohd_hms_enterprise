@@ -58,7 +58,10 @@ export const GET = withId(
   async (id, { user }) => {
     const complaint = await db.complaint.findUnique({
       where: { id },
-      select: { id: true, customerId: true, createdById: true, assignedTechnicianId: true, code: true },
+      select: {
+        id: true, customerId: true, createdById: true, assignedTechnicianId: true, code: true,
+        workOrders: { select: { technicianId: true } },
+      },
     });
     if (!complaint) throw Errors.notFound("Complaint not found.");
     const profileId = user.role === "TECHNICIAN" ? await technicianProfileIdFor(user.id) : null;

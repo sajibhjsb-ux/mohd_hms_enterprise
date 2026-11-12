@@ -175,7 +175,28 @@ async function autoCreateWorkOrder(ctx: { resourceId: string; eventType: string 
     include: { assignedTechnician: { select: { id: true, userId: true } } },
   });
   if (!complaint) return { result: "SKIPPED", detail: "complaint missing" };
-  if (await db.workOrder.findFirst({ where: { complaintId: complaint.id }, select: { id: true } })) {
+  // Complaint acceptance IS the technician's acceptance of the generated work
+  // order. Creating it as ACCEPTED removes the redundant second acceptance
+  // step, so Start Work is available immediately. A complaint that is not yet
+  // accepted keeps the normal PENDING state.
+  const autoAccepted = ["COMPLAINT_ACCEPTED", "COMPLAINT_STARTED"].includes(ctx.eventType)
+    || complaint.status === "IN_PROGRESS";
+  const existing = await db.workOrder.findFirst({
+    where: { complaintId: complaint.id },
+    select: { id: true, code: true, status: true },
+  });
+  if (existing) {
+    // A pre-existing work order must not be duplicated. If it is still PENDING
+    // when the complaint is accepted/started, activate it in place.
+    if (autoAccepted && existing.status === "PENDING") {
+      await db.workOrder.update({ where: { id: existing.id }, data: { status: "ACCEPTED" } });
+      await audit({
+        actorEmail: "SYSTEM", action: "WORK_ORDER_ACTIVATED",
+        resourceType: "WORK_ORDER", resourceId: existing.id,
+        metadata: { workOrderCode: existing.code, complaintCode: complaint.code, trigger: ctx.eventType },
+      });
+      return { result: "SUCCESS", detail: `activated existing work order ${existing.code}` };
+    }
     return { result: "SKIPPED", detail: "work order already exists for complaint" };
   }
   const code = await nextNumber("WO");
@@ -190,7 +211,7 @@ async function autoCreateWorkOrder(ctx: { resourceId: string; eventType: string 
         title: complaint.title,
         description: complaint.description,
         priority: complaint.priority,
-        status: "PENDING",
+        status: autoAccepted ? "ACCEPTED" : "PENDING",
         // §9 — explicit source so the source=COMPLAINT filter works.
         sourceType: "COMPLAINT",
       },
@@ -204,7 +225,7 @@ async function autoCreateWorkOrder(ctx: { resourceId: string; eventType: string 
   await audit({
     actorEmail: "SYSTEM", action: "AUTO_CREATE_WORK_ORDER",
     resourceType: "WORK_ORDER", resourceId: wo.id,
-    metadata: { workOrderCode: wo.code, complaintCode: complaint.code, trigger: ctx.eventType },
+    metadata: { workOrderCode: wo.code, complaintCode: complaint.code, trigger: ctx.eventType, autoAccepted },
   });
   // §40 — visible on the complaint's workflow timeline.
   await audit({
@@ -213,9 +234,7 @@ async function autoCreateWorkOrder(ctx: { resourceId: string; eventType: string 
     metadata: { workOrderCode: wo.code },
   });
   await notifyRole("SUPERVISOR", { title: "Work order created automatically", message: `Work order ${wo.code} was generated from complaint ${complaint.code}.`, type: "INFO", resourceType: "WORK_ORDER", resourceId: wo.id });
-  if (complaint.assignedTechnician?.userId) {
-    await notify({ userId: complaint.assignedTechnician.userId, title: "Work order created", message: `Work order ${wo.code} for complaint ${complaint.code} is pending your acceptance.`, type: "INFO", resourceType: "WORK_ORDER", resourceId: wo.id });
-  }
+  // Technician/customer/staff notification is centralized in WORK_ORDER_CREATED_NOTIFY.
   // Realtime (STEP 13/40): the auto-created work order reaches technician + staff + customer live.
   await emit({ type: EVENT_TYPES.WORK_ORDER_CREATED, resourceType: "WORK_ORDER", resourceId: wo.id, payload: { code: wo.code, workOrderId: wo.id, customerId: complaint.customerId }, actorType: "SYSTEM" });
   return { result: "SUCCESS", detail: `created work order ${wo.code}` };

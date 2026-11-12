@@ -44,7 +44,13 @@ export async function technicianProfileIdFor(userId: string): Promise<string | n
 /** Detail/transition access: 404 when missing, 403 when out of the caller's scope. */
 export function assertViewComplaint(
   user: SessionUser,
-  complaint: { customerId: string; createdById: string | null; assignedTechnicianId: string | null },
+  complaint: {
+    customerId: string;
+    createdById: string | null;
+    assignedTechnicianId: string | null;
+    /** Optional linked work orders — a technician assigned to one may view its source complaint evidence. */
+    workOrders?: { id?: string; technicianId?: string | null }[];
+  },
   technicianProfileId: string | null
 ): void {
   if (user.role === "CUSTOMER") {
@@ -52,7 +58,9 @@ export function assertViewComplaint(
     return;
   }
   if (user.role === "TECHNICIAN") {
-    const allowed = complaint.assignedTechnicianId === technicianProfileId || complaint.createdById === user.id;
+    const allowed = complaint.assignedTechnicianId === technicianProfileId
+      || complaint.createdById === user.id
+      || (!!technicianProfileId && (complaint.workOrders ?? []).some((w) => w.technicianId === technicianProfileId));
     if (!allowed) throw Errors.forbidden();
   }
 }

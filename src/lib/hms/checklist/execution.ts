@@ -122,10 +122,11 @@ function snapshot(item: ChecklistExecutionItem, patch: ChecklistItemUpdatePatch)
     safetyCritical: item.safetyCritical ?? false, group: item.group ?? "",
     priority: item.priority ?? "", expectedResult: item.expectedResult ?? "", unit: item.unit ?? "",
   };
+  // `next` starts as a copy of the CURRENT state — it must not be pre-merged
+  // with the patch. setField() compares against it to decide what actually
+  // changed; pre-merging made every patched field look "already applied", so
+  // status/response edits were silently dropped.
   const next: Record<string, unknown> = { ...base };
-  for (const [k, v] of Object.entries(patch)) {
-    if (v !== undefined) next[k] = v;
-  }
   return { previous: base, next };
 }
 

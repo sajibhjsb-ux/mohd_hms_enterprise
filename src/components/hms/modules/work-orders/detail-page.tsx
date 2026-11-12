@@ -459,12 +459,14 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
             </div>
           </div>
 
-          {/* Evidence — three strictly separated sections: BEFORE (read-only from
-              complaint), DURING (while active), AFTER (completion, required). */}
+          {/* Evidence — three strictly separated sections: BEFORE (imported
+              complaint evidence + photos uploaded before Start Work), DURING
+              (while active), AFTER (completion, required). */}
           <EvidencePanel
             workOrderId={detail.id}
             complaintId={detail.complaint?.id ?? null}
             canUpload={canOperate}
+            canManageBefore={isSupervisor}
             workOrderStatus={woStatus}
           />
 
@@ -816,13 +818,7 @@ export function WorkOrderDetailPage({ id }: { id: string }) {
           <div className="rounded-xl border bg-card shadow-sm p-4 space-y-3">
             <p className="text-xs uppercase tracking-wide text-muted-foreground">Workflow actions</p>
 
-            {woStatus === "PENDING" && (isAssignedTech || canUpdate) ? (
-              <Button disabled={busy} onClick={() => runTransition("accept")} className="w-full">
-                <PlayCircle className="h-4 w-4 mr-1.5" /> Accept
-              </Button>
-            ) : null}
-
-            {woStatus === "ACCEPTED" && (isAssignedTech || canUpdate) ? (
+            {(woStatus === "PENDING" || woStatus === "ACCEPTED") && (isAssignedTech || canUpdate) ? (
               <div className="space-y-3">
                 {gateMissing.length > 0 ? (
                   <div className="rounded-lg border border-amber-500/40 bg-amber-50 p-3 text-xs text-amber-800">

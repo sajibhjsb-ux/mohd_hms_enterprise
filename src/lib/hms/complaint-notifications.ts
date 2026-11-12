@@ -383,7 +383,7 @@ export async function notifyWorkOrderCreated({
         eventType: EVENT_TYPES.WORK_ORDER_CREATED,
         title: isTech ? "Work Order Available" : "Work Order Created",
         message: isTech
-          ? `Work Order ${workOrderCode} (“${workOrderTitle}”) is pending your acceptance.`
+          ? `Work Order ${workOrderCode} (“${workOrderTitle}”) is ready to start.`
           : `Work Order ${workOrderCode} has been created for complaint ${complaintCode}.`,
         type: "INFO",
       });
@@ -395,7 +395,7 @@ export async function notifyWorkOrderCreated({
         eventType: EVENT_TYPES.WORK_ORDER_CREATED,
         title: isTech ? "Work Order Available" : "Work Order Created",
         message: isTech
-          ? `Work Order ${workOrderCode} (“${workOrderTitle}”) is pending your acceptance.`
+          ? `Work Order ${workOrderCode} (“${workOrderTitle}”) is ready to start.`
           : `Work Order ${workOrderCode} has been created.`,
         type: "INFO",
       });

@@ -37,8 +37,11 @@ ARCHITECTURE.md, CHANGELOG.md support it.
 - Complaint → Work Order (one per complaint) → Complaint locked; no
   independent mark-completed on linked Complaint; Work Order status controls
   Complaint status; closing WO closes Complaint; reopening reopens both.
-- Evidence: BEFORE (customer, pre-submission, locked after), DURING (technician,
-  active WO), AFTER (completion photo required by default).
+  Auto-created complaint WOs start `ACCEPTED` (ready to start); an existing
+  `PENDING` WO is activated in place, never duplicated.
+- Evidence: BEFORE (customer at intake + work-order photos before start;
+  complaint media is read-only), DURING (technician, active WO), AFTER
+  (completion photo required by default).
 - Checklist: auto-generated per WO; no duplicates; mandatory safety items;
   Pass/Fail/N/A; progress from item statuses; no completion bypass.
 - PM: backend scheduler; recurrence; next-date; overdue; duplicate prevention;
@@ -65,14 +68,18 @@ ARCHITECTURE.md, CHANGELOG.md support it.
   customers.
 
 ## Deployment rules
-- Authoritative production branch: `main` @ `0f492d6` (deployed, healthy on
-  green slot :3001). CMS feature developed on `feat/cms-page-builder` (not
-  merged to main — no automatic merges).
+- Authoritative production branch: `main`. The live release and commit are
+  recorded in `/home/hasan/hms/state.json` (`current`, `last_commit`); never
+  hardcode them here.
+- Controller: `/home/hasan/hms/deployment/cli.sh` (`deploy dry-run`,
+  `deploy deploy --auto`, `deploy promote`, `deploy rollback`, `deploy status`).
+  The `hms-deploy` oneshot runs `deployment/deploy.sh`; the poller checks
+  `origin/main` every 5 minutes.
+- Blue/green slots: blue `:3100`, green `:3101`; router `:3000` proxies the
+  active slot from `/home/hasan/hms/shared/upstream`.
 - Build → health-check → deploy → post-deploy test → version verification →
   documentation update.
 - Do not force a production deploy that cannot be verified.
-- Current live production version is `0f492d6`; `state.json` reports status
-  `healthy`.
 
 ## Documentation update requirements
 Whenever code changes (models, routes, workflows, roles, workers, deployment,

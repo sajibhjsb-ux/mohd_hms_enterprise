@@ -19,13 +19,20 @@ synchronized with `src/lib/hms/workflows/` and `src/app/api/v1/`.
 2. Backend-authoritative status transition (NEW → ACCEPTED / STARTED / ...).
 3. On ACCEPTED or STARTED, workflow `AUTO_CREATE_WORK_ORDER` fires if no Work
    Order exists yet (one per complaint, `sourceType=COMPLAINT`, idempotent).
+   The created Work Order is `ACCEPTED` — accepted on the technician's behalf
+   and ready to start; no separate technician acceptance step. If a `PENDING`
+   Work Order already exists, it is activated in place (`WORK_ORDER_ACTIVATED`)
+   instead of creating a duplicate.
 
 ## 3. Work Order generation
 1. Work Order created linked to Complaint (`complaintId`), customer, equipment,
-   technician (if assigned), title/description/priority, status PENDING.
+   technician (if assigned), title/description/priority. Complaint-driven
+   auto-creation starts at `ACCEPTED` (ready to start); manual/other sources
+   start at `PENDING`.
 2. `lockComplaintToWorkOrder(tx, ...)` runs in the same transaction:
    Complaint becomes locked/read-only, driven exclusively by this Work Order.
-3. Audit: `AUTO_CREATE_WORK_ORDER` + `WORK_ORDER_CREATED_AUTOMATICALLY`.
+3. Audit: `AUTO_CREATE_WORK_ORDER` + `WORK_ORDER_CREATED_AUTOMATICALLY`, or
+   `WORK_ORDER_ACTIVATED` when an existing `PENDING` Work Order is activated.
 4. Notification (`WORK_ORDER_CREATED_NOTIFY`): Admin + Supervisor + assigned
    Technician + customer/creator.
 5. Checklist attached/generated for the Work Order (see §7).
@@ -44,7 +51,10 @@ synchronized with `src/lib/hms/workflows/` and `src/app/api/v1/`.
 - Escalation if not accepted within configured hours (SUPERVISOR + ADMIN).
 
 ## 6. Technician acceptance
-- Technician accepts the Work Order (status transition).
+- Complaint-driven Work Orders are auto-accepted (`ACCEPTED`) when the
+  Complaint is accepted/started; the technician can Start Work directly.
+- Manual/other Work Orders may still be accepted explicitly. Start Work is
+  available from both `PENDING` and `ACCEPTED`.
 - Notification: appropriate recipients for "Accepted".
 
 ## 7. Work execution + checklist + evidence
@@ -54,8 +64,17 @@ synchronized with `src/lib/hms/workflows/` and `src/app/api/v1/`.
   measurements, checklist evidence.
 - Progress calculated from actual item statuses; no unauthorized completion
   bypass.
-- DURING evidence: technician captures progress/existing/maintenance/repair/
-  testing photos/videos (camera + gallery) via the active Work Order.
+- BEFORE evidence: complaint intake media is imported read-only into the Work
+  Order's Before Work section; technicians/supervisors may add before-work
+  photos (images only) while the Work Order is `PENDING`/`ACCEPTED`. Starting
+  requires persisted before-work photo evidence (complaint media counts) and
+  all required checklist items.
+- DURING/AFTER evidence: technician captures progress/existing/maintenance/
+  repair/testing photos/videos (camera + gallery) only while the Work Order is
+  `IN_PROGRESS`/`ON_HOLD`.
+- Work-order evidence can be deleted by an authorized updater under the same
+  phase rules; complaint-sourced media is read-only. Deletion removes both the
+  stored object and its metadata row.
 
 ## 8. AFTER evidence + review + closure
 - Technician captures completion evidence before final review (at least one

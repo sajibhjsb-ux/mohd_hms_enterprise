@@ -18,7 +18,10 @@ export const GET = async (req: NextRequest, ctx: { params: Promise<{ id: string;
       const forceDownload = new URL(req.url).searchParams.get("download") === "1";
       const complaint = await db.complaint.findUnique({
         where: { id },
-        select: { id: true, customerId: true, createdById: true, assignedTechnicianId: true },
+        select: {
+          id: true, customerId: true, createdById: true, assignedTechnicianId: true,
+          workOrders: { select: { technicianId: true } },
+        },
       });
       if (!complaint) throw Errors.notFound("Complaint not found.");
       const profileId = user.role === "TECHNICIAN" ? await technicianProfileIdFor(user.id) : null;

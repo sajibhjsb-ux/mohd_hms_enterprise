@@ -215,7 +215,7 @@ export async function generatePmOccurrence(opts: {
     await notify({
       userId: plan.assignedTechnician.user.id,
       title: "PM task scheduled",
-      message: `${created.task.code} — ${plan.name} on ${plan.equipment.name} is due ${isoDay(dueDate)}. Work order ${created.workOrder.code} is awaiting your acceptance.`,
+      message: `${created.task.code} — ${plan.name} on ${plan.equipment.name} is due ${isoDay(dueDate)}. Work order ${created.workOrder.code} is ready to start.`,
       type: "INFO",
       resourceType: "PM_TASK",
       resourceId: created.task.id,

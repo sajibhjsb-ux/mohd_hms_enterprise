@@ -344,7 +344,10 @@ export const IRMS_SIGNATURE_ROLES = ["INSPECTOR", "SUPERVISOR", "MANAGER", "CLIE
 
 export const WO_STATUSES = ["PENDING", "ACCEPTED", "IN_PROGRESS", "ON_HOLD", "COMPLETED", "CANCELLED"] as const;
 export const WO_TRANSITIONS: Record<string, string[]> = {
-  PENDING: ["ACCEPTED", "CANCELLED"],
+  // IN_PROGRESS is allowed directly from PENDING: a work order may be started
+  // without a separate acceptance step (complaint-generated work orders are
+  // created ACCEPTED, PM/standalone work orders may be started directly).
+  PENDING: ["ACCEPTED", "IN_PROGRESS", "CANCELLED"],
   ACCEPTED: ["IN_PROGRESS", "ON_HOLD", "CANCELLED"],
   IN_PROGRESS: ["COMPLETED", "ON_HOLD"],
   ON_HOLD: ["IN_PROGRESS", "CANCELLED"],
