@@ -14,6 +14,10 @@ function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
+export function hashMfaToken(token: string): string {
+  return hashToken(token);
+}
+
 export async function createMfaChallenge(
   input: { userId: string; purpose: MfaPurpose; ttlMs: number; remember?: boolean; ip?: string; userAgent?: string },
   tx?: Client
