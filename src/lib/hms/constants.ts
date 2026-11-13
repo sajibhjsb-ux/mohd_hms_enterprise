@@ -124,6 +124,8 @@ export const PERMISSIONS = {
   settings_read: "settings.read",
   settings_manage: "settings.manage",
   audit_read: "audit.read",
+  mfa_policy_read: "mfa.policy.read",
+  mfa_policy_manage: "mfa.policy.manage",
   // Document Template Management (Settings → Templates) — ONE central
   // registry for all PDF document templates. read = view/preview templates;
   // manage = create/edit drafts/duplicate; publish = publish/set-default/

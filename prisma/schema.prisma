@@ -45,6 +45,9 @@ model User {
   createdBy     String?
 
   sessions          Session[]
+  mfa               UserMfa?
+  mfaRecoveryCodes  MfaRecoveryCode[]
+  mfaChallenges     MfaChallenge[]
   passwordResets    PasswordResetToken[]
   emailOtps         EmailOtp[]
   pushSubscriptions PushSubscription[]
@@ -3431,4 +3434,60 @@ model PageRevision {
   @@index([pageId, version])
   @@unique([pageId, version])
   @@map("cms_page_revisions")
+}
+
+model UserMfa {
+  userId                     String    @id
+  user                       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mfaEnabled                 Boolean   @default(false)
+  method                     String    @default("TOTP")
+  encryptedTotpSecret        String?
+  pendingEncryptedSecret     String?
+  pendingEnrollmentExpiresAt DateTime?
+  enrolledAt                 DateTime?
+  lastVerifiedAt             DateTime?
+  lastTotpStep               Int?
+  lastRecoveryAt             DateTime?
+  recoveryCodesGeneratedAt   DateTime?
+  graceUntil                 DateTime?
+  updatedAt                  DateTime  @updatedAt
+}
+
+model MfaRecoveryCode {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  codeHash  String
+  usedAt    DateTime?
+  usedIp    String?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, usedAt])
+}
+
+model MfaPolicy {
+  id              String   @id @default(cuid())
+  role            String   @unique
+  policyMode      String   @default("OPTIONAL") // MANDATORY | OPTIONAL | DISABLED
+  gracePeriodDays Int      @default(0)
+  updatedBy       String?
+  updatedAt       DateTime @updatedAt
+}
+
+model MfaChallenge {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  purpose   String    // LOGIN | ENROLL | REENROLL
+  expiresAt DateTime
+  usedAt    DateTime?
+  attempts  Int       @default(0)
+  remember  Boolean   @default(false)
+  ip        String?
+  userAgent String?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, purpose])
+  @@index([expiresAt])
 }
