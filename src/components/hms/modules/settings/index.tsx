@@ -24,6 +24,7 @@ import { LegalTab } from "./legal-tab";
 import { NotificationsTab } from "./notifications-tab";
 import { TemplatesTab } from "./templates-tab";
 import { WhatsAppTab } from "./whatsapp-tab";
+import { MfaPolicyTab } from "./mfa-policy-tab";
 
 // Keep in sync with package.json version.
 const APP_VERSION = "0.2.1";
@@ -168,8 +169,14 @@ export function SettingsModule() {
           {canViewPush ? <TabsTrigger value="notifications">Notifications</TabsTrigger> : null}
           {canViewTemplates ? <TabsTrigger value="templates">Templates</TabsTrigger> : null}
           <TabsTrigger value="legal">Legal</TabsTrigger>
+          {canManage ? <TabsTrigger value="security">Security</TabsTrigger> : null}
           <TabsTrigger value="system">System</TabsTrigger>
         </TabsList>
+        {canManage ? (
+          <TabsContent value="security">
+            <MfaPolicyTab />
+          </TabsContent>
+        ) : null}
 
         {/* ── Company ── */}
         <TabsContent value="company">
