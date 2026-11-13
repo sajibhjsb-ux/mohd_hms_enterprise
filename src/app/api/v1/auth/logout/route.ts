@@ -5,6 +5,7 @@
 import { handler, ok } from "@/lib/hms/api";
 import { destroySession } from "@/lib/hms/auth";
 import { audit } from "@/lib/hms/services";
+import { clearMfaCookie } from "@/lib/hms/mfa/challenge";
 
 export const POST = handler(
   async ({ user }) => {
@@ -12,7 +13,9 @@ export const POST = handler(
       await audit({ actorId: user.id, actorEmail: user.email, action: "LOGOUT", resourceType: "AUTH" });
     }
     await destroySession();
-    return ok({ loggedOut: true });
+    const res = ok({ loggedOut: true });
+    clearMfaCookie(res);
+    return res;
   },
   { auth: false }
 );
