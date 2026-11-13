@@ -17,6 +17,8 @@ import { termsStatusFor } from "@/lib/hms/legal/legal";
 import { verifyEmailOtp, clearEmailOtpDevMailbox, EMAIL_OTP_INVALID_MESSAGE } from "@/lib/hms/email-otp";
 import { rateLimit, clientIp } from "@/lib/hms/rate-limit";
 import { audit } from "@/lib/hms/services";
+import { setMfaCookie } from "@/lib/hms/mfa/challenge";
+import { resolveMfaGate } from "@/lib/hms/mfa/gate";
 import type { Permission } from "@/lib/hms/constants";
 
 const schema = z.object({
@@ -43,6 +45,27 @@ export const POST = handler(
 
     // Throws the same generic error on wrong/expired/exhausted codes.
     await verifyEmailOtp(user, code);
+
+    // MFA gate: OTP was correct, but the account may still need TOTP
+    // verification or enrolment before a session is opened.
+    const gate = await resolveMfaGate(user, {
+      remember: !!remember,
+      ip,
+      userAgent: req.headers.get("user-agent") ?? undefined,
+    });
+    if (gate.action !== "allowed") {
+      const res = ok(
+        gate.action === "challenge"
+          ? { mfaRequired: true, expiresAt: gate.challenge.expiresAt.toISOString() }
+          : {
+              mfaEnrollmentRequired: true,
+              expiresAt: gate.challenge.expiresAt.toISOString(),
+              graceDeadline: gate.graceDeadline?.toISOString() ?? null,
+            }
+      );
+      setMfaCookie(res, gate.challenge.token, gate.challenge.expiresAt);
+      return res;
+    }
 
     await db.user.update({
       where: { id: user.id },

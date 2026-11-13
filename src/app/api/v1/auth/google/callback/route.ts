@@ -32,6 +32,8 @@ import {
   OAUTH_VERIFIER_COOKIE,
   safeEqual,
 } from "@/lib/hms/google-auth";
+import { setMfaCookie } from "@/lib/hms/mfa/challenge";
+import { resolveMfaGate } from "@/lib/hms/mfa/gate";
 
 /** Landing page after sign-in: onboard incomplete customers, rest → dashboard. */
 function landingFor(role: string, state: { profileComplete: boolean }): string {
@@ -184,6 +186,17 @@ export async function GET(req: NextRequest) {
     },
   });
 
+  // MFA gate: a Google-only account still runs the TOTP step-up before a
+  // session exists. remember is always false — Google has no "keep me signed
+  // in" choice on the OAuth surface.
+  const gate = await resolveMfaGate(user, { remember: false, ip, userAgent: req.headers.get("user-agent") ?? undefined });
+  if (gate.action !== "allowed") {
+    const target = gate.action === "challenge" ? "/?auth=mfa" : "/?auth=mfa-enroll";
+    const res = NextResponse.redirect(new URL(target, externalOrigin(req)));
+    setMfaCookie(res, gate.challenge.token, gate.challenge.expiresAt);
+    return clearOAuth(res);
+  }
+
   // SINGLE ACTIVE DEVICE: the canonical superseding path — this OAuth login
   // revokes any other live session of the account first, so signing in with
   // Google ends the session on any previous device (§6/§21).
@@ -193,7 +206,6 @@ export async function GET(req: NextRequest) {
 
   // Landing decision from the DERIVED profile state (authoritative, not guessed).
   const profileState = await customerProfileState(user);
-
   await audit({
     actorId: user.id,
     actorEmail: user.email,
