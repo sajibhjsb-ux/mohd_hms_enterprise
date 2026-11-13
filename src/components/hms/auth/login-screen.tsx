@@ -23,9 +23,11 @@ import {
   GoogleIcon,
 } from "./auth-ui";
 
-/** Login API response: either a full session payload or an OTP challenge. */
+/** Login API response: full session, OTP challenge, or a pending MFA challenge. */
 export type LoginResponse =
   | { otpRequired: true; email: string; resendAfterSec: number; expiresInSec: number }
+  | { mfaRequired: true; expiresAt: string; otpRequired?: false }
+  | { mfaEnrollmentRequired: true; expiresAt: string; graceDeadline: string | null; otpRequired?: false }
   | { otpRequired?: false };
 
 export function AuthLoginScreen({
@@ -36,6 +38,8 @@ export function AuthLoginScreen({
   remember,
   onRememberChange,
   onAuthenticated,
+  onMfaRequired,
+  onMfaEnrollmentRequired,
   onOtpRequired,
   onForgotPassword,
 }: {
@@ -49,6 +53,10 @@ export function AuthLoginScreen({
   onRememberChange: (v: boolean) => void;
   /** Credentials accepted — session cookie set; continue to the app. */
   onAuthenticated: () => Promise<void>;
+  /** Credentials accepted, but a TOTP challenge is pending. */
+  onMfaRequired: (expiresAt: string) => void;
+  /** Credentials accepted, but the role requires MFA enrolment first. */
+  onMfaEnrollmentRequired: (expiresAt: string, graceDeadline: string | null) => void;
   /** Server requires email verification first (6-digit code sent). */
   onOtpRequired: (email: string, resendAfterSec: number) => void;
   /** Open the real Forgot Password flow (dedicated screen, not a modal). */
@@ -94,6 +102,14 @@ export function AuthLoginScreen({
         password,
         remember,
       });
+      if ("mfaRequired" in res.data && res.data.mfaRequired) {
+        onMfaRequired(res.data.expiresAt);
+        return;
+      }
+      if ("mfaEnrollmentRequired" in res.data && res.data.mfaEnrollmentRequired) {
+        onMfaEnrollmentRequired(res.data.expiresAt, res.data.graceDeadline);
+        return;
+      }
       if (res.data.otpRequired) {
         // Server has queued a 6-digit code — go verify it (resend countdown
         // value comes from the backend so it matches the enforced cooldown).

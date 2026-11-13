@@ -35,8 +35,11 @@ import { AuthForgotPasswordScreen } from "./forgot-screen";
 import { AuthResetOtpScreen } from "./reset-otp-screen";
 import { AuthNewPasswordScreen } from "./new-password-screen";
 import { AuthResetSuccessScreen } from "./success-screen";
+import { AuthMfaScreen } from "./mfa-screen";
+import { AuthMfaRecoveryScreen } from "./mfa-recovery-screen";
+import { AuthMfaEnrollScreen } from "./mfa-enroll-screen";
 
-type AuthScreen = "welcome" | "login" | "verify" | "forgot" | "reset-otp" | "new-password" | "reset-success";
+type AuthScreen = "welcome" | "login" | "verify" | "forgot" | "reset-otp" | "new-password" | "reset-success" | "mfa" | "mfa-recovery" | "mfa-enroll";
 
 /** Server error codes (?googleError=) mapped to friendly, actionable messages. */
 const GOOGLE_ERROR_MESSAGES: Record<string, string> = {
@@ -73,6 +76,8 @@ function AuthFlow() {
   const [remember, setRemember] = useState(false);
   const [focusEmail, setFocusEmail] = useState(false);
   const [oauthError, setOauthError] = useState<string | null>(null);
+  const [mfaExpiresAt, setMfaExpiresAt] = useState<string | null>(null);
+  const [mfaGraceDeadline, setMfaGraceDeadline] = useState<string | null>(null);
 
   // Password recovery context (memory only, one recovery at a time — never
   // in the URL, never in any storage). GATING RULE: a handler must never
@@ -123,6 +128,7 @@ function AuthFlow() {
   };
   const screen: AuthScreen =
     (authParam === "forgot" || authParam === "login") ? authParam
+    : authParam === "mfa" || authParam === "mfa-recovery" || authParam === "mfa-enroll" ? authParam
     : authParam && stateGates[authParam] ? (authParam as AuthScreen)
     : "welcome";
 
@@ -167,6 +173,8 @@ function AuthFlow() {
     setResetNotice(null);
     setResetToken(null);
     setResetDone(false);
+    setMfaExpiresAt(null);
+    setMfaGraceDeadline(null);
     try {
       window.history.replaceState(null, "", window.location.pathname);
     } catch {
@@ -179,6 +187,24 @@ function AuthFlow() {
     setPendingEmail(email);
     setResendAfterSec(resendAfter);
     navigate("verify");
+  }
+
+  function handleMfaRequired(expiresAt: string) {
+    setMfaExpiresAt(expiresAt);
+    setMfaGraceDeadline(null);
+    navigate("mfa");
+  }
+
+  function handleMfaEnrollmentRequired(expiresAt: string, graceDeadline: string | null) {
+    setMfaExpiresAt(expiresAt);
+    setMfaGraceDeadline(graceDeadline);
+    navigate("mfa-enroll");
+  }
+
+  function handleMfaBack() {
+    setMfaExpiresAt(null);
+    setMfaGraceDeadline(null);
+    navigate("login");
   }
 
   // ---- Password recovery handlers (state lives in memory only) ----
@@ -233,6 +259,8 @@ function AuthFlow() {
           remember={remember}
           onRememberChange={setRemember}
           onAuthenticated={onAuthenticated}
+          onMfaRequired={handleMfaRequired}
+          onMfaEnrollmentRequired={handleMfaEnrollmentRequired}
           onOtpRequired={handleOtpRequired}
           onForgotPassword={() => navigate("forgot")}
         />
@@ -255,6 +283,26 @@ function AuthFlow() {
         />
       ) : screen === "reset-success" ? (
         <AuthResetSuccessScreen onBackToLogin={handleBackToLogin} />
+      ) : screen === "mfa" ? (
+        <AuthMfaScreen
+          expiresAt={mfaExpiresAt ?? new Date(Date.now() + 300_000).toISOString()}
+          onBack={handleMfaBack}
+          onUseRecovery={() => navigate("mfa-recovery")}
+          onAuthenticated={onAuthenticated}
+        />
+      ) : screen === "mfa-recovery" ? (
+        <AuthMfaRecoveryScreen
+          expiresAt={mfaExpiresAt ?? new Date(Date.now() + 300_000).toISOString()}
+          onBack={handleMfaBack}
+          onAuthenticated={onAuthenticated}
+        />
+      ) : screen === "mfa-enroll" ? (
+        <AuthMfaEnrollScreen
+          expiresAt={mfaExpiresAt ?? new Date(Date.now() + 900_000).toISOString()}
+          graceDeadline={mfaGraceDeadline}
+          onBack={handleMfaBack}
+          onAuthenticated={onAuthenticated}
+        />
       ) : (
         <AuthOtpVerificationScreen
           email={pendingEmail ?? ""}
