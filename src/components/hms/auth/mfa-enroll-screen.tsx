@@ -111,7 +111,7 @@ export function AuthMfaEnrollScreen({
 
         <div className="mt-6 grid grid-cols-2 gap-2 rounded-xl border bg-muted/40 p-4 font-mono text-sm">
           {recoveryCodes.map((c) => (
-            <span key={c}>{c}</span>
+            <span key={c} data-testid="mfa-recovery-code">{c}</span>
           ))}
         </div>
 
