@@ -20,6 +20,8 @@ import {
 } from "@/lib/hms/email-otp";
 import { rateLimit, clientIp } from "@/lib/hms/rate-limit";
 import { audit } from "@/lib/hms/services";
+import { resolveMfaGate } from "@/lib/hms/mfa/gate";
+import { setMfaCookie } from "@/lib/hms/mfa/challenge";
 import type { Permission } from "@/lib/hms/constants";
 
 const loginSchema = z.object({
@@ -72,6 +74,15 @@ export const POST = handler(
         resendAfterSec: issued.resendAfterSec,
         expiresInSec: issued.expiresInSec,
       });
+    }
+
+    const gate = await resolveMfaGate(user, { remember: !!remember, ip, userAgent: req.headers.get("user-agent") ?? undefined });
+    if (gate.action !== "allowed") {
+      const res = gate.action === "challenge"
+        ? ok({ mfaRequired: true, expiresAt: gate.challenge.expiresAt.toISOString() })
+        : ok({ mfaEnrollmentRequired: true, expiresAt: gate.challenge.expiresAt.toISOString(), graceDeadline: gate.graceDeadline });
+      setMfaCookie(res, gate.challenge.token, gate.challenge.expiresAt);
+      return res;
     }
 
     // SINGLE ACTIVE DEVICE (§6/§21/§22): the shared canonical path atomically
@@ -127,6 +138,7 @@ export const POST = handler(
         missingFields: profileState.missingFields,
         terms,
         avatarUrl: isAvatarRef(user.avatarUrl) ? user.avatarUrl : null,
+        ...(gate.enrollmentWarning ? { mfaEnrollmentWarning: gate.enrollmentWarning } : {}),
       },
     });
     res.headers.set("x-session-expires-at", expiresAt.toISOString());
