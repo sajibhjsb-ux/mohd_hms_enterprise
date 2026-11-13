@@ -34,6 +34,7 @@ import { PageHeader, StatusBadge, ErrorState, LoadingState } from "@/components/
 import { PushSettingsCards } from "@/components/hms/modules/profile/push-settings";
 import { MyPayslipsCard } from "@/components/hms/modules/profile/payslips";
 import { SecuritySessionsCard } from "@/components/hms/modules/profile/security-sessions";
+import { MfaSecurityCard } from "@/components/hms/modules/profile/mfa-security-card";
 import { humanize } from "@/lib/hms/constants";
 import { fmtDate } from "@/lib/hms/format";
 import { Button } from "@/components/ui/button";
@@ -451,6 +452,8 @@ function ProfileViewPage() {
 
       {/* Login & Session Security: user-controlled auto login + active
           sessions (per device) — the backend stays authoritative */}
+      <MfaSecurityCard />
+
       <SecuritySessionsCard />
 
       {/* Notifications: registered devices + push preferences (spec §19/§32) */}
