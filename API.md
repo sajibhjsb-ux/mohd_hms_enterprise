@@ -32,6 +32,11 @@ Route groups (Next.js App Router, `src/app/api/v1/`):
 | `/whatsapp/conversations/[id]` | WhatsApp conversation | Webhook/session | — |
 | `/email/inbound/webhook/route.ts` | Inbound email webhook | Webhook secret | — |
 | `/api/health/ready` | Health check (used by deploy worker) | — | — |
+| `/auth/mfa/{enroll,confirm-enrollment,abandon,verify,recovery}` | TOTP enrolment and login-challenge verification (QR + recovery codes) | Pre-session (challenge cookie `hms_mfa`) | All |
+| `/auth/mfa/{status,disable,regenerate-recovery-codes,re-enroll}` | Authenticated MFA management (status, disable, regenerate codes, re-enrol) | Session | All |
+| `/admin/security/mfa-policy` | Role-based MFA policy + compliance summary (GET); policy updates (PUT) | Session | ADMIN / Super Admin |
+| `/admin/security/mfa-users` | Per-user MFA enrolment status and admin reset targets | Session | ADMIN / Super Admin |
+| `/admin/security/mfa-reset` | Admin-initiated MFA reset (revokes the target's sessions) | Session | ADMIN / Super Admin |
 
 ## CMS (visual page builder)
 

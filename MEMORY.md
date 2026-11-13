@@ -41,7 +41,12 @@ together with `CLAUDE.md`/`AGENTS.md`. Keep it synchronized with the code.
   stores metadata/relationships only — no permanent media in container
   filesystems.
 - **Authentication:** DB-backed session tokens (HttpOnly cookie); 7 roles /
-  47 permissions (RBAC); `src/components/hms/session.tsx`.
+  47 permissions (RBAC); `src/components/hms/session.tsx`. TOTP multi-factor
+  authentication (`src/lib/hms/mfa/`, RFC 6238): encrypted secret
+  (AES-256-GCM, `MFA_ENCRYPTION_KEY`), login challenge gating session creation
+  (`resolveMfaGate`), scrypt-hashed single-use recovery codes, role-based
+  policy + grace window; enforcement is gated by `MFA_ENFORCEMENT_DISABLED`
+  (opt-in, defaults off).
 - **Notification architecture:** in-app `Notification` rows +
   centralized `EmailService` (`src/lib/hms/email/service.ts`) +
   WhatsApp AI (`src/lib/hms/whatsapp/` via OpenWA). Workflow engine
@@ -156,6 +161,7 @@ together with `CLAUDE.md`/`AGENTS.md`. Keep it synchronized with the code.
 | Notification distribution | `notify`/`notifyRole`, Super Admin excluded | Implemented & committed |
 | EmailService | Centralized, provider adapter, worker tick | Implemented & committed |
 | WhatsApp AI | Centralized AIService, OpenWA, dedupe | Implemented & committed |
+| TOTP multi-factor authentication | `src/lib/hms/mfa/`: AES-256-GCM secret, `resolveMfaGate` login gate, recovery codes, role policy + grace, admin reset | Implemented & committed; enforcement opt-in via `MFA_ENFORCEMENT_DISABLED` |
 | Mobile responsive UI | Bottom nav, breakpoints, safe areas | Implemented, needs post-restart verify |
 | Dashboard cards | Responsive cards | Implemented, needs post-restart verify |
 | `hms-app.service` active | Runs repo via `run-prod.sh` | NOT running (inactive) |

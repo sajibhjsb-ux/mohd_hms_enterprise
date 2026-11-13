@@ -3,6 +3,23 @@
 ## Authentication
 - DB-backed session tokens (HttpOnly cookie); `src/components/hms/session.tsx`.
 - 7 roles / 47 permissions (RBAC); server-authoritative.
+- Multi-factor authentication (TOTP, RFC 6238): `src/lib/hms/mfa/`. Enrolment
+  creates an AES-256-GCM encrypted secret (key `MFA_ENCRYPTION_KEY`, AAD = userId)
+  and an `otpauth://` QR URI. Login surfaces gate session creation behind
+  `resolveMfaGate()` (`src/lib/hms/mfa/gate.ts`): no session cookie exists while
+  an MFA challenge (`hms_mfa` HttpOnly cookie, sha256 hash in
+  `mfaChallenge.tokenHash`) is pending. Replay is prevented by storing the
+  accepted monotonic TOTP time step (`UserMfa.lastTotpStep`). Recovery codes are
+  40-bit hex strings, scrypt-hashed (`mfaRecoveryCode.codeHash`), single-use,
+  shown once at enrolment. Role-based policy (`MANDATORY`/`OPTIONAL`/`DISABLED`)
+  with a per-role grace window (`UserMfa.graceUntil`) via
+  `scripts/mfa-rollout.ts`; enforcement is opt-in via `MFA_ENFORCEMENT_DISABLED`
+  (break-glass, defaults ON = not enforced). Admin reset (`POST
+  /api/v1/admin/security/mfa-reset`) revokes the target's sessions. MFA events
+  (`MFA_ENROLLED`, `MFA_VERIFIED`, `MFA_RESET_BY_ADMIN`, …) are written to
+  `audit_log`; repeated failures notify the user (in-app + email).
+- Rate limits are in-memory (`src/lib/hms/rate-limit.ts`); treat the in-memory
+  ceiling as a single-instance limit, not a cross-instance guarantee.
 
 ## Authorization / RBAC
 - Backend enforces every business rule; no frontend-only security.

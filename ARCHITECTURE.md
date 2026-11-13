@@ -43,6 +43,13 @@ endpoints.
   - `files/service.ts` — MinIO file service.
   - `irms/storage.ts` — IRMS storage.
 - `src/lib/hms/services.ts` — `audit`, `notify`, `notifyRole`.
+- `src/lib/hms/mfa/` — TOTP multi-factor authentication: `crypto.ts` (AES-256-GCM
+  secret encryption), `totp.ts` (RFC 6238 generation/verification with replay
+  protection via monotonic time step), `policy.ts` (role-based MFA policy +
+  grace windows), `challenge.ts` / `recovery.ts` (challenge cookies + single-use
+  recovery codes), `gate.ts` (`resolveMfaGate`), `enrollment.ts`,
+  `step-up.ts` (password + TOTP/recovery-code verification for management
+  actions), `http.ts` (origin assertion).
 
 ## Database relationships
 PostgreSQL (Prisma schema `prisma/schema.prisma`, 42 models). Key relationships:
@@ -74,7 +81,11 @@ checklist → technician → execution → evidence → review → closure → n
 
 ## Authentication
 DB-backed session token (HttpOnly cookie); 7 roles / 47 permissions; RBAC;
-server-authoritative.
+server-authoritative. All three login surfaces (password, e-mail OTP, Google
+OAuth) gate session creation behind `resolveMfaGate()`
+(`src/lib/hms/mfa/gate.ts`): no session cookie exists while an MFA challenge
+(`hms_mfa` HttpOnly cookie) or MFA enrolment is pending, so a session is never
+created before the second factor is satisfied.
 
 ## Notification architecture
 In-app `Notification` rows + centralized `EmailService` + WhatsApp AI

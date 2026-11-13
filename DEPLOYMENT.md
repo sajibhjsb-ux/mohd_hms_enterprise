@@ -82,6 +82,37 @@ bun run build        # next build + copy static/public into .next/standalone
 # run-prod.sh starts bun .next/standalone/server.js
 ```
 
+## MFA (two-factor authentication) rollout
+MFA is opt-in by default and must not be enforced on production until the
+rollout path has been verified.
+
+- `MFA_ENCRYPTION_KEY` — 32-byte base64 key for AES-256-GCM TOTP secret
+  encryption (`openssl rand -base64 32`). Required once MFA enrolment is used;
+  rotate only with the understanding that existing encrypted secrets become
+  undecryptable.
+- `MFA_ENFORCEMENT_DISABLED` — break-glass. `true` (default): MFA stays
+  optional everywhere. Flip to `false` only AFTER running the rollout script and
+  verifying an admin reset path works.
+- `MFA_TOTP_TOLERANCE_SECONDS`, `MFA_CHALLENGE_TTL_SECONDS`,
+  `MFA_ENROLL_TTL_SECONDS` — timing defaults (30 s / 300 s / 900 s).
+
+Rollout order:
+1. Add `MFA_ENCRYPTION_KEY` to `/home/hasan/hms/shared/.env` (mode 0600) and the
+   release env; keep `MFA_ENFORCEMENT_DISABLED=true`.
+2. `bun run db:generate && bun run db:push` (additive MFA models; never
+   `db:reset` on production).
+3. `bun --conditions=react-server scripts/mfa-seed.ts` — writes the default
+   per-role MFA policies (MANDATORY for SUPER_ADMIN/ADMIN/SUPERVISOR/FINANCE
+   with a 14-day grace; OPTIONAL for TECHNICIAN/CUSTOMER/HR).
+4. `bun --conditions=react-server scripts/mfa-rollout.ts` — grants the grace
+   window (`UserMfa.graceUntil`) to every unenrolled user of a MANDATORY role.
+   Idempotent: a second run grants 0.
+5. Verify the admin reset path (`POST /api/v1/admin/security/mfa-reset`) revokes
+   the target's sessions and forces re-enrolment.
+6. Flip `MFA_ENFORCEMENT_DISABLED=false` only after steps 1–5 are verified on
+   a release slot. Existing grace windows continue to run until they expire.
+
+
 ## Database migration
 - Migrations are version-controlled (Prisma schema + tracked migrations).
 - Production startup does NOT recreate existing records; no auto seed.

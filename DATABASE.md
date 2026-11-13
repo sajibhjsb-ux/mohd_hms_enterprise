@@ -39,6 +39,11 @@ Core tables observed in handlers/services/routes:
 - `cms_page`, `cms_page_revision` — CMS visual page builder pages and immutable
   revision snapshots (slug, title, status DRAFT/PUBLISHED/ARCHIVED, content
   JSON, SEO fields, publishedAt, per-version snapshots)
+- `user_mfa`, `mfa_recovery_code`, `mfa_policy`, `mfa_challenge` — TOTP
+  multi-factor authentication: encrypted secret (AES-256-GCM, key
+  `MFA_ENCRYPTION_KEY`, AAD = userId), enrolment challenge, scrypt-hashed
+  single-use recovery codes, per-role policy (MANDATORY/OPTIONAL/DISABLED +
+  grace window), login challenge + attempt tracking (`src/lib/hms/mfa/`)
 
 ## Relationships (key)
 - Complaint 1:N Work Order (one WO per complaint; Complaint locked to WO)
@@ -46,6 +51,7 @@ Core tables observed in handlers/services/routes:
 - PM Plan 1:N PM Task; PM Task → Work Order
 - Work Order → Checklist → Checklist items
 - Complaint / Work Order → media metadata (MinIO objects)
+- User 1:1 UserMfa; User 1:N MfaRecoveryCode; User 1:N MfaChallenge
 - EmailLog ← Notification/mail message (delivery state mirrored)
 - Audit log on every state-changing business action
 
@@ -64,6 +70,10 @@ Core tables observed in handlers/services/routes:
 - Fail-closed: destructive schema changes block deployment; operator override
   only after verified backup.
 - New fields receive safe defaults; existing data migrated correctly.
+- Additive model changes (e.g. the MFA models `user_mfa`, `mfa_recovery_code`,
+  `mfa_policy`, `mfa_challenge`) are applied with `prisma db push`;
+  destructive changes are fail-closed and require operator override after a
+  verified backup.
 - Back up (`pg_dump`) before any schema change; test restore in safe env.
 
 ## Persistent volume
